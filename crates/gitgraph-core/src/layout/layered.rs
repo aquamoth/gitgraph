@@ -41,7 +41,16 @@ fn segment_weight(first_parent: bool, from_dummy: bool, to_dummy: bool) -> f32 {
 }
 
 impl LayeredGraph {
-    pub fn build(input: &LayoutInput, layers: &[u32], breadth: &[f32], edge_gap: f32) -> Self {
+    /// Builds the layered graph. With `concentrate`, edges into the same parent share their
+    /// dummy items wherever they pass through the same layer, so parallel edges merge into one
+    /// trunk (graphviz's "edge concentration").
+    pub fn build(
+        input: &LayoutInput,
+        layers: &[u32],
+        breadth: &[f32],
+        edge_gap: f32,
+        concentrate: bool,
+    ) -> Self {
         let n = input.sizes.len();
         let mut items: Vec<Item> = (0..n)
             .map(|i| Item {
@@ -53,20 +62,37 @@ impl LayeredGraph {
             })
             .collect();
         let mut chains = Vec::with_capacity(input.edges.len());
+        // (parent, layer) -> shared dummy, when concentrating.
+        let mut shared: std::collections::HashMap<(u32, u32), u32> =
+            std::collections::HashMap::new();
 
         for e in &input.edges {
             let (c, p) = (e.child as usize, e.parent as usize);
             let mut chain = Vec::new();
             let mut prev = c as u32;
             for layer in layers[c] + 1..layers[p] {
-                let d = items.len() as u32;
-                items.push(Item {
-                    layer,
-                    breadth: edge_gap,
-                    dummy: true,
-                    up: Vec::new(),
-                    down: Vec::new(),
-                });
+                let existing = if concentrate {
+                    shared.get(&(p as u32, layer)).copied()
+                } else {
+                    None
+                };
+                let d = match existing {
+                    Some(d) => d,
+                    None => {
+                        let d = items.len() as u32;
+                        items.push(Item {
+                            layer,
+                            breadth: edge_gap,
+                            dummy: true,
+                            up: Vec::new(),
+                            down: Vec::new(),
+                        });
+                        if concentrate {
+                            shared.insert((p as u32, layer), d);
+                        }
+                        d
+                    }
+                };
                 link(&mut items, prev, d, e.first_parent);
                 chain.push(d);
                 prev = d;
@@ -104,6 +130,30 @@ impl LayeredGraph {
 }
 
 fn link(items: &mut [Item], upper: u32, lower: u32, first_parent: bool) {
+    // Concentrated edges share segments; link each pair only once (keeping the heavier weight).
+    if let Some(existing) = items[upper as usize]
+        .down
+        .iter()
+        .position(|&(d, _)| d == lower)
+    {
+        let w = segment_weight(
+            first_parent,
+            items[upper as usize].dummy,
+            items[lower as usize].dummy,
+        );
+        let (_, old) = items[upper as usize].down[existing];
+        if w > old {
+            items[upper as usize].down[existing].1 = w;
+            if let Some(u) = items[lower as usize]
+                .up
+                .iter_mut()
+                .find(|(u, _)| *u == upper)
+            {
+                u.1 = w;
+            }
+        }
+        return;
+    }
     let w = segment_weight(
         first_parent,
         items[upper as usize].dummy,

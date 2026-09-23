@@ -482,6 +482,73 @@ impl<'a> Simplex<'a> {
     }
 }
 
+/// Splits layers wider than `max_width` into several layers, so that many siblings (typically
+/// branch tips forking from one commit) stack up instead of forming one enormous row.
+///
+/// Any node can move into a new layer inserted directly above its own without breaking the
+/// parents-below-children order. Nodes with children go into the lowest part; tips fill the
+/// layers above, oldest nearest to their parents.
+pub fn limit_width(
+    layers: &mut [u32],
+    input: &LayoutInput,
+    breadth: &[f32],
+    max_width: f32,
+    gap: f32,
+) {
+    let n = layers.len();
+    if max_width <= 0.0 || n == 0 {
+        return;
+    }
+    let mut has_children = vec![false; n];
+    for e in &input.edges {
+        has_children[e.parent as usize] = true;
+    }
+    let time = |v: usize| input.times.get(v).copied().unwrap_or(0);
+
+    let mut by_layer: Vec<Vec<usize>> = Vec::new();
+    for (v, &l) in layers.iter().enumerate() {
+        if by_layer.len() <= l as usize {
+            by_layer.resize(l as usize + 1, Vec::new());
+        }
+        by_layer[l as usize].push(v);
+    }
+    // Rebuild bottom-up (oldest layer first), splitting as needed; `stack` ends up with the
+    // new layers from the bottom.
+    let mut stack: Vec<Vec<usize>> = Vec::with_capacity(by_layer.len());
+    for mut nodes in by_layer.into_iter().rev() {
+        let width = |ns: &[usize]| {
+            ns.iter().map(|&v| breadth[v]).sum::<f32>() + gap * ns.len().saturating_sub(1) as f32
+        };
+        let total = width(&nodes);
+        if total <= max_width || nodes.len() < 2 {
+            stack.push(nodes);
+            continue;
+        }
+        let parts = (total / max_width).ceil() as usize;
+        let target = total / parts as f32;
+        // Structural nodes first (they stay lowest), then tips from oldest to newest.
+        nodes.sort_by_key(|&v| (!has_children[v], time(v), v));
+        let mut current = Vec::new();
+        let mut used = 0.0;
+        for v in nodes {
+            let w = breadth[v] + if current.is_empty() { 0.0 } else { gap };
+            if !current.is_empty() && used + w > target * 1.05 {
+                stack.push(std::mem::take(&mut current));
+                used = 0.0;
+            }
+            used += breadth[v] + if current.is_empty() { 0.0 } else { gap };
+            current.push(v);
+        }
+        stack.push(current);
+    }
+    let top = stack.len() as u32 - 1;
+    for (i, nodes) in stack.iter().enumerate() {
+        for &v in nodes {
+            layers[v] = top - i as u32;
+        }
+    }
+}
+
 fn normalize(rank: &[i64]) -> Vec<u32> {
     let min = rank.iter().copied().min().unwrap_or(0);
     rank.iter().map(|&r| (r - min) as u32).collect()
@@ -628,6 +695,24 @@ mod tests {
         assert_valid(&inp, &l);
         l.sort();
         assert_eq!(l, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn wide_layers_are_split_keeping_order() {
+        // Twelve tips (1..=12) on one root (0), each 100 wide: one layer of 1200 + gaps.
+        let edges: Vec<(u32, u32)> = (1..=12).map(|t| (t, 0)).collect();
+        let mut inp = input(13, &edges);
+        inp.sizes = vec![Point::new(100.0, 20.0); 13];
+        let mut l = rank(&inp, Ranking::Compact);
+        let breadth = vec![100.0; 13];
+        limit_width(&mut l, &inp, &breadth, 450.0, 10.0);
+        assert_valid(&inp, &l);
+        let mut per_layer = std::collections::BTreeMap::new();
+        for &x in &l[1..] {
+            *per_layer.entry(x).or_insert(0) += 1;
+        }
+        assert!(per_layer.values().all(|&c| c <= 4), "{per_layer:?}");
+        assert_eq!(per_layer.len(), 3);
     }
 
     #[test]

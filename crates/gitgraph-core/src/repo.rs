@@ -34,6 +34,8 @@ pub struct Commit {
     pub author_email: String,
     /// Author timestamp, seconds since the Unix epoch.
     pub author_time: i64,
+    /// Author date formatted by git in the local time zone, `YYYY-MM-DD HH:MM`.
+    pub author_date: String,
     /// Committer timestamp, seconds since the Unix epoch.
     pub commit_time: i64,
     pub subject: String,

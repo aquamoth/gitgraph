@@ -1,1 +1,200 @@
-fn main() {}
+//! gitgraph: a standalone TortoiseGit-style revision graph viewer.
+
+// Release builds on Windows are GUI-subsystem apps (no console window).
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+mod app;
+mod automation;
+mod render;
+mod scene;
+mod settings;
+mod theme;
+mod view;
+
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use clap::{Parser, ValueEnum};
+use eframe::egui;
+use gitgraph_core::layout::Direction;
+use gitgraph_core::revgraph::Simplification;
+
+use crate::automation::Automation;
+use crate::theme::ThemeChoice;
+
+/// Show the revision graph of a git repository: how its branches and tags relate.
+#[derive(Debug, Parser)]
+#[command(version, about)]
+struct Cli {
+    /// Repository to show (any directory inside it).
+    #[arg(default_value = ".")]
+    path: PathBuf,
+
+    /// Which commits to show.
+    #[arg(long, value_enum)]
+    mode: Option<Mode>,
+
+    /// Where the newest commits go.
+    #[arg(long, value_enum)]
+    direction: Option<Dir>,
+
+    /// Merge parallel edges into one trunk.
+    #[arg(long)]
+    bundle: bool,
+
+    /// Maximum row width before siblings stack up (0 = unlimited, as TortoiseGit).
+    #[arg(long)]
+    max_row_width: Option<f32>,
+
+    /// Hide remote-tracking branches.
+    #[arg(long)]
+    no_remotes: bool,
+
+    /// Hide tags.
+    #[arg(long)]
+    no_tags: bool,
+
+    #[arg(long, value_enum)]
+    theme: Option<Theme>,
+
+    /// Initial window size, e.g. 1600x1000.
+    #[arg(long, value_parser = parse_size)]
+    window_size: Option<(f32, f32)>,
+
+    /// Render the window to a PNG file and exit (for testing and documentation).
+    #[arg(long, value_name = "FILE")]
+    screenshot: Option<PathBuf>,
+
+    /// Start with the whole graph in view instead of at HEAD.
+    #[arg(long)]
+    fit: bool,
+
+    /// Zoom level for the screenshot (1 = 100%), applied around the centre of the initial view.
+    #[arg(long, hide = true)]
+    zoom: Option<f32>,
+
+    /// Drag the centre node by DX,DY before taking the screenshot (demonstrates the physics).
+    #[arg(long, value_name = "DX,DY", value_parser = parse_vec, hide = true)]
+    demo_drag: Option<(f32, f32)>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Mode {
+    /// Commits with refs, and merges joining them (TortoiseGit default).
+    Labelled,
+    /// Also every fork point and merge (TortoiseGit "Show branchings and merges").
+    Branches,
+    /// Every commit.
+    All,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Dir {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Theme {
+    System,
+    Light,
+    Dark,
+}
+
+fn parse_size(s: &str) -> Result<(f32, f32), String> {
+    let (w, h) = s.split_once(['x', 'X']).ok_or("expected WIDTHxHEIGHT")?;
+    Ok((
+        w.parse().map_err(|_| "bad width")?,
+        h.parse().map_err(|_| "bad height")?,
+    ))
+}
+
+fn parse_vec(s: &str) -> Result<(f32, f32), String> {
+    let (x, y) = s.split_once(',').ok_or("expected DX,DY")?;
+    Ok((
+        x.parse().map_err(|_| "bad DX")?,
+        y.parse().map_err(|_| "bad DY")?,
+    ))
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let repo = match gitgraph_core::git::load_repo(&cli.path) {
+        Ok(repo) => repo,
+        Err(e) => {
+            eprintln!("gitgraph: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let (w, h) = cli.window_size.unwrap_or((1400.0, 900.0));
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title(format!("{} – gitgraph", repo.display_name()))
+            .with_app_id("gitgraph")
+            .with_inner_size([w, h])
+            .with_min_inner_size([400.0, 300.0]),
+        ..Default::default()
+    };
+    let automation = Automation::new(
+        cli.screenshot.clone(),
+        cli.fit,
+        cli.demo_drag.map(|(x, y)| egui::vec2(x, y)),
+        cli.zoom,
+    );
+    let overrides = move |s: &mut settings::Settings| {
+        if let Some(mode) = cli.mode {
+            s.graph.simplification = match mode {
+                Mode::Labelled => Simplification::Decorated,
+                Mode::Branches => Simplification::BranchesAndMerges,
+                Mode::All => Simplification::AllCommits,
+            };
+        }
+        if let Some(dir) = cli.direction {
+            s.layout.direction = match dir {
+                Dir::Top => Direction::NewestTop,
+                Dir::Bottom => Direction::NewestBottom,
+                Dir::Left => Direction::NewestLeft,
+                Dir::Right => Direction::NewestRight,
+            };
+        }
+        if cli.bundle {
+            s.layout.concentrate_edges = true;
+        }
+        if let Some(w) = cli.max_row_width {
+            s.layout.max_layer_width = w;
+        }
+        if cli.no_remotes {
+            s.graph.show_remote_branches = false;
+        }
+        if cli.no_tags {
+            s.graph.show_tags = false;
+        }
+        if let Some(theme) = cli.theme {
+            s.theme = match theme {
+                Theme::System => ThemeChoice::System,
+                Theme::Light => ThemeChoice::Light,
+                Theme::Dark => ThemeChoice::Dark,
+            };
+        }
+    };
+    let path = cli.path.clone();
+    let result = eframe::run_native(
+        "gitgraph",
+        options,
+        Box::new(move |cc| {
+            Ok(Box::new(app::GitGraphApp::new(
+                cc, path, repo, overrides, automation,
+            )))
+        }),
+    );
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("gitgraph: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}

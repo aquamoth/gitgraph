@@ -121,12 +121,13 @@ impl Git {
         let git = Git::new(&root);
 
         let log_format = format!(
-            "--format=%H{FIELD}%P{FIELD}%T{FIELD}%an{FIELD}%ae{FIELD}%at{FIELD}%ct{FIELD}%s{RECORD}"
+            "--format=%H{FIELD}%P{FIELD}%T{FIELD}%an{FIELD}%ae{FIELD}%at{FIELD}%ad{FIELD}%ct{FIELD}%s{RECORD}"
         );
         let log = git.run(&[
             "log",
             "--no-color",
             "--no-decorate",
+            "--date=format-local:%Y-%m-%d %H:%M",
             &log_format,
             "--exclude=refs/notes/*",
             "--all",
@@ -186,6 +187,7 @@ fn parse_log(log: &str) -> Result<(Vec<Commit>, HashMap<Oid, CommitIx>), GitErro
         author_name: &'a str,
         author_email: &'a str,
         author_time: i64,
+        author_date: &'a str,
         commit_time: i64,
         subject: &'a str,
     }
@@ -196,8 +198,8 @@ fn parse_log(log: &str) -> Result<(Vec<Commit>, HashMap<Oid, CommitIx>), GitErro
         if record.is_empty() {
             continue;
         }
-        let f: Vec<&str> = record.splitn(8, FIELD).collect();
-        let [hash, parents, tree, an, ae, at, ct, subject] = f[..] else {
+        let f: Vec<&str> = record.splitn(9, FIELD).collect();
+        let [hash, parents, tree, an, ae, at, ad, ct, subject] = f[..] else {
             return Err(GitError::Parse(format!("bad log record {record:?}")));
         };
         raw.push(Raw {
@@ -207,6 +209,7 @@ fn parse_log(log: &str) -> Result<(Vec<Commit>, HashMap<Oid, CommitIx>), GitErro
             author_name: an,
             author_email: ae,
             author_time: at.parse().unwrap_or(0),
+            author_date: ad,
             commit_time: ct.parse().unwrap_or(0),
             subject,
         });
@@ -239,6 +242,7 @@ fn parse_log(log: &str) -> Result<(Vec<Commit>, HashMap<Oid, CommitIx>), GitErro
                 author_name: r.author_name.to_owned(),
                 author_email: r.author_email.to_owned(),
                 author_time: r.author_time,
+                author_date: r.author_date.to_owned(),
                 commit_time: r.commit_time,
                 subject: r.subject.to_owned(),
             }
@@ -341,8 +345,8 @@ mod tests {
         let missing = "c".repeat(40);
         let tree = "d".repeat(40);
         let log = format!(
-            "{b}\x1f{a} {missing}\x1f{tree}\x1fAnn\x1fann@x\x1f20\x1f21\x1fsecond\x1fwith sep\x1e\n\
-             {a}\x1f\x1f{EMPTY_TREE_SHA1}\x1fBob\x1fbob@x\x1f10\x1f11\x1ffirst\x1e\n"
+            "{b}\x1f{a} {missing}\x1f{tree}\x1fAnn\x1fann@x\x1f20\x1f2024-01-02 03:04\x1f21\x1fsecond\x1fwith sep\x1e\n\
+             {a}\x1f\x1f{EMPTY_TREE_SHA1}\x1fBob\x1fbob@x\x1f10\x1f2024-01-01 00:00\x1f11\x1ffirst\x1e\n"
         );
         let (commits, by_oid) = parse_log(&log).unwrap();
         assert_eq!(commits.len(), 2);
@@ -354,6 +358,7 @@ mod tests {
         );
         assert_eq!(second.subject, "second\x1fwith sep");
         assert_eq!(second.author_time, 20);
+        assert_eq!(second.author_date, "2024-01-02 03:04");
         assert_eq!(second.commit_time, 21);
         let first = &commits[1];
         assert!(first.parents.is_empty() && !first.truncated);

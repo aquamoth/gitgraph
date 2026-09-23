@@ -117,6 +117,10 @@ pub struct LayoutOptions {
     pub node_gap: f32,
     /// Width reserved for an edge passing through a layer.
     pub edge_gap: f32,
+    /// Layers wider than this are split into several (0 = never, as TortoiseGit).
+    pub max_layer_width: f32,
+    /// Merge edges that run into the same parent into one trunk.
+    pub concentrate_edges: bool,
 }
 
 impl Default for LayoutOptions {
@@ -127,6 +131,8 @@ impl Default for LayoutOptions {
             layer_gap: 30.0,
             node_gap: 25.0,
             edge_gap: 12.0,
+            max_layer_width: 1800.0,
+            concentrate_edges: false,
         }
     }
 }
@@ -162,6 +168,8 @@ pub struct Layout {
     /// the parent's border. Renderers should draw smooth curves with tangents along
     /// [`Direction::flow`] at every point.
     pub edges: Vec<Vec<Point>>,
+    /// (child, parent) node of every edge.
+    pub edge_ends: Vec<(u32, u32)>,
     /// Layer of every node (0 = newest).
     pub layers: Vec<u32>,
     /// Top-left and bottom-right corner of the drawing.
@@ -186,8 +194,23 @@ pub fn layout(input: &LayoutInput, options: &LayoutOptions) -> Layout {
         .map(|s| if vertical { (s.x, s.y) } else { (s.y, s.x) })
         .unzip();
 
-    let layers = rank::rank(input, options.ranking);
-    let mut graph = LayeredGraph::build(input, &layers, &breadth, options.edge_gap);
+    let mut layers = rank::rank(input, options.ranking);
+    if options.ranking != Ranking::Chronological {
+        rank::limit_width(
+            &mut layers,
+            input,
+            &breadth,
+            options.max_layer_width,
+            options.node_gap,
+        );
+    }
+    let mut graph = LayeredGraph::build(
+        input,
+        &layers,
+        &breadth,
+        options.edge_gap,
+        options.concentrate_edges,
+    );
     order::minimize_crossings(&mut graph, input);
     let u = position::assign(&graph, options.node_gap);
 
@@ -262,6 +285,7 @@ pub fn layout(input: &LayoutInput, options: &LayoutOptions) -> Layout {
         direction: options.direction,
         nodes,
         edges,
+        edge_ends: input.edges.iter().map(|e| (e.child, e.parent)).collect(),
         layers,
         min: Point::new(origin.x.min(extent.x), origin.y.min(extent.y)),
         max: Point::new(origin.x.max(extent.x), origin.y.max(extent.y)),
