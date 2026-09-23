@@ -30,9 +30,10 @@ enum Drag {
         grab: Vec2,
     },
     Pan,
-    /// Selecting the nodes in a rectangle from `start` (world coordinates) to the pointer.
+    /// Selecting the nodes in the rectangle between `start` and `end` (world coordinates).
     Select {
         start: Pos2,
+        end: Pos2,
     },
 }
 
@@ -1133,28 +1134,31 @@ impl GitGraphApp {
                         grab: world - scene.node_center(n),
                     })
                 }
-                None if extend && !middle => Some(Drag::Select { start: world }),
+                None if extend && !middle => Some(Drag::Select {
+                    start: world,
+                    end: world,
+                }),
                 _ => Some(Drag::Pan),
             };
         }
-        let band = match (self.drag, response.interact_pointer_pos()) {
-            (Some(Drag::Select { start }), Some(p)) => {
-                Some(Rect::from_two_pos(start, self.view.to_world(canvas, p)))
-            }
-            _ => None,
-        };
         if response.dragged() {
-            match self.drag {
+            let pointer = response
+                .interact_pointer_pos()
+                .map(|p| self.view.to_world(canvas, p));
+            match &mut self.drag {
                 Some(Drag::Node { grab }) => {
-                    if let Some(p) = response.interact_pointer_pos() {
-                        let target = self.view.to_world(canvas, p) - grab;
-                        scene.net.drag_to(to_point(target));
+                    if let Some(p) = pointer {
+                        scene.net.drag_to(to_point(p - *grab));
                     }
                 }
-                Some(Drag::Select { .. }) => {}
+                Some(Drag::Select { end, .. }) => *end = pointer.unwrap_or(*end),
                 Some(Drag::Pan) | None => self.view.pan_screen(response.drag_delta()),
             }
         }
+        let band = match self.drag {
+            Some(Drag::Select { start, end }) => Some(Rect::from_two_pos(start, end)),
+            _ => None,
+        };
         let mut moved = false;
         if response.drag_stopped() {
             match self.drag {
@@ -1162,10 +1166,7 @@ impl GitGraphApp {
                     scene.net.release(&self.settings.net);
                     moved = true;
                 }
-                Some(Drag::Select { start }) => {
-                    let end = response
-                        .interact_pointer_pos()
-                        .map_or(start, |p| self.view.to_world(canvas, p));
+                Some(Drag::Select { start, end }) => {
                     self.selection
                         .extend(scene.nodes_in(Rect::from_two_pos(start, end)));
                 }
