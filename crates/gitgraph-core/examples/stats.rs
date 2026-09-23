@@ -76,6 +76,7 @@ fn main() {
                 &input,
                 &LayoutOptions {
                     ranking,
+                    concentrate_edges: args.iter().any(|a| a == "--bundle"),
                     ..Default::default()
                 },
             );

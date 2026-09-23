@@ -346,7 +346,7 @@ impl GitGraphApp {
 
     fn reset_positions(&mut self) {
         if let Some(scene) = &mut self.scene {
-            scene.net.reset(&scene.layout);
+            scene.net.reset();
         }
     }
 
@@ -965,8 +965,7 @@ impl GitGraphApp {
             Some(MenuAction::ResetAll) => self.reset_positions(),
             Some(MenuAction::Unpin(node)) => {
                 if let Some(scene) = &mut self.scene {
-                    let home = scene.layout.nodes[node];
-                    scene.net.unpin(node, home);
+                    scene.net.unpin(node);
                 }
             }
             Some(MenuAction::Center(node)) => self.center_on(node),

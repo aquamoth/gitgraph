@@ -62,15 +62,16 @@ fn sweep_run(g: &mut LayeredGraph, transpose: bool) -> u64 {
     let mut best = g.layers.clone();
     let mut best_crossings = total_crossings(g);
     let mut stale = 0;
+    let mut scratch = Scratch::default();
     for sweep in 0..MAX_SWEEPS {
         if best_crossings == 0 {
             break;
         }
         for l in 1..g.layers.len() {
-            reorder_layer(g, l, true, sweep);
+            reorder_layer(g, l, true, sweep, &mut scratch);
         }
         for l in (0..g.layers.len() - 1).rev() {
-            reorder_layer(g, l, false, sweep);
+            reorder_layer(g, l, false, sweep, &mut scratch);
         }
         if transpose {
             transpose_all(g);
@@ -219,36 +220,52 @@ fn initial_order(g: &mut LayeredGraph, input: &LayoutInput) {
     g.update_positions();
 }
 
+/// Reusable buffers for [`reorder_layer`].
+#[derive(Default)]
+struct Scratch {
+    values: Vec<f32>,
+    keys: Vec<Option<f32>>,
+    movable: Vec<(f32, usize, u32)>,
+}
+
 /// Reorders layer `l` by the median position of each item's neighbours in the adjacent layer
 /// (above when sweeping down). Items without such neighbours keep their slot.
-fn reorder_layer(g: &mut LayeredGraph, l: usize, sweeping_down: bool, sweep: usize) {
-    let mut scratch = Vec::new();
-    let keys: Vec<Option<f32>> = g.layers[l]
-        .iter()
-        .map(|&i| {
-            let item = &g.items[i as usize];
-            let neighbours = if sweeping_down { &item.up } else { &item.down };
-            scratch.clear();
-            scratch.extend(neighbours.iter().map(|&(nb, _)| g.pos[nb as usize] as f32));
-            median(&mut scratch)
-        })
-        .collect();
-
-    let mut movable: Vec<(f32, usize, u32)> = g.layers[l]
-        .iter()
-        .zip(&keys)
-        .enumerate()
-        .filter_map(|(slot, (&item, key))| key.map(|k| (k, slot, item)))
-        .collect();
+fn reorder_layer(
+    g: &mut LayeredGraph,
+    l: usize,
+    sweeping_down: bool,
+    sweep: usize,
+    s: &mut Scratch,
+) {
+    if g.layers[l].len() < 2 {
+        return;
+    }
+    s.keys.clear();
+    for &i in &g.layers[l] {
+        let item = &g.items[i as usize];
+        let neighbours = if sweeping_down { &item.up } else { &item.down };
+        s.values.clear();
+        s.values
+            .extend(neighbours.iter().map(|&(nb, _)| g.pos[nb as usize] as f32));
+        s.keys.push(median(&mut s.values));
+    }
+    s.movable.clear();
+    for (slot, (&item, key)) in g.layers[l].iter().zip(&s.keys).enumerate() {
+        if let Some(k) = key {
+            s.movable.push((*k, slot, item));
+        }
+    }
     // Alternate the tie-breaking direction between sweeps so equal medians can swap.
     if sweep % 2 == 0 {
-        movable.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        s.movable
+            .sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
     } else {
-        movable.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)));
+        s.movable
+            .sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)));
     }
-    let mut movable = movable.into_iter();
+    let mut movable = s.movable.iter();
     let layer = &mut g.layers[l];
-    for (slot, key) in keys.iter().enumerate() {
+    for (slot, key) in s.keys.iter().enumerate() {
         if key.is_some() {
             layer[slot] = movable.next().expect("one movable item per keyed slot").2;
         }

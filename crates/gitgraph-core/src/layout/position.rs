@@ -9,7 +9,9 @@
 
 use super::LayeredGraph;
 
+/// Sweeps for normal graphs; huge ones (hundreds of thousands of items) get fewer.
 const SWEEPS: usize = 40;
+const MIN_SWEEPS: usize = 12;
 /// Below this distance (layout units) an edge counts as straight for reweighting.
 const STRAIGHT: f32 = 1.0;
 /// Pull of an item towards its previous position, relative to its edge weights.
@@ -32,9 +34,15 @@ pub fn assign(g: &LayeredGraph, node_gap: f32) -> Vec<f32> {
     let mut targets = Vec::new();
     let mut weights = Vec::new();
     let mut seps = Vec::new();
-    for sweep in 0..SWEEPS {
+    let mut solver = Isotonic::default();
+    let sweeps = if g.items.len() > 200_000 {
+        MIN_SWEEPS
+    } else {
+        SWEEPS
+    };
+    for sweep in 0..sweeps {
         // L2 for the first sweeps to settle, then reweight towards L1.
-        let l1 = sweep >= SWEEPS / 4;
+        let l1 = sweep >= sweeps / 4;
         let order: Box<dyn Iterator<Item = usize>> = if sweep % 2 == 0 {
             Box::new(0..g.layers.len())
         } else {
@@ -42,6 +50,26 @@ pub fn assign(g: &LayeredGraph, node_gap: f32) -> Vec<f32> {
         };
         for l in order {
             let layer = &g.layers[l];
+            if let [single] = layer[..] {
+                // Nothing to separate: move straight to the (weighted) target.
+                let item = &g.items[single as usize];
+                let x = u[single as usize];
+                let (mut sum_w, mut sum_wx) = (0.0, 0.0);
+                for &(nb, w) in item.up.iter().chain(&item.down) {
+                    let nx = u[nb as usize];
+                    let w = if l1 {
+                        w / (x - nx).abs().max(STRAIGHT)
+                    } else {
+                        w
+                    };
+                    sum_w += w;
+                    sum_wx += w * nx;
+                }
+                if sum_w > 0.0 {
+                    u[single as usize] = sum_wx / sum_w;
+                }
+                continue;
+            }
             targets.clear();
             weights.clear();
             seps.clear();
@@ -67,7 +95,7 @@ pub fn assign(g: &LayeredGraph, node_gap: f32) -> Vec<f32> {
                     seps.push(separation(g, layer[k - 1], i, node_gap));
                 }
             }
-            let placed = isotonic(&targets, &weights, &seps);
+            let placed = solver.solve(&targets, &weights, &seps);
             for (k, &i) in layer.iter().enumerate() {
                 u[i as usize] = placed[k];
             }
@@ -89,40 +117,59 @@ fn separation(g: &LayeredGraph, a: u32, b: u32, node_gap: f32) -> f32 {
 
 /// Weighted least-squares placement `x` minimising `Σ w_i (x_i − t_i)²` subject to
 /// `x_{i+1} − x_i ≥ sep_i`, by pool-adjacent-violators on `y_i = x_i − Σ_{j<i} sep_j`.
-fn isotonic(targets: &[f32], weights: &[f32], seps: &[f32]) -> Vec<f32> {
-    let n = targets.len();
-    let mut offset = Vec::with_capacity(n);
-    let mut acc = 0.0f64;
-    for i in 0..n {
-        if i > 0 {
-            acc += seps[i - 1] as f64;
-        }
-        offset.push(acc);
-    }
-    // Blocks of (sum w·y, sum w, item count).
-    let mut blocks: Vec<(f64, f64, usize)> = Vec::with_capacity(n);
-    for i in 0..n {
-        let w = weights[i].max(1e-6) as f64;
-        let y = targets[i] as f64 - offset[i];
-        blocks.push((w * y, w, 1));
-        while blocks.len() >= 2 {
-            let (b, a) = (blocks[blocks.len() - 1], blocks[blocks.len() - 2]);
-            if a.0 / a.1 <= b.0 / b.1 {
-                break;
+/// Keeps its buffers between calls.
+#[derive(Default)]
+struct Isotonic {
+    offset: Vec<f64>,
+    /// Blocks of (sum w·y, sum w, item count).
+    blocks: Vec<(f64, f64, usize)>,
+    x: Vec<f32>,
+}
+
+impl Isotonic {
+    fn solve(&mut self, targets: &[f32], weights: &[f32], seps: &[f32]) -> &[f32] {
+        let n = targets.len();
+        self.offset.clear();
+        let mut acc = 0.0f64;
+        for i in 0..n {
+            if i > 0 {
+                acc += seps[i - 1] as f64;
             }
-            blocks.pop();
-            let last = blocks.last_mut().unwrap();
-            *last = (a.0 + b.0, a.1 + b.1, a.2 + b.2);
+            self.offset.push(acc);
         }
-    }
-    let mut x = Vec::with_capacity(n);
-    for (swy, sw, count) in blocks {
-        let y = swy / sw;
-        for _ in 0..count {
-            x.push((y + offset[x.len()]) as f32);
+        self.blocks.clear();
+        for i in 0..n {
+            let w = weights[i].max(1e-6) as f64;
+            let y = targets[i] as f64 - self.offset[i];
+            self.blocks.push((w * y, w, 1));
+            while self.blocks.len() >= 2 {
+                let (b, a) = (
+                    self.blocks[self.blocks.len() - 1],
+                    self.blocks[self.blocks.len() - 2],
+                );
+                if a.0 / a.1 <= b.0 / b.1 {
+                    break;
+                }
+                self.blocks.pop();
+                let last = self.blocks.last_mut().unwrap();
+                *last = (a.0 + b.0, a.1 + b.1, a.2 + b.2);
+            }
         }
+        self.x.clear();
+        for &(swy, sw, count) in &self.blocks {
+            let y = swy / sw;
+            for _ in 0..count {
+                let i = self.x.len();
+                self.x.push((y + self.offset[i]) as f32);
+            }
+        }
+        &self.x
     }
-    x
+}
+
+#[cfg(test)]
+fn isotonic(targets: &[f32], weights: &[f32], seps: &[f32]) -> Vec<f32> {
+    Isotonic::default().solve(targets, weights, seps).to_vec()
 }
 
 #[cfg(test)]
