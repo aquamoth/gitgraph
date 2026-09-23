@@ -66,6 +66,8 @@ pub struct GitGraphApp {
     search: Search,
     status: Option<(String, bool)>,
     show_shortcuts: bool,
+    /// Path being edited in the "Export as SVG" dialog, when open.
+    export_path: Option<String>,
     automation: Automation,
 }
 
@@ -112,6 +114,7 @@ impl GitGraphApp {
             search: Search::default(),
             status: None,
             show_shortcuts: false,
+            export_path: None,
             automation,
         }
     }
@@ -378,6 +381,13 @@ impl GitGraphApp {
                     .clicked()
                 {
                     self.reload();
+                    ui.close();
+                }
+                if ui.button("Export as SVG…").clicked() {
+                    let default = std::env::current_dir()
+                        .unwrap_or_default()
+                        .join(format!("{}-gitgraph.svg", self.repo.display_name()));
+                    self.export_path = Some(default.display().to_string());
                     ui.close();
                 }
                 ui.separator();
@@ -918,6 +928,46 @@ impl GitGraphApp {
         }
     }
 
+    fn export_window(&mut self, ctx: &egui::Context) {
+        let Some(path) = &mut self.export_path else {
+            return;
+        };
+        let mut open = true;
+        let mut save = false;
+        egui::Window::new("Export as SVG")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("The whole graph is written at 100%, as currently arranged.");
+                let resp = ui.add(egui::TextEdit::singleline(path).desired_width(420.0));
+                save = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                save |= ui.button("Save").clicked();
+            });
+        if save {
+            let path = PathBuf::from(path.trim());
+            let palette = if ctx.global_style().visuals.dark_mode {
+                Palette::dark()
+            } else {
+                Palette::light()
+            };
+            self.status = Some(match &self.scene {
+                Some(scene) => match std::fs::write(
+                    &path,
+                    crate::export::to_svg(scene, &self.settings, &palette),
+                ) {
+                    Ok(()) => (format!("Saved {}", path.display()), false),
+                    Err(e) => (format!("Could not save {}: {e}", path.display()), true),
+                },
+                None => ("Nothing to export yet".into(), true),
+            });
+            open = false;
+        }
+        if !open {
+            self.export_path = None;
+        }
+    }
+
     fn shortcuts_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("Keyboard and mouse")
             .open(&mut self.show_shortcuts)
@@ -983,6 +1033,7 @@ impl eframe::App for GitGraphApp {
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
         self.shortcuts_window(&ctx);
+        self.export_window(&ctx);
 
         if let Some(scene) = &mut self.scene {
             self.automation

@@ -80,25 +80,10 @@ pub fn paint_scene(
         if !visible.intersects(rect) {
             continue;
         }
-        let last = visual.rows.len() - 1;
-        for (r, row) in visual.rows.iter().enumerate() {
-            let row_rect = Rect::from_min_size(
-                rect.min + vec2(0.0, r as f32 * row_h),
-                vec2(rect.width(), row_h),
-            );
-            let corners = CornerRadius {
-                nw: if r == 0 { radius } else { 0 },
-                ne: if r == 0 { radius } else { 0 },
-                sw: if r == last { radius } else { 0 },
-                se: if r == last { radius } else { 0 },
-            };
-            let (fill, border, text) = match &row.kind {
-                RowKind::Hash => (palette.plain_fill, palette.plain_border, palette.plain_text),
-                RowKind::Ref { kind, head } => {
-                    let fill = palette.ref_fill(*kind, *head);
-                    (fill, fill, text_on(fill))
-                }
-            };
+        for ((row_rect, corners), row) in
+            node_rows(rect, visual.rows.len(), row_h, radius).zip(&visual.rows)
+        {
+            let (fill, border, text) = row_colors(&row.kind, palette);
             painter.rect(
                 row_rect,
                 corners,
@@ -157,22 +142,53 @@ fn paint_edge(
     visible: Rect,
     stroke: Stroke,
 ) {
+    let Some(path) = edge_path(
+        scene,
+        e,
+        settings.edge_style,
+        |p| view.to_screen(canvas, p),
+        Some(visible),
+    ) else {
+        return;
+    };
+    painter.add(Shape::line(path.clone(), stroke));
+    if let Some(head) = arrowhead_points(&path, settings.arrows, 8.0 * view.zoom.max(0.25)) {
+        for tri in head {
+            painter.add(Shape::convex_polygon(
+                tri.to_vec(),
+                stroke.color,
+                Stroke::NONE,
+            ));
+        }
+    }
+}
+
+/// The drawn path of edge `e`, mapped through `to_screen`: straight segments clipped to the
+/// node boxes, or a smooth curve. `None` if it lies entirely outside `visible`.
+pub fn edge_path(
+    scene: &Scene,
+    e: usize,
+    style: EdgeStyle,
+    to_screen: impl Fn(Pos2) -> Pos2,
+    visible: Option<Rect>,
+) -> Option<Vec<Pos2>> {
     let edge = scene.graph.edges[e];
     let (c, p) = (edge.child as usize, edge.parent as usize);
     let pts: Vec<Pos2> = scene
         .net
         .edge_points(e)
-        .map(|pt| view.to_screen(canvas, to_pos(pt)))
+        .map(|pt| to_screen(to_pos(pt)))
         .collect();
-    let bbox = Rect::from_points(&pts);
-    if !visible.intersects(bbox) {
-        return;
+    if let Some(visible) = visible
+        && !visible.intersects(Rect::from_points(&pts))
+    {
+        return None;
     }
-    let child = view.rect_to_screen(canvas, scene.node_rect(c));
-    let parent = view.rect_to_screen(canvas, scene.node_rect(p));
+    let map_rect = |r: Rect| Rect::from_two_pos(to_screen(r.min), to_screen(r.max));
+    let child = map_rect(scene.node_rect(c));
+    let parent = map_rect(scene.node_rect(p));
     let n = pts.len();
-
-    let path = match settings.edge_style {
+    let path = match style {
         EdgeStyle::Straight => {
             let mut path = pts.clone();
             path[0] = clip_to_rect(child, pts[1]);
@@ -181,22 +197,16 @@ fn paint_edge(
         }
         EdgeStyle::Curved => curved_path(&pts, child, parent, scene.layout.direction),
     };
-    if path.len() < 2 {
-        return;
-    }
-    painter.add(Shape::line(path.clone(), stroke));
+    (path.len() >= 2).then_some(path)
+}
 
-    let head_len = 8.0 * view.zoom.max(0.25);
-    match settings.arrows {
-        Arrows::ToParent => arrowhead(
-            painter,
-            path[path.len() - 2],
-            path[path.len() - 1],
-            head_len,
-            stroke.color,
-        ),
-        Arrows::ToChild => arrowhead(painter, path[1], path[0], head_len, stroke.color),
-        Arrows::None => {}
+/// The two triangles of an arrowhead for `path`, or `None` without arrows.
+pub fn arrowhead_points(path: &[Pos2], arrows: Arrows, len: f32) -> Option<[[Pos2; 3]; 2]> {
+    let n = path.len();
+    match arrows {
+        Arrows::ToParent => arrowhead(path[n - 2], path[n - 1], len),
+        Arrows::ToChild => arrowhead(path[1], path[0], len),
+        Arrows::None => None,
     }
 }
 
@@ -256,12 +266,12 @@ fn curved_path(pts: &[Pos2], child: Rect, parent: Rect, direction: Direction) ->
     out
 }
 
-/// Filled arrowhead with its tip at `tip`, pointing away from `from` (TortoiseGit: wings at
-/// ±22.5°, notch 0.6 of the wing length back).
-fn arrowhead(painter: &Painter, from: Pos2, tip: Pos2, len: f32, color: Color32) {
+/// Arrowhead with its tip at `tip`, pointing away from `from` (TortoiseGit: wings at ±22.5°,
+/// notch 0.6 of the wing length back), as two triangles.
+fn arrowhead(from: Pos2, tip: Pos2, len: f32) -> Option<[[Pos2; 3]; 2]> {
     let d = tip - from;
     if d.length_sq() < 1e-6 {
-        return;
+        return None;
     }
     let dir = d.normalized();
     let angle = std::f32::consts::PI / 8.0;
@@ -269,16 +279,40 @@ fn arrowhead(painter: &Painter, from: Pos2, tip: Pos2, len: f32, color: Color32)
     let wing1 = tip - rot(dir, angle) * len;
     let wing2 = tip - rot(dir, -angle) * len;
     let notch = tip - dir * (0.6 * len);
-    painter.add(Shape::convex_polygon(
-        vec![tip, wing1, notch],
-        color,
-        Stroke::NONE,
-    ));
-    painter.add(Shape::convex_polygon(
-        vec![tip, notch, wing2],
-        color,
-        Stroke::NONE,
-    ));
+    Some([[tip, wing1, notch], [tip, notch, wing2]])
+}
+
+/// Screen rectangles and corner radii of a node's rows (only the outer corners are rounded).
+pub fn node_rows(
+    rect: Rect,
+    rows: usize,
+    row_height: f32,
+    radius: u8,
+) -> impl Iterator<Item = (Rect, CornerRadius)> {
+    (0..rows).map(move |r| {
+        let row_rect = Rect::from_min_size(
+            rect.min + vec2(0.0, r as f32 * row_height),
+            vec2(rect.width(), row_height),
+        );
+        let corners = CornerRadius {
+            nw: if r == 0 { radius } else { 0 },
+            ne: if r == 0 { radius } else { 0 },
+            sw: if r + 1 == rows { radius } else { 0 },
+            se: if r + 1 == rows { radius } else { 0 },
+        };
+        (row_rect, corners)
+    })
+}
+
+/// Fill, border and text colour of a row.
+pub fn row_colors(kind: &RowKind, palette: &Palette) -> (Color32, Color32, Color32) {
+    match kind {
+        RowKind::Hash => (palette.plain_fill, palette.plain_border, palette.plain_text),
+        RowKind::Ref { kind, head } => {
+            let fill = palette.ref_fill(*kind, *head);
+            (fill, fill, text_on(fill))
+        }
+    }
 }
 
 fn paint_hidden_counts(

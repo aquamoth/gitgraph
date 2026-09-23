@@ -10,9 +10,52 @@ like a spider web being pulled.
 ## Usage
 
 ```sh
-gitgraph [PATH]        # open the repository containing PATH (default: current directory)
-gitgraph --help        # all options
+gitgraph [PATH]                    # open the repository containing PATH (default: .)
+gitgraph --mode branches           # also show every fork point and merge
+gitgraph --mode all --no-remotes   # every commit, local branches and tags only
+gitgraph --look classic            # straight, unbundled edges exactly like TortoiseGit
+gitgraph --export graph.svg        # write an SVG without opening a window
+gitgraph --help                    # all options
 ```
+
+In the window:
+
+| Do | To |
+|---|---|
+| Drag a node | Move it. The graph follows like a web, and the node stays pinned (blue dot). |
+| Drag the background, wheel, Shift+wheel | Pan |
+| Ctrl+wheel, pinch, `+` `-` `0` | Zoom |
+| `F`, double-click the background | Fit the whole graph |
+| `Home` / `H` | Go to HEAD |
+| `Ctrl+F`, then `Enter` / `F3` | Find branches, tags, hashes, subjects or authors |
+| Right-click a node | Copy its hash, ref names or subject, or unpin it |
+| `R` | Return all dragged nodes to the layout |
+| `F5` | Reload the repository |
+
+The toolbar and the *Graph*, *View* and *Drag* menus hold the options. TortoiseGit's
+options are all there:
+- show branchings and merges
+- local or remote branches
+- tags, and "show all tags"
+- arrows pointing towards merges
+- zoom, the overview map and export
+
+gitgraph adds:
+- four directions and three vertical placements
+- edge bundling, row splitting and curved edges
+- first-parent-only view, and stash or other refs
+- light and dark themes
+- the drag physics
+
+Colours follow TortoiseGit:
+
+| Label | Colour |
+|---|---|
+| Current branch | red |
+| Local branches | green |
+| Remote branches | light orange |
+| Tags | yellow |
+| Commits without refs | pale lavender, showing an 8-digit hash |
 
 gitgraph needs `git` on `PATH` at runtime; it reads the repository with `git log` and
 `git for-each-ref` and never writes to it.

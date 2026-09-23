@@ -5,6 +5,7 @@
 
 mod app;
 mod automation;
+mod export;
 mod render;
 mod scene;
 mod settings;
@@ -54,12 +55,17 @@ struct Cli {
     #[arg(long)]
     no_tags: bool,
 
+    /// Colour theme.
     #[arg(long, value_enum)]
     theme: Option<Theme>,
 
     /// Initial window size, e.g. 1600x1000.
     #[arg(long, value_parser = parse_size)]
     window_size: Option<(f32, f32)>,
+
+    /// Write the graph as SVG to FILE and exit, without opening a window.
+    #[arg(long, value_name = "FILE")]
+    export: Option<PathBuf>,
 
     /// Render the window to a PNG file and exit (for testing and documentation).
     #[arg(long, value_name = "FILE")]
@@ -135,6 +141,18 @@ fn main() -> ExitCode {
         }
     };
 
+    if let Some(path) = cli.export.clone() {
+        let mut settings = settings::Settings::default();
+        apply_cli(&cli, &mut settings);
+        return match export_headless(&repo, &settings, &path) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("gitgraph: could not write {}: {e}", path.display());
+                ExitCode::FAILURE
+            }
+        };
+    }
+
     let (w, h) = cli.window_size.unwrap_or((1400.0, 900.0));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -150,45 +168,8 @@ fn main() -> ExitCode {
         cli.demo_drag.map(|(x, y)| egui::vec2(x, y)),
         cli.zoom,
     );
-    let overrides = move |s: &mut settings::Settings| {
-        if let Some(mode) = cli.mode {
-            s.graph.simplification = match mode {
-                Mode::Labelled => Simplification::Decorated,
-                Mode::Branches => Simplification::BranchesAndMerges,
-                Mode::All => Simplification::AllCommits,
-            };
-        }
-        if let Some(dir) = cli.direction {
-            s.layout.direction = match dir {
-                Dir::Top => Direction::NewestTop,
-                Dir::Bottom => Direction::NewestBottom,
-                Dir::Left => Direction::NewestLeft,
-                Dir::Right => Direction::NewestRight,
-            };
-        }
-        match cli.look {
-            Some(LookArg::Modern) => settings::Look::Modern.apply(s),
-            Some(LookArg::Classic) => settings::Look::Classic.apply(s),
-            None => {}
-        }
-        if let Some(w) = cli.max_row_width {
-            s.layout.max_layer_width = w;
-        }
-        if cli.no_remotes {
-            s.graph.show_remote_branches = false;
-        }
-        if cli.no_tags {
-            s.graph.show_tags = false;
-        }
-        if let Some(theme) = cli.theme {
-            s.theme = match theme {
-                Theme::System => ThemeChoice::System,
-                Theme::Light => ThemeChoice::Light,
-                Theme::Dark => ThemeChoice::Dark,
-            };
-        }
-    };
     let path = cli.path.clone();
+    let overrides = move |s: &mut settings::Settings| apply_cli(&cli, s);
     let result = eframe::run_native(
         "gitgraph",
         options,
@@ -205,4 +186,76 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Applies command-line options on top of the stored settings.
+fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
+    if let Some(mode) = cli.mode {
+        s.graph.simplification = match mode {
+            Mode::Labelled => Simplification::Decorated,
+            Mode::Branches => Simplification::BranchesAndMerges,
+            Mode::All => Simplification::AllCommits,
+        };
+    }
+    if let Some(dir) = cli.direction {
+        s.layout.direction = match dir {
+            Dir::Top => Direction::NewestTop,
+            Dir::Bottom => Direction::NewestBottom,
+            Dir::Left => Direction::NewestLeft,
+            Dir::Right => Direction::NewestRight,
+        };
+    }
+    match cli.look {
+        Some(LookArg::Modern) => settings::Look::Modern.apply(s),
+        Some(LookArg::Classic) => settings::Look::Classic.apply(s),
+        None => {}
+    }
+    if let Some(w) = cli.max_row_width {
+        s.layout.max_layer_width = w;
+    }
+    if cli.no_remotes {
+        s.graph.show_remote_branches = false;
+    }
+    if cli.no_tags {
+        s.graph.show_tags = false;
+    }
+    if let Some(theme) = cli.theme {
+        s.theme = match theme {
+            Theme::System => ThemeChoice::System,
+            Theme::Light => ThemeChoice::Light,
+            Theme::Dark => ThemeChoice::Dark,
+        };
+    }
+}
+
+/// Lays the graph out without a window and writes it as SVG.
+fn export_headless(
+    repo: &gitgraph_core::Repo,
+    settings: &settings::Settings,
+    path: &std::path::Path,
+) -> std::io::Result<()> {
+    let ctx = egui::Context::default();
+    // One pass initialises the fonts used to measure labels.
+    // Nothing is rendered, so the texture updates are discarded.
+    ctx.run_ui(egui::RawInput::default(), |_| {})
+        .textures_delta
+        .clear();
+    let font = egui::FontId::monospace(scene::FONT_SIZE);
+    let text_height = ctx.fonts_mut(|f| f.row_height(&font));
+    let input = ctx.fonts_mut(|f| {
+        let mut width = |s: &str| {
+            f.layout_no_wrap(s.to_owned(), font.clone(), egui::Color32::WHITE)
+                .size()
+                .x
+        };
+        scene::Scene::prepare(repo, settings, &mut width, text_height)
+    });
+    let scene = input.lay_out();
+    let palette = match settings.theme {
+        theme::ThemeChoice::Dark => theme::Palette::dark(),
+        _ => theme::Palette::light(),
+    };
+    std::fs::write(path, export::to_svg(&scene, settings, &palette))?;
+    eprintln!("wrote {} ({} nodes)", path.display(), scene.node_count());
+    Ok(())
 }
