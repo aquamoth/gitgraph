@@ -1,25 +1,35 @@
-//! "Spider web" interaction: drag any node and the rest of the graph follows.
+//! Moving nodes around by hand: the graph as a net of weak springs and weakly repelling nodes.
 //!
-//! Every node and every edge bend point is a particle. Particles are tied together by springs
-//! that remember their offset in the layout: along every edge, and between neighbours within a
-//! layer (those only resist being pushed together), so the drawing behaves like a woven net.
-//! Each particle is also weakly anchored to its layout position, which limits how far a pull
-//! spreads. A node dropped somewhere stays pinned there and the net settles around it.
+//! Every node and every edge bend point is a particle with a *rest position*, at first its
+//! place in the layout. Springs along every edge keep the offsets between rest positions, so a
+//! dragged node pulls its neighbours along. Nodes push each other away when they come closer
+//! than they rest (up to a short range), like weak magnets; nodes side by side in a row keep
+//! their order, like beads on a string, unless one is lifted out of the row. Edges are pushed
+//! aside the same way by their neighbours in a layer. Each particle is weakly anchored to its
+//! rest position, which limits how far a pull spreads.
+//!
+//! What a drag does depends on the [`DragModel`]. In [`DragModel::Adapt`] the rest of the graph
+//! gives way a little; in the other models only the dragged nodes move and the edges to them
+//! stretch. Dropping makes the new shape permanent: every particle that moved now rests where
+//! it is, so the springs keep the *new* offsets and nothing drifts back. Dropped nodes are not
+//! pinned; they give way to later drags like any other node. Every drop can be undone, and a
+//! reset sends everything back to the layout.
 //!
 //! The state is kept as *displacements from the layout*, which stay small and therefore exact
-//! even where layout coordinates run into the millions. Each frame has two parts:
+//! even where layout coordinates run into the millions. Each frame of an adaptive drag has two
+//! parts:
 //!
-//! 1. **Shape.** The net's resting shape for the current drag minimises
-//!    `Σ k_s |d_b − d_a|² + Σ k_a |d_i|²` over displacements `d`, with the dragged and pinned
-//!    nodes held fixed. It is found by Gauss-Seidel relaxation over the woken particles, warm-
-//!    started from the previous frame. In a chain the displacement decays by a factor λ per hop
-//!    when `k_a / k_s = (1 − λ)² / λ`, which is what [`NetParams::reach`] sets.
+//! 1. **Shape.** The net's shape for the current drag minimises
+//!    `Σ k_s |d_b − d_a − (h_b − h_a)|² + Σ k_a |d_i − h_i|²` (plus the magnets) over
+//!    displacements `d`, where `h` are the rest displacements and the dragged nodes are held
+//!    fixed. It is found by Gauss-Seidel relaxation over the woken particles, warm-started from
+//!    the previous frame. In a chain the displacement decays by a factor λ per hop when
+//!    `k_a / k_s = (1 − λ)² / λ`, which is what [`NetParams::pull`] sets.
 //! 2. **Motion.** Every particle follows its target through a damped spring, so the net moves
 //!    with some inertia and, depending on [`NetParams::wobble`], overshoots a little.
 //!
-//! Only particles near the dragged node are simulated (breadth-first up to a budget), so
-//! dragging stays smooth in graphs with a million bend points. [`DragModel`] selects between
-//! prototypes of the behaviour.
+//! Only particles near the dragged nodes are simulated (breadth-first up to a budget), so
+//! dragging stays smooth in graphs with a million bend points.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -27,27 +37,50 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::{Layout, Point};
 
-/// How the rest of the graph reacts when a node is dragged.
+/// What moves when nodes are dragged.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DragModel {
-    /// Springs along edges and across layers, with inertia: the net stretches and wobbles.
+    /// The dragged nodes follow the pointer and the rest of the graph gives way a little:
+    /// neighbours are pulled along their edges, and nodes in the way are pushed aside.
     #[default]
-    Net,
-    /// Springs along edges only, critically damped: neighbours follow smoothly, no wobble.
-    Strings,
-    /// Only the dragged node moves; edges re-route to it.
-    Rigid,
+    #[serde(alias = "Net", alias = "Strings")]
+    Adapt,
+    /// Only the dragged nodes move; the edges to them stretch.
+    #[serde(alias = "Rigid")]
+    Free,
+    /// The dragged nodes move together with everything that grows out of them
+    /// ([`crate::revgraph::RevGraph::subtree`]); nothing else moves. The caller passes the
+    /// whole subtree to [`Net::grab`].
+    Subtree,
 }
 
 impl DragModel {
-    pub const ALL: [DragModel; 3] = [DragModel::Net, DragModel::Strings, DragModel::Rigid];
+    pub const ALL: [DragModel; 3] = [DragModel::Adapt, DragModel::Free, DragModel::Subtree];
 
     pub fn label(self) -> &'static str {
         match self {
-            DragModel::Net => "Spider web (springy net)",
-            DragModel::Strings => "Strings (smooth follow)",
-            DragModel::Rigid => "Rigid (move one node)",
+            DragModel::Adapt => "Adapt",
+            DragModel::Free => "Free",
+            DragModel::Subtree => "Subtree",
         }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            DragModel::Adapt => {
+                "The graph gives way: neighbours follow, nodes in the way move aside"
+            }
+            DragModel::Free => "Move only the selected nodes; nothing else moves",
+            DragModel::Subtree => {
+                "Move the selected nodes and everything that grows out of them \
+                 (their first-parent descendants); nothing else moves"
+            }
+        }
+    }
+
+    /// True if the rest of the graph reacts to a drag.
+    pub fn adapts(self) -> bool {
+        self == DragModel::Adapt
     }
 }
 
@@ -55,36 +88,53 @@ impl DragModel {
 #[serde(default)]
 pub struct NetParams {
     pub model: DragModel,
-    /// 0..=1: how far a pull spreads through the graph.
-    pub reach: f32,
-    /// 0..=1: how much the net overshoots and wobbles before settling (Net model only).
+    /// 0..=1: how far a pull spreads along the edges (Adapt).
+    pub pull: f32,
+    /// 0..=1: how strongly, and from how far, nodes push each other away (Adapt).
+    pub push: f32,
+    /// 0..=1: how much the net overshoots and wobbles before settling (Adapt).
     pub wobble: f32,
-    /// Push overlapping nodes apart.
+    /// Push overlapping nodes apart (Adapt).
     pub avoid_overlap: bool,
 }
 
 impl Default for NetParams {
     fn default() -> Self {
         NetParams {
-            model: DragModel::Net,
-            reach: 0.6,
+            model: DragModel::Adapt,
+            pull: 0.3,
+            push: 0.5,
             wobble: 0.4,
             avoid_overlap: true,
         }
     }
 }
 
-/// At most this many particles are woken around a grabbed node; the rest of a huge graph
+/// At most this many particles are woken around the grabbed nodes; the rest of a huge graph
 /// stays still (a pull has decayed to nothing long before that many hops).
 const ACTIVE_BUDGET: usize = 8_000;
+/// Particles woken around a node that gets pushed from outside the simulated neighbourhood.
+const PUSH_WAKE: usize = 32;
 /// Gauss-Seidel sweeps over the woken particles per frame.
 const SWEEPS: usize = 12;
+/// Sweeps when a drag ends, so that the shape that becomes permanent has converged.
+const FINAL_SWEEPS: usize = 48;
 /// Integration substeps per frame for following the targets.
 const SUBSTEPS: usize = 4;
 /// Natural frequency (Hz) with which particles follow their targets.
 const FOLLOW_HZ: f32 = 3.0;
 /// Minimum gap kept between node boxes when avoiding overlap.
 const OVERLAP_MARGIN: f32 = 6.0;
+/// At `push` = 1, nodes closer than this (gap between boxes, layout units) push each other
+/// away, with this stiffness (edge springs have 1). Both scale linearly with `push`.
+const MAGNET_RANGE: f32 = 64.0;
+const MAGNET_STIFFNESS: f32 = 1.5;
+/// Nearby nodes are collected once per frame, up to this far beyond the magnet range.
+const NEAR_SLACK: f32 = 24.0;
+/// A drop changes a particle's rest position only if it moved more than this.
+const REST_EPSILON: f32 = 0.05;
+/// Number of drops kept for undo.
+const UNDO_LIMIT: usize = 200;
 /// The simulation sleeps once no particle moves faster than this (layout units per second)
 /// and every particle is this close to its target.
 const SLEEP_SPEED: f32 = 1.0;
@@ -101,34 +151,85 @@ struct Spring {
     along_edge: bool,
 }
 
+/// A drag in progress.
+#[derive(Clone, Debug)]
+struct Grab {
+    /// The node under the pointer, and its displacement when grabbed.
+    anchor: u32,
+    anchor_start: Point,
+    /// Held particles and their displacements when grabbed; they all move by `delta`.
+    held: Vec<(u32, Point)>,
+    /// Nodes that count as moved by hand once dropped.
+    marked: Vec<u32>,
+    /// Edges with a held end and bend points that are not all held: they stretch.
+    stretched: Vec<u32>,
+    /// Bend points of the stretched edges (which follow them exactly unless the net adapts).
+    stretched_bends: Vec<u32>,
+    delta: Point,
+    /// True if the rest of the net gives way; false if it stays still.
+    adapt: bool,
+}
+
+/// One undoable step: rest positions and "moved by hand" marks before and after.
+#[derive(Clone, Debug, Default)]
+struct Change {
+    homes: Vec<(u32, Point, Point)>,
+    marks: Vec<(u32, bool, bool)>,
+}
+
+impl Change {
+    fn is_empty(&self) -> bool {
+        self.homes.is_empty() && self.marks.is_empty()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Net {
     node_count: usize,
     /// Layout position of every particle.
     origin: Vec<Point>,
+    /// Rest position of every particle, as a displacement from the layout.
+    home: Vec<Point>,
+    /// Number of particles that rest away from the layout.
+    displaced: usize,
     /// Current displacement from the layout, its velocity, and where it is heading.
     disp: Vec<Point>,
     vel: Vec<Point>,
     target: Vec<Point>,
     /// Half extents of node boxes (zero for bend points).
     half: Vec<Point>,
-    /// Layer of every node, and whether layers run horizontally (newest on top or bottom).
-    node_layer: Vec<u32>,
+    /// Where every woken particle was heading at the start of the frame.
+    before: Vec<Point>,
+    /// Whether layers run horizontally (newest on top or bottom).
     vertical: bool,
-    /// Displacement a dropped node is pinned at.
-    pinned: Vec<Option<Point>>,
+    /// Nodes the user moved by hand.
+    moved: Vec<bool>,
     springs: Vec<Spring>,
     /// Spring ids per particle.
     adjacent: Vec<Vec<u32>>,
     /// Particles of every edge, child node first, parent node last.
     chains: Vec<Vec<u32>>,
-    /// The dragged node and the displacement it is dragged to.
-    grabbed: Option<(u32, Point)>,
+    /// Edges at every node.
+    node_edges: Vec<Vec<u32>>,
+    /// Number of edges through every bend point (more than one where edges are bundled),
+    /// indexed by particle minus `node_count`.
+    bend_edges: Vec<u32>,
+    grab: Option<Grab>,
+    /// Particles held by the current grab.
+    held: Vec<bool>,
     awake: bool,
+    /// Particles follow their targets with some overshoot (during and after an adaptive drag)
+    /// or critically damped.
+    wobbly: bool,
     /// Particles being simulated; everything else is at rest.
     active: Vec<u32>,
     is_active: Vec<bool>,
     grid: Grid,
+    /// Per frame: nodes near each node that push it away, and the gap they keep.
+    magnets: Vec<Vec<(u32, f32)>>,
+    magnet_nodes: Vec<u32>,
+    undo: Vec<Change>,
+    redo: Vec<Change>,
 }
 
 impl Net {
@@ -142,6 +243,8 @@ impl Net {
             .collect();
         let mut layer_of: Vec<u32> = layout.layers.clone();
         let mut chains = Vec::with_capacity(layout.edges.len());
+        let mut node_edges = vec![Vec::new(); n];
+        let mut bend_edges: Vec<u32> = Vec::new();
         let mut springs = Vec::new();
         let mut seen_segments = HashSet::new();
         // Bend point identity -> particle, so bundled edges share their particles.
@@ -149,6 +252,10 @@ impl Net {
 
         for (e, pts) in layout.edges.iter().enumerate() {
             let (child, parent) = layout.edge_ends[e];
+            node_edges[child as usize].push(e as u32);
+            if parent != child {
+                node_edges[parent as usize].push(e as u32);
+            }
             let mut chain = vec![child];
             for (k, p) in pts[1..pts.len() - 1].iter().enumerate() {
                 let id = layout.edge_bends.get(e).and_then(|b| b.get(k)).copied();
@@ -158,6 +265,7 @@ impl Net {
                         let particle = origin.len() as u32;
                         origin.push(*p);
                         half.push(Point::default());
+                        bend_edges.push(0);
                         layer_of.push(layout.layers[child as usize] + 1 + k as u32);
                         if let Some(id) = id {
                             bend_particle.insert(id, particle);
@@ -168,6 +276,13 @@ impl Net {
                 chain.push(particle);
             }
             chain.push(parent);
+            // Count each edge once per bend point, even if it passes it twice.
+            let mut bends: Vec<u32> = chain[1..chain.len() - 1].to_vec();
+            bends.sort_unstable();
+            bends.dedup();
+            for p in bends {
+                bend_edges[p as usize - n] += 1;
+            }
             for w in chain.windows(2) {
                 if seen_segments.insert((w[0], w[1])) {
                     springs.push(Spring {
@@ -212,21 +327,31 @@ impl Net {
         Net {
             node_count: n,
             origin,
+            home: vec![Point::default(); count],
+            displaced: 0,
             disp: vec![Point::default(); count],
             vel: vec![Point::default(); count],
             target: vec![Point::default(); count],
             half,
-            node_layer: layout.layers.clone(),
+            before: vec![Point::default(); count],
             vertical,
-            pinned: vec![None; count],
+            moved: vec![false; n],
             springs,
             adjacent,
             chains,
-            grabbed: None,
+            node_edges,
+            bend_edges,
+            grab: None,
+            held: vec![false; count],
             awake: false,
+            wobbly: false,
             active: Vec::new(),
             is_active: vec![false; count],
             grid: Grid::default(),
+            magnets: vec![Vec::new(); n],
+            magnet_nodes: Vec::new(),
+            undo: Vec::new(),
+            redo: Vec::new(),
         }
     }
 
@@ -247,21 +372,39 @@ impl Net {
         self.chains[e].iter().map(|&p| self.pos(p as usize))
     }
 
-    pub fn is_pinned(&self, node: usize) -> bool {
-        self.pinned[node].is_some()
+    /// True if the user moved `node` by hand (and has not returned it to the layout).
+    pub fn is_moved(&self, node: usize) -> bool {
+        self.moved[node]
     }
 
-    pub fn any_pinned(&self) -> bool {
-        self.pinned[..self.node_count].iter().any(Option::is_some)
+    /// True if `node` rests somewhere else than in the layout.
+    pub fn is_displaced(&self, node: usize) -> bool {
+        self.home[node] != Point::default()
+    }
+
+    /// True if anything rests somewhere else than in the layout.
+    pub fn any_displaced(&self) -> bool {
+        self.displaced > 0
+    }
+
+    fn set_home(&mut self, p: usize, h: Point) {
+        let zero = Point::default();
+        match (self.home[p] == zero, h == zero) {
+            (true, false) => self.displaced += 1,
+            (false, true) => self.displaced -= 1,
+            _ => {}
+        }
+        self.home[p] = h;
     }
 
     /// True while the simulation still has motion to show.
     pub fn is_awake(&self) -> bool {
-        self.awake || self.grabbed.is_some()
+        self.awake || self.grab.is_some()
     }
 
+    /// The node under the pointer while dragging.
     pub fn grabbed(&self) -> Option<usize> {
-        self.grabbed.map(|(p, _)| p as usize)
+        self.grab.as_ref().map(|g| g.anchor as usize)
     }
 
     /// Number of particles currently simulated.
@@ -269,81 +412,358 @@ impl Net {
         self.active.len()
     }
 
-    /// Starts dragging `node`.
-    pub fn grab(&mut self, node: usize) {
-        self.grabbed = Some((node as u32, self.disp[node]));
-        self.wake_around(node);
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
     }
 
-    /// Moves the dragged node's centre to `target`.
-    pub fn drag_to(&mut self, target: Point) {
-        if let Some((p, _)) = self.grabbed {
-            self.grabbed = Some((p, sub(target, self.origin[p as usize])));
-            self.awake = true;
-        }
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
     }
 
-    /// Drops the dragged node where it is and pins it there.
-    pub fn release(&mut self) {
-        if let Some((p, at)) = self.grabbed.take() {
-            let p = p as usize;
-            self.pinned[p] = Some(at);
-            self.disp[p] = at;
-            self.target[p] = at;
-            self.vel[p] = Point::default();
-            self.awake = true;
-        }
-    }
-
-    /// Pinned nodes and their offsets from the layout.
-    pub fn pins(&self) -> impl Iterator<Item = (usize, Point)> + '_ {
-        self.pinned[..self.node_count]
+    /// Starts dragging `nodes` (usually including `anchor`, the node under the pointer), and
+    /// with them the `carried` nodes. They all move rigidly together; when dropped, `nodes` and
+    /// `anchor` count as moved by hand. If `adapt` is true the rest of the net gives way;
+    /// otherwise it stays still and only the edges to the dragged nodes stretch.
+    pub fn grab(&mut self, anchor: usize, nodes: &[usize], carried: &[usize], adapt: bool) {
+        self.cancel_grab();
+        let n = self.node_count;
+        let mut marked: Vec<u32> = nodes
             .iter()
-            .enumerate()
-            .filter_map(|(i, p)| p.map(|d| (i, d)))
-    }
-
-    /// Pins `node` at `offset` from its layout position and lets the net settle around it.
-    pub fn pin(&mut self, node: usize, offset: Point) {
-        self.pinned[node] = Some(offset);
-        self.disp[node] = offset;
-        self.target[node] = offset;
-        self.wake_around(node);
-    }
-
-    /// Lets a pinned node spring back to its layout position.
-    pub fn unpin(&mut self, node: usize) {
-        if self.pinned[node].take().is_some() {
-            self.wake_around(node);
-        }
-    }
-
-    /// Unpins everything; the whole net springs back to the layout.
-    pub fn reset(&mut self) {
-        for node in 0..self.node_count {
-            let moved = self.pinned[node].is_some() || self.disp[node] != Point::default();
-            self.pinned[node] = None;
-            if moved {
-                self.wake_around(node);
+            .chain([&anchor])
+            .filter(|&&node| node < n)
+            .map(|&node| node as u32)
+            .collect();
+        marked.sort_unstable();
+        marked.dedup();
+        let mut held: Vec<u32> = Vec::new();
+        let carried = carried.iter().filter(|&&c| c < n).map(|&c| c as u32);
+        for node in marked.iter().copied().chain(carried) {
+            if !self.held[node as usize] {
+                self.held[node as usize] = true;
+                held.push(node);
             }
         }
+        // Edges at held nodes. Bend points whose edges all run between held nodes are held too.
+        let mut edges: Vec<u32> = held
+            .iter()
+            .flat_map(|&node| self.node_edges[node as usize].iter().copied())
+            .collect();
+        edges.sort_unstable();
+        edges.dedup();
+        let mut internal: HashMap<u32, u32> = HashMap::new();
+        for &e in &edges {
+            let chain = &self.chains[e as usize];
+            let (a, b) = (chain[0] as usize, chain[chain.len() - 1] as usize);
+            if self.held[a] && self.held[b] {
+                let mut bends: Vec<u32> = chain[1..chain.len() - 1].to_vec();
+                bends.sort_unstable();
+                bends.dedup();
+                for p in bends {
+                    *internal.entry(p).or_default() += 1;
+                }
+            }
+        }
+        for (p, k) in internal {
+            if k == self.bend_edges[p as usize - n] {
+                self.held[p as usize] = true;
+                held.push(p);
+            }
+        }
+        let stretched: Vec<u32> = edges
+            .into_iter()
+            .filter(|&e| {
+                let chain = &self.chains[e as usize];
+                chain[1..chain.len() - 1]
+                    .iter()
+                    .any(|&p| !self.held[p as usize])
+            })
+            .collect();
+        let mut stretched_bends: Vec<u32> = stretched
+            .iter()
+            .flat_map(|&e| {
+                let chain = &self.chains[e as usize];
+                chain[1..chain.len() - 1].iter().copied()
+            })
+            .filter(|&p| !self.held[p as usize])
+            .collect();
+        stretched_bends.sort_unstable();
+        stretched_bends.dedup();
+
+        for &p in &held {
+            self.activate(p as usize);
+        }
+        if adapt {
+            self.wake_around(&held, ACTIVE_BUDGET);
+        } else {
+            for &p in &stretched_bends {
+                self.activate(p as usize);
+            }
+        }
+        self.wobbly = adapt;
+        self.awake = true;
+        self.grab = Some(Grab {
+            anchor: anchor as u32,
+            anchor_start: self.disp[anchor],
+            held: held.iter().map(|&p| (p, self.disp[p as usize])).collect(),
+            marked,
+            stretched,
+            stretched_bends,
+            delta: Point::default(),
+            adapt,
+        });
+    }
+
+    /// Moves the node under the pointer's centre to `target`; the other dragged nodes keep
+    /// their offsets from it.
+    pub fn drag_to(&mut self, target: Point) {
+        if let Some(g) = &mut self.grab {
+            let at = sub(target, self.origin[g.anchor as usize]);
+            g.delta = sub(at, g.anchor_start);
+            self.awake = true;
+        }
+    }
+
+    /// Drops the dragged nodes where they are. The shape the net has taken becomes its new
+    /// resting shape, and the dragged nodes are marked as moved. Undoable.
+    pub fn release(&mut self, params: &NetParams) {
+        if self.grab.is_none() {
+            return;
+        }
+        self.shape(params, FINAL_SWEEPS);
+        let grab = self.grab.take().expect("grab exists");
+        let mut change = Change::default();
+        for k in 0..self.active.len() {
+            let p = self.active[k] as usize;
+            let t = self.target[p];
+            if len(sub(t, self.home[p])) > REST_EPSILON {
+                change.homes.push((p as u32, self.home[p], t));
+                self.set_home(p, t);
+            }
+            self.target[p] = self.home[p];
+        }
+        for &(p, _) in &grab.held {
+            self.held[p as usize] = false;
+        }
+        if len(grab.delta) > REST_EPSILON {
+            for &node in &grab.marked {
+                if !self.moved[node as usize] {
+                    self.moved[node as usize] = true;
+                    change.marks.push((node, false, true));
+                }
+            }
+        }
+        self.record(change);
+        self.awake = true;
+    }
+
+    /// Ends a drag without keeping anything from it.
+    fn cancel_grab(&mut self) {
+        if let Some(grab) = self.grab.take() {
+            for &(p, _) in &grab.held {
+                self.held[p as usize] = false;
+            }
+            self.awake = true;
+        }
+    }
+
+    fn record(&mut self, change: Change) {
+        if change.is_empty() {
+            return;
+        }
+        self.undo.push(change);
+        if self.undo.len() > UNDO_LIMIT {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+
+    /// Applies a change (or reverts it); the particles concerned move there smoothly.
+    fn apply(&mut self, change: &Change, forward: bool) {
+        for &(p, before, after) in &change.homes {
+            self.set_home(p as usize, if forward { after } else { before });
+            self.activate(p as usize);
+        }
+        for &(node, before, after) in &change.marks {
+            self.moved[node as usize] = if forward { after } else { before };
+        }
+        self.wobbly = false;
+        self.awake = true;
+    }
+
+    /// Reverts the last drop, reset or return to the layout. Returns false if there is none.
+    pub fn undo(&mut self) -> bool {
+        self.cancel_grab();
+        let Some(change) = self.undo.pop() else {
+            return false;
+        };
+        self.apply(&change, false);
+        self.redo.push(change);
+        true
+    }
+
+    /// Repeats the last undone change. Returns false if there is none.
+    pub fn redo(&mut self) -> bool {
+        self.cancel_grab();
+        let Some(change) = self.redo.pop() else {
+            return false;
+        };
+        self.apply(&change, true);
+        self.undo.push(change);
+        true
+    }
+
+    /// Sends everything back to the layout. Undoable.
+    pub fn reset(&mut self) {
+        self.cancel_grab();
+        let mut change = Change::default();
+        for (p, &h) in self.home.iter().enumerate() {
+            if h != Point::default() {
+                change.homes.push((p as u32, h, Point::default()));
+            }
+        }
+        for (node, &moved) in self.moved.iter().enumerate() {
+            if moved {
+                change.marks.push((node as u32, true, false));
+            }
+        }
+        self.apply(&change, true);
+        self.record(change);
+    }
+
+    /// Sends `nodes` back to their layout positions; nothing else moves, the edges at them
+    /// stretch. Undoable.
+    pub fn return_to_layout(&mut self, nodes: &[usize]) {
+        self.cancel_grab();
+        let by: HashMap<u32, Point> = nodes
+            .iter()
+            .filter(|&&node| node < self.node_count)
+            .map(|&node| (node as u32, scale(self.home[node], -1.0)))
+            .collect();
+        let mut change = Change {
+            homes: self.shifted_homes(&by),
+            marks: Vec::new(),
+        };
+        for &node in by.keys() {
+            if self.moved[node as usize] {
+                change.marks.push((node, true, false));
+            }
+        }
+        self.apply(&change, true);
+        self.record(change);
+    }
+
+    /// Nodes that rest away from the layout or were moved by hand: node, rest offset from the
+    /// layout, moved by hand. For saving; see [`Net::restore`].
+    pub fn rest_offsets(&self) -> impl Iterator<Item = (usize, Point, bool)> + '_ {
+        (0..self.node_count)
+            .filter(|&i| self.moved[i] || self.home[i] != Point::default())
+            .map(|i| (i, self.home[i], self.moved[i]))
+    }
+
+    /// Puts nodes at saved rest offsets from the layout at once (the edges at them follow).
+    /// Meant for a fresh net; not recorded for undo.
+    pub fn restore(&mut self, saved: impl IntoIterator<Item = (usize, Point, bool)>) {
+        self.cancel_grab();
+        let mut by = HashMap::new();
+        for (node, offset, moved) in saved {
+            if node < self.node_count && offset.x.is_finite() && offset.y.is_finite() {
+                by.insert(node as u32, sub(offset, self.home[node]));
+                self.moved[node] = moved;
+            }
+        }
+        for (p, _, after) in self.shifted_homes(&by) {
+            let p = p as usize;
+            self.set_home(p, after);
+            self.disp[p] = after;
+            self.target[p] = after;
+            self.vel[p] = Point::default();
+        }
+    }
+
+    /// Rest positions after moving the given nodes by the given amounts, with the bend points
+    /// of their edges moved proportionally: (particle, before, after).
+    fn shifted_homes(&self, by: &HashMap<u32, Point>) -> Vec<(u32, Point, Point)> {
+        let mut out: Vec<(u32, Point, Point)> = by
+            .iter()
+            .filter(|&(_, &d)| d != Point::default())
+            .map(|(&node, &d)| {
+                let h = self.home[node as usize];
+                (node, h, add(h, d))
+            })
+            .collect();
+        let mut edges: Vec<u32> = by
+            .keys()
+            .flat_map(|&node| self.node_edges[node as usize].iter().copied())
+            .collect();
+        edges.sort_unstable();
+        edges.dedup();
+        let shifts = self.bend_shifts(&edges, |node| by.get(&node).copied().unwrap_or_default());
+        for (p, s) in shifts {
+            let h = self.home[p as usize];
+            if s != Point::default() {
+                out.push((p, h, add(h, s)));
+            }
+        }
+        out
+    }
+
+    /// How far the bend points of `edges` move when their end nodes move by `shift_of`: each
+    /// edge's bend points share the movement of its ends in proportion to their distance along
+    /// the edge. A bend point shared by several (bundled) edges gets the average over all of
+    /// them.
+    fn bend_shifts(&self, edges: &[u32], shift_of: impl Fn(u32) -> Point) -> HashMap<u32, Point> {
+        let n = self.node_count;
+        let mut out: HashMap<u32, Point> = HashMap::new();
+        let rest = |p: u32| (self.origin[p as usize], self.home[p as usize]);
+        let mut run = Vec::new();
+        for &e in edges {
+            let chain = &self.chains[e as usize];
+            let last = chain.len() - 1;
+            let (sa, sb) = (shift_of(chain[0]), shift_of(chain[last]));
+            if last < 2 || (sa == Point::default() && sb == Point::default()) {
+                continue;
+            }
+            // Distance along the edge's resting shape.
+            run.clear();
+            run.push(0.0f32);
+            for w in chain.windows(2) {
+                let ((oa, ha), (ob, hb)) = (rest(w[0]), rest(w[1]));
+                let step = len(add(sub(ob, oa), sub(hb, ha)));
+                run.push(run[run.len() - 1] + step);
+            }
+            let total = run[last];
+            for (k, &p) in chain.iter().enumerate().take(last).skip(1) {
+                let t = if total > 0.0 {
+                    run[k] / total
+                } else {
+                    k as f32 / last as f32
+                };
+                let s = add(scale(sa, 1.0 - t), scale(sb, t));
+                let share = scale(s, 1.0 / self.bend_edges[p as usize - n] as f32);
+                let slot = out.entry(p).or_default();
+                *slot = add(*slot, share);
+            }
+        }
+        out
     }
 
     fn activate(&mut self, p: usize) {
         if !self.is_active[p] {
             self.is_active[p] = true;
+            self.before[p] = self.target[p];
             self.active.push(p as u32);
         }
     }
 
-    /// Wakes the particles nearest to `p` (breadth-first over springs), up to the budget.
-    fn wake_around(&mut self, p: usize) {
+    /// Wakes the particles nearest to `from` (breadth-first over springs), up to `budget`
+    /// more than are awake already.
+    fn wake_around(&mut self, from: &[u32], budget: usize) {
         self.awake = true;
-        let budget = self.active.len() + ACTIVE_BUDGET;
-        let mut queue = VecDeque::from([p]);
-        let mut seen = HashSet::from([p]);
+        let limit = self.active.len() + budget;
+        let mut queue: VecDeque<usize> = from.iter().map(|&p| p as usize).collect();
+        let mut seen: HashSet<usize> = queue.iter().copied().collect();
         while let Some(q) = queue.pop_front() {
-            if self.active.len() >= budget {
+            if self.active.len() >= limit {
                 break;
             }
             self.activate(q);
@@ -367,110 +787,215 @@ impl Net {
         self.active.clear();
     }
 
-    /// Where a particle is held (as a displacement), if it is dragged or pinned.
-    fn fixed_at(&self, i: usize) -> Option<Point> {
-        match self.grabbed {
-            Some((g, at)) if g as usize == i => Some(at),
-            _ => self.pinned[i],
-        }
-    }
-
     /// Advances the simulation by `dt` seconds. Returns true while anything is still moving.
     pub fn step(&mut self, dt: f32, params: &NetParams) -> bool {
         if !self.is_awake() {
             return false;
         }
         let dt = dt.clamp(1.0 / 240.0, 1.0 / 30.0);
-        let lambda = 0.3 + 0.6 * params.reach.clamp(0.0, 1.0);
-        let k_anchor = (1.0 - lambda) * (1.0 - lambda) / lambda;
-        let (zeta, use_weft, rigid) = match params.model {
-            DragModel::Net => (1.0 - 0.75 * params.wobble.clamp(0.0, 1.0), true, false),
-            DragModel::Strings => (1.0, false, false),
-            DragModel::Rigid => (1.0, false, true),
-        };
+        self.shape(params, SWEEPS);
 
-        // 1. Relax the target shape. Particles that are not woken keep their displacement.
-        let mut target = std::mem::take(&mut self.target);
-        for sweep in 0..SWEEPS {
-            for &i in &self.active {
-                let i = i as usize;
-                if let Some(fixed) = self.fixed_at(i) {
-                    target[i] = fixed;
-                    continue;
-                }
-                // Bend points hold on to the layout less, so edges bend before nodes move.
-                let k_home = if i < self.node_count {
-                    k_anchor
-                } else {
-                    k_anchor * 0.5
-                };
-                let mut num = Point::default();
-                let mut den = k_home;
-                if !rigid {
-                    for &si in &self.adjacent[i] {
-                        let s = &self.springs[si as usize];
-                        let (a, b) = (s.a as usize, s.b as usize);
-                        if !s.along_edge {
-                            // Between neighbours in a layer: only resist being pushed together.
-                            let squeezed = dot(sub(target[b], target[a]), s.offset) < 0.0;
-                            if !use_weft || !squeezed {
-                                continue;
-                            }
-                        }
-                        let other = if i == a { target[b] } else { target[a] };
-                        num = add(num, scale(other, s.stiffness));
-                        den += s.stiffness;
-                    }
-                }
-                target[i] = scale(num, 1.0 / den);
-            }
-            // With nothing held, the net is just returning to the (overlap-free) layout.
-            let holding = self.grabbed.is_some() || self.any_pinned();
-            if params.avoid_overlap && holding && sweep % 4 == 3 {
-                self.separate_nodes(&mut target);
+        // Move towards the targets (damped springs, semi-implicit Euler). Held particles, and
+        // the stretched edges of a drag that does not adapt, follow exactly.
+        if let Some(g) = &self.grab
+            && !g.adapt
+        {
+            for &p in &g.stretched_bends {
+                self.disp[p as usize] = self.target[p as usize];
+                self.vel[p as usize] = Point::default();
             }
         }
-
-        // 2. Move towards the targets (damped springs, semi-implicit Euler).
+        let zeta = if self.wobbly {
+            1.0 - 0.75 * params.wobble.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
         let omega = std::f32::consts::TAU * FOLLOW_HZ;
         let h = dt / SUBSTEPS as f32;
         let mut max_speed = 0.0f32;
         let mut max_distance = 0.0f32;
         for &i in &self.active {
             let i = i as usize;
-            if self.fixed_at(i).is_some() {
-                self.disp[i] = target[i];
+            if self.held[i] {
+                self.disp[i] = self.target[i];
                 self.vel[i] = Point::default();
                 continue;
             }
             for _ in 0..SUBSTEPS {
-                let pull = scale(sub(target[i], self.disp[i]), omega * omega);
+                let pull = scale(sub(self.target[i], self.disp[i]), omega * omega);
                 let drag = scale(self.vel[i], 2.0 * zeta * omega);
                 self.vel[i] = add(self.vel[i], scale(sub(pull, drag), h));
                 self.disp[i] = add(self.disp[i], scale(self.vel[i], h));
             }
             max_speed = max_speed.max(len(self.vel[i]));
-            max_distance = max_distance.max(len(sub(target[i], self.disp[i])));
+            max_distance = max_distance.max(len(sub(self.target[i], self.disp[i])));
         }
-        self.target = target;
         self.awake = max_speed > SLEEP_SPEED || max_distance > SLEEP_DISTANCE;
-        if !self.awake && self.grabbed.is_none() {
+        if !self.awake && self.grab.is_none() {
             self.deactivate_all();
         }
         self.is_awake()
     }
 
-    /// Pushes overlapping node boxes apart along their axis of least overlap (in `target`
-    /// displacements). Only nodes near the woken ones are considered; a resting node that
-    /// gets hit is woken up.
-    fn separate_nodes(&mut self, target: &mut [Point]) {
+    /// Computes where every woken particle is heading.
+    fn shape(&mut self, params: &NetParams, sweeps: usize) {
+        let Some(grab) = &self.grab else {
+            for &i in &self.active {
+                self.target[i as usize] = self.home[i as usize];
+            }
+            return;
+        };
+        if !grab.adapt {
+            // Everything else stays (or comes to rest) where it rests; the edges at the dragged
+            // nodes stretch evenly.
+            for &i in &self.active {
+                let i = i as usize;
+                if !self.held[i] {
+                    self.target[i] = self.home[i];
+                }
+            }
+            for &(p, start) in &grab.held {
+                self.target[p as usize] = add(start, grab.delta);
+            }
+            let shifts = self.bend_shifts(&grab.stretched, |node| {
+                sub(self.target[node as usize], self.home[node as usize])
+            });
+            for (p, s) in shifts {
+                if !self.held[p as usize] {
+                    self.target[p as usize] = add(self.home[p as usize], s);
+                }
+            }
+            return;
+        }
+
+        // Where everything was heading at the start of the frame decides on which side of each
+        // other things stay.
+        for &i in &self.active {
+            self.before[i as usize] = self.target[i as usize];
+        }
+        for &(p, start) in &grab.held {
+            self.target[p as usize] = add(start, grab.delta);
+        }
+        let lambda = 0.3 + 0.6 * params.pull.clamp(0.0, 1.0);
+        let k_anchor = (1.0 - lambda) * (1.0 - lambda) / lambda;
+        let push = params.push.clamp(0.0, 1.0);
+        let (range, k_magnet) = (MAGNET_RANGE * push, MAGNET_STIFFNESS * push);
+        let weft_reach = range + OVERLAP_MARGIN;
+        let near = if push > 0.0 || params.avoid_overlap {
+            self.near_pairs(range + NEAR_SLACK)
+        } else {
+            Vec::new()
+        };
+        self.collect_magnets(&near, range, k_magnet > 0.0);
+
         let n = self.node_count;
+        let mut target = std::mem::take(&mut self.target);
+        for sweep in 0..sweeps {
+            for &i in &self.active {
+                let i = i as usize;
+                if self.held[i] {
+                    continue;
+                }
+                // Bend points hold on to their rest less, so edges bend before nodes move.
+                let k_home = if i < n { k_anchor } else { k_anchor * 0.5 };
+                let mut num = scale(self.home[i], k_home);
+                let mut den = k_home;
+                for &si in &self.adjacent[i] {
+                    let s = &self.springs[si as usize];
+                    let (a, b) = (s.a as usize, s.b as usize);
+                    let rest = sub(self.home[b], self.home[a]);
+                    if !s.along_edge {
+                        // Between neighbours in a layer: keep edges from being pushed into each
+                        // other or through nodes (the magnets keep nodes apart). Only resist
+                        // coming closer than they rest, and only once they are near.
+                        if a < n && b < n {
+                            continue;
+                        }
+                        let apart = add(s.offset, rest);
+                        let dist = len(apart);
+                        if dist == 0.0 {
+                            continue;
+                        }
+                        let mut u = scale(apart, 1.0 / dist);
+                        let ext = add(self.half[a], self.half[b]);
+                        let reach = u.x.abs() * ext.x + u.y.abs() * ext.y + weft_reach;
+                        // Keep them on the side they were on; once something has passed, it
+                        // stays passed.
+                        let was = |p: usize| {
+                            if self.is_active[p] {
+                                self.before[p]
+                            } else {
+                                target[p]
+                            }
+                        };
+                        let passed = dot(add(s.offset, sub(was(b), was(a))), u) < 0.0;
+                        let keep = if passed {
+                            u = scale(u, -1.0);
+                            reach
+                        } else {
+                            dist.min(reach)
+                        };
+                        let now = dot(add(s.offset, sub(target[b], target[a])), u);
+                        if now >= keep {
+                            continue;
+                        }
+                        let push = scale(u, keep - now);
+                        let want = if i == a {
+                            sub(target[a], push)
+                        } else {
+                            add(target[b], push)
+                        };
+                        num = add(num, scale(want, s.stiffness));
+                        den += s.stiffness;
+                        continue;
+                    }
+                    let want = if i == a {
+                        sub(target[b], rest)
+                    } else {
+                        add(target[a], rest)
+                    };
+                    num = add(num, scale(want, s.stiffness));
+                    den += s.stiffness;
+                }
+                if i < n {
+                    for &(k, keep) in &self.magnets[i] {
+                        let pair = &near[k as usize];
+                        let (gap, away) = self.gap(pair, &target, 0.0);
+                        if gap < keep {
+                            let away = if pair.b as usize == i {
+                                away
+                            } else {
+                                scale(away, -1.0)
+                            };
+                            let want = add(target[i], scale(away, keep - gap));
+                            num = add(num, scale(want, k_magnet));
+                            den += k_magnet;
+                        }
+                    }
+                }
+                target[i] = scale(num, 1.0 / den);
+            }
+            if params.avoid_overlap && sweep % 4 == 3 {
+                self.separate_nodes(&mut target, &near);
+            }
+        }
+        self.target = target;
+        for &node in &self.magnet_nodes {
+            self.magnets[node as usize].clear();
+        }
+        self.magnet_nodes.clear();
+    }
+
+    /// Pairs of nodes whose boxes are less than `pad` apart, at least one of them woken, and
+    /// how they sat at the start of the frame.
+    fn near_pairs(&mut self, pad: f32) -> Vec<Near> {
+        let n = self.node_count;
+        let place = |i: usize| add(self.origin[i], self.target[i]);
         let mut area: Option<(Point, Point)> = None;
         for &i in &self.active {
             let i = i as usize;
             if i < n {
-                let p = add(self.origin[i], target[i]);
-                let (lo, hi) = (sub(p, self.half[i]), add(p, self.half[i]));
+                let (lo, hi) = (sub(place(i), self.half[i]), add(place(i), self.half[i]));
                 area = Some(match area {
                     None => (lo, hi),
                     Some((a, b)) => (
@@ -480,73 +1005,180 @@ impl Net {
                 });
             }
         }
-        let Some((lo, hi)) = area else { return };
-        let reach = self.grid.cell.max(64.0);
-        let mut near = Vec::new();
-        let mut positions = HashMap::new();
-        for (i, (&o, &d)) in self.origin.iter().zip(target.iter()).take(n).enumerate() {
-            let (p, h) = (add(o, d), self.half[i]);
-            if p.x + h.x >= lo.x - reach
-                && p.x - h.x <= hi.x + reach
-                && p.y + h.y >= lo.y - reach
-                && p.y - h.y <= hi.y + reach
+        let Some((lo, hi)) = area else {
+            return Vec::new();
+        };
+        let mut items = Vec::new();
+        for i in 0..n {
+            let (p, h) = (place(i), self.half[i]);
+            if p.x + h.x >= lo.x - pad
+                && p.x - h.x <= hi.x + pad
+                && p.y + h.y >= lo.y - pad
+                && p.y - h.y <= hi.y + pad
             {
-                near.push(i as u32);
-                positions.insert(i as u32, p);
+                let grown = Point::new(h.x + pad / 2.0, h.y + pad / 2.0);
+                items.push((i as u32, p, grown));
             }
         }
-        self.grid.rebuild(&near, &positions, &self.half);
+        self.grid.rebuild(&items);
         let mut pairs = Vec::new();
         self.grid.candidate_pairs(&mut pairs);
-        for (a, b) in pairs {
-            let (a, b) = (a as usize, b as usize);
-            if !self.is_active[a] && !self.is_active[b] {
+        let (along, across) = self.axes();
+        pairs
+            .into_iter()
+            .filter_map(|(a, b)| {
+                let (a, b) = (a as usize, b as usize);
+                if !self.is_active[a] && !self.is_active[b] {
+                    return None;
+                }
+                let d = add(
+                    sub(self.origin[b], self.origin[a]),
+                    sub(self.target[b], self.target[a]),
+                );
+                let ext = add(self.half[a], self.half[b]);
+                if d.x.abs() >= ext.x + pad || d.y.abs() >= ext.y + pad {
+                    return None;
+                }
+                // Side by side in a row: they keep their order along it.
+                let was = |p: usize| {
+                    if self.is_active[p] {
+                        self.before[p]
+                    } else {
+                        self.target[p]
+                    }
+                };
+                let d = add(sub(self.origin[b], self.origin[a]), sub(was(b), was(a)));
+                let in_row = dot(d, across).abs() < dot(ext, across);
+                let side = match (in_row, dot(d, along) < 0.0) {
+                    (false, _) => 0.0,
+                    (true, true) => -1.0,
+                    (true, false) => 1.0,
+                };
+                Some(Near {
+                    a: a as u32,
+                    b: b as u32,
+                    side,
+                })
+            })
+            .collect()
+    }
+
+    /// Unit vectors along the layers and across them.
+    fn axes(&self) -> (Point, Point) {
+        if self.vertical {
+            (Point::new(1.0, 0.0), Point::new(0.0, 1.0))
+        } else {
+            (Point::new(0.0, 1.0), Point::new(1.0, 0.0))
+        }
+    }
+
+    /// Gap between the boxes of a pair of nodes, grown by `margin`, for displacements `t`;
+    /// and the unit direction in which moving `b` widens it. Nodes side by side in a row
+    /// measure it along the row, in their order.
+    fn gap(&self, pair: &Near, t: &[Point], margin: f32) -> (f32, Point) {
+        let (a, b) = (pair.a as usize, pair.b as usize);
+        let d = add(sub(self.origin[b], self.origin[a]), sub(t[b], t[a]));
+        let ext = add(add(self.half[a], self.half[b]), Point::new(margin, margin));
+        if pair.side != 0.0 {
+            let (along, _) = self.axes();
+            let gap = dot(d, along) * pair.side - dot(ext, along);
+            (gap, scale(along, pair.side))
+        } else {
+            box_gap(d, ext)
+        }
+    }
+
+    /// Sets up this frame's magnets between the nearby pairs, and wakes nodes that are about
+    /// to be pushed. A pair keeps the gap it has at rest, or `range` if that is smaller.
+    fn collect_magnets(&mut self, near: &[Near], range: f32, magnets: bool) {
+        for (k, pair) in near.iter().enumerate() {
+            let (a, b) = (pair.a as usize, pair.b as usize);
+            if self.held[a] && self.held[b] {
                 continue;
             }
-            let d = sub(
-                add(self.origin[b], target[b]),
-                add(self.origin[a], target[a]),
+            let ext = add(self.half[a], self.half[b]);
+            let rest = add(
+                sub(self.origin[b], self.origin[a]),
+                sub(self.home[b], self.home[a]),
             );
-            let ox = self.half[a].x + self.half[b].x + OVERLAP_MARGIN - d.x.abs();
-            let oy = self.half[a].y + self.half[b].y + OVERLAP_MARGIN - d.y.abs();
-            if ox <= 0.0 || oy <= 0.0 {
+            let at_rest = box_gap(rest, ext).0;
+            let keep = if magnets {
+                at_rest.min(range)
+            } else {
+                at_rest.min(0.0)
+            };
+            let now = self.gap(pair, &self.target, 0.0).0;
+            if now >= keep.max(OVERLAP_MARGIN) + NEAR_SLACK / 2.0 {
                 continue;
             }
+            for p in [a, b] {
+                if !self.is_active[p] {
+                    self.wake_around(&[p as u32], PUSH_WAKE);
+                }
+            }
+            if magnets {
+                for p in [a, b] {
+                    if self.magnets[p].is_empty() {
+                        self.magnet_nodes.push(p as u32);
+                    }
+                    self.magnets[p].push((k as u32, keep));
+                }
+            }
+        }
+    }
+
+    /// Pushes overlapping node boxes apart (in `target` displacements): nodes side by side in
+    /// a row along the row, in their order, so that they never get pushed past each other;
+    /// others along their axis of least overlap. A resting node that gets hit is woken up.
+    fn separate_nodes(&mut self, target: &mut [Point], near: &[Near]) {
+        for pair in near {
+            let (gap, away) = self.gap(pair, target, OVERLAP_MARGIN);
+            if gap >= 0.0 {
+                continue;
+            }
+            let (a, b) = (pair.a as usize, pair.b as usize);
             self.activate(a);
             self.activate(b);
-            let wa = if self.fixed_at(a).is_some() { 0.0 } else { 1.0 };
-            let wb = if self.fixed_at(b).is_some() { 0.0 } else { 1.0 };
+            let wa = if self.held[a] { 0.0 } else { 1.0 };
+            let wb = if self.held[b] { 0.0 } else { 1.0 };
             if wa + wb == 0.0 {
                 continue;
             }
-            let push = if self.node_layer[a] == self.node_layer[b] {
-                // Same layer: push apart along the layer, in their layout order, so that
-                // neighbours never get pushed past each other.
-                let along = if self.vertical {
-                    Point::new(1.0, 0.0)
-                } else {
-                    Point::new(0.0, 1.0)
-                };
-                let order = if dot(sub(self.origin[b], self.origin[a]), along) < 0.0 {
-                    -1.0
-                } else {
-                    1.0
-                };
-                let needed = dot(add(self.half[a], self.half[b]), along) + OVERLAP_MARGIN;
-                let have = dot(d, along) * order;
-                scale(along, order * (needed - have).max(0.0))
-            } else if ox < oy {
-                Point::new(if d.x < 0.0 { -ox } else { ox }, 0.0)
-            } else {
-                Point::new(0.0, if d.y < 0.0 { -oy } else { oy })
-            };
+            let push = scale(away, -gap);
             target[a] = sub(target[a], scale(push, wa / (wa + wb)));
             target[b] = add(target[b], scale(push, wb / (wa + wb)));
         }
     }
 }
 
-/// Uniform grid for finding overlapping node boxes.
+/// Two nodes near each other during a frame.
+#[derive(Clone, Copy, Debug)]
+struct Near {
+    a: u32,
+    b: u32,
+    /// ±1 if they sat side by side in a row at the start of the frame (`b` after `a` along the
+    /// row, or before it), 0 otherwise.
+    side: f32,
+}
+
+/// Gap between two boxes whose centres are `d` apart and whose half extents add up to `ext`
+/// (negative if they overlap), and the unit direction in which moving the second box away
+/// from the first widens it fastest.
+fn box_gap(d: Point, ext: Point) -> (f32, Point) {
+    let (gx, gy) = (d.x.abs() - ext.x, d.y.abs() - ext.y);
+    let sx = if d.x < 0.0 { -1.0 } else { 1.0 };
+    let sy = if d.y < 0.0 { -1.0 } else { 1.0 };
+    if gx > 0.0 && gy > 0.0 {
+        let g = (gx * gx + gy * gy).sqrt();
+        (g, Point::new(sx * gx / g, sy * gy / g))
+    } else if gx > gy {
+        (gx, Point::new(sx, 0.0))
+    } else {
+        (gy, Point::new(0.0, sy))
+    }
+}
+
+/// Uniform grid for finding overlapping boxes.
 #[derive(Clone, Debug, Default)]
 struct Grid {
     cell: f32,
@@ -554,15 +1186,14 @@ struct Grid {
 }
 
 impl Grid {
-    /// Indexes the boxes of `items`, whose positions are in `pos`.
-    fn rebuild(&mut self, items: &[u32], pos: &HashMap<u32, Point>, half: &[Point]) {
+    /// Indexes boxes given as (id, centre, half extents).
+    fn rebuild(&mut self, items: &[(u32, Point, Point)]) {
         self.cells.clear();
-        let max_half = items.iter().fold(0.0f32, |m, &i| {
-            m.max(half[i as usize].x).max(half[i as usize].y)
-        });
-        self.cell = (2.0 * max_half + OVERLAP_MARGIN).max(32.0);
-        for &i in items {
-            let (p, h) = (pos[&i], half[i as usize]);
+        let max_half = items
+            .iter()
+            .fold(0.0f32, |m, &(_, _, h)| m.max(h.x).max(h.y));
+        self.cell = (2.0 * max_half).max(32.0);
+        for &(i, p, h) in items {
             let (x0, y0) = self.key(p.x - h.x, p.y - h.y);
             let (x1, y1) = self.key(p.x + h.x, p.y + h.y);
             for x in x0..=x1 {
@@ -612,32 +1243,38 @@ fn dot(a: Point, b: Point) -> f32 {
 fn len(a: Point) -> f32 {
     dot(a, a).sqrt()
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::layout::{self, LayoutEdge, LayoutInput, LayoutOptions};
 
-    /// A chain of five nodes: 0 -> 1 -> 2 -> 3 -> 4.
-    fn chain_net() -> (Layout, Net) {
-        let input = LayoutInput {
-            sizes: vec![Point::new(60.0, 20.0); 5],
-            times: vec![5, 4, 3, 2, 1],
-            edges: (0..4)
-                .map(|i| LayoutEdge {
-                    child: i,
-                    parent: i + 1,
-                    first_parent: true,
-                })
-                .collect(),
-            priority: Vec::new(),
-        };
-        let l = layout::layout(&input, &LayoutOptions::default());
+    fn net_for(input: &LayoutInput) -> (Layout, Net) {
+        let l = layout::layout(input, &LayoutOptions::default());
         let net = Net::new(&l, &input.sizes);
         (l, net)
     }
 
+    fn edge(child: u32, parent: u32) -> LayoutEdge {
+        LayoutEdge {
+            child,
+            parent,
+            first_parent: true,
+        }
+    }
+
+    /// A chain of five nodes: 0 -> 1 -> 2 -> 3 -> 4.
+    fn chain_net() -> (Layout, Net) {
+        net_for(&LayoutInput {
+            sizes: vec![Point::new(60.0, 20.0); 5],
+            times: vec![5, 4, 3, 2, 1],
+            edges: (0..4).map(|i| edge(i, i + 1)).collect(),
+            priority: Vec::new(),
+        })
+    }
+
     fn settle(net: &mut Net, params: &NetParams) {
-        for _ in 0..2000 {
+        for _ in 0..3000 {
             if !net.step(1.0 / 60.0, params) {
                 return;
             }
@@ -645,51 +1282,262 @@ mod tests {
         panic!("net did not settle");
     }
 
+    /// Drags `nodes` by `by` (grabbing `nodes[0]`) over half a second, then drops them.
+    fn drag(net: &mut Net, nodes: &[usize], by: Point, params: &NetParams) {
+        let start = net.node_pos(nodes[0]);
+        net.grab(nodes[0], nodes, &[], params.model.adapts());
+        for f in 1..=30 {
+            let t = f as f32 / 30.0;
+            net.drag_to(add(start, scale(by, t)));
+            net.step(1.0 / 60.0, params);
+        }
+        net.release(params);
+    }
+
+    fn free() -> NetParams {
+        NetParams {
+            model: DragModel::Free,
+            ..NetParams::default()
+        }
+    }
+
+    fn close(a: Point, b: Point) -> bool {
+        (a.x - b.x).abs() < 0.5 && (a.y - b.y).abs() < 0.5
+    }
+
     #[test]
-    fn pull_spreads_with_decay_and_pins_on_release() {
-        for model in [DragModel::Net, DragModel::Strings] {
-            let (l, mut net) = chain_net();
-            let params = NetParams {
-                model,
-                ..NetParams::default()
-            };
-            net.grab(2);
-            let target = Point::new(l.nodes[2].x + 200.0, l.nodes[2].y);
-            net.drag_to(target);
-            for _ in 0..30 {
-                net.step(1.0 / 60.0, &params);
-            }
-            net.release();
-            settle(&mut net, &params);
-            assert_eq!(net.node_pos(2), target, "{model:?}: dropped node stays put");
-            assert!(net.is_pinned(2));
-            let moved = |i: usize| net.node_pos(i).x - l.nodes[i].x;
-            assert!(
-                moved(1) > 20.0 && moved(3) > 20.0,
-                "{model:?}: neighbours follow"
-            );
-            assert!(
-                moved(1) < 200.0 && moved(0) < moved(1),
-                "{model:?}: pull decays: {:?}",
-                (0..5).map(moved).collect::<Vec<_>>()
-            );
+    fn neighbours_give_way_and_the_drop_stays() {
+        let (l, mut net) = chain_net();
+        let params = NetParams::default();
+        let target = Point::new(l.nodes[2].x + 200.0, l.nodes[2].y);
+        drag(&mut net, &[2], Point::new(200.0, 0.0), &params);
+        settle(&mut net, &params);
+        assert!(close(net.node_pos(2), target), "dropped node stays put");
+        assert!(net.is_moved(2) && !net.is_moved(1));
+        let moved = |net: &Net, i: usize| net.node_pos(i).x - l.nodes[i].x;
+        assert!(
+            moved(&net, 1) > 20.0 && moved(&net, 3) > 20.0,
+            "neighbours follow"
+        );
+        assert!(
+            moved(&net, 1) < 200.0 && moved(&net, 0) < moved(&net, 1),
+            "pull decays: {:?}",
+            (0..5).map(|i| moved(&net, i)).collect::<Vec<_>>()
+        );
+        // Nothing drifts afterwards: the new shape is the resting shape.
+        let before: Vec<Point> = (0..5).map(|i| net.node_pos(i)).collect();
+        for _ in 0..120 {
+            net.step(1.0 / 60.0, &params);
+        }
+        assert!(!net.is_awake());
+        for (i, &p) in before.iter().enumerate() {
+            assert_eq!(net.node_pos(i), p);
         }
     }
 
     #[test]
-    fn rigid_moves_only_the_dragged_node() {
-        let (l, mut net) = chain_net();
-        let params = NetParams {
-            model: DragModel::Rigid,
-            ..NetParams::default()
-        };
-        net.grab(2);
-        net.drag_to(Point::new(500.0, 0.0));
-        net.release();
+    fn moved_nodes_keep_giving_way() {
+        let (_, mut net) = chain_net();
+        let params = NetParams::default();
+        drag(&mut net, &[2], Point::new(200.0, 0.0), &params);
         settle(&mut net, &params);
-        for i in [0, 1, 3, 4] {
-            assert!((net.node_pos(i).x - l.nodes[i].x).abs() < 0.5);
+        let dropped = net.node_pos(2);
+        // Dragging a neighbour moves the node that was dropped before.
+        drag(&mut net, &[3], Point::new(150.0, 0.0), &params);
+        settle(&mut net, &params);
+        assert!(
+            net.node_pos(2).x > dropped.x + 20.0,
+            "{:?} -> {:?}",
+            dropped,
+            net.node_pos(2)
+        );
+    }
+
+    #[test]
+    fn free_moves_only_the_dragged_nodes_and_stretches_their_edges() {
+        // 0 -> 1 -> 2 -> 3, and a long edge 0 -> 3 with two bend points.
+        let input = LayoutInput {
+            sizes: vec![Point::new(60.0, 20.0); 4],
+            times: vec![4, 3, 2, 1],
+            edges: vec![edge(0, 1), edge(1, 2), edge(2, 3), edge(0, 3)],
+            priority: Vec::new(),
+        };
+        let (l, mut net) = net_for(&input);
+        let long = 3;
+        assert_eq!(l.edges[long].len(), 4, "the long edge has two bend points");
+        let by = Point::new(300.0, 0.0);
+        drag(&mut net, &[0], by, &free());
+        settle(&mut net, &free());
+        assert!(close(net.node_pos(0), add(l.nodes[0], by)));
+        for i in 1..4 {
+            assert_eq!(net.node_pos(i), l.nodes[i], "node {i} stays");
         }
+        // The bend points share the move, less the nearer they are to the parent.
+        let pts: Vec<Point> = net.edge_points(long).collect();
+        let shift = |k: usize| pts[k].x - l.edges[long][k].x;
+        assert!(shift(1) > shift(2) && shift(2) > 0.0 && shift(1) < 300.0);
+        assert!(net.is_moved(0));
+    }
+
+    #[test]
+    fn free_moves_keep_their_offsets_when_adapting_again() {
+        let (l, mut net) = chain_net();
+        drag(&mut net, &[0], Point::new(300.0, 0.0), &free());
+        settle(&mut net, &free());
+        // Switching back to Adapt changes nothing by itself.
+        let params = NetParams::default();
+        for _ in 0..60 {
+            net.step(1.0 / 60.0, &params);
+        }
+        assert!(close(
+            net.node_pos(0),
+            Point::new(l.nodes[0].x + 300.0, l.nodes[0].y)
+        ));
+        // Dragging its neighbour down pulls it along, but keeps it 300 to the right.
+        drag(&mut net, &[1], Point::new(0.0, 60.0), &params);
+        settle(&mut net, &params);
+        let p = net.node_pos(0);
+        assert!(p.y > l.nodes[0].y + 10.0, "follows: {p:?}");
+        assert!(
+            (p.x - l.nodes[0].x - 300.0).abs() < 5.0,
+            "keeps its offset: {p:?}"
+        );
+    }
+
+    #[test]
+    fn carried_nodes_move_along_unmarked() {
+        let (l, mut net) = chain_net();
+        let by = Point::new(120.0, 0.0);
+        net.grab(1, &[1], &[0, 1], false);
+        net.drag_to(add(l.nodes[1], by));
+        net.step(1.0 / 60.0, &free());
+        net.release(&free());
+        settle(&mut net, &free());
+        for i in [0, 1] {
+            assert!(
+                close(net.node_pos(i), add(l.nodes[i], by)),
+                "node {i} moves"
+            );
+        }
+        assert!(
+            net.is_moved(1) && !net.is_moved(0),
+            "only the grabbed node is marked"
+        );
+        assert!(net.is_displaced(0));
+    }
+
+    #[test]
+    fn selections_move_together() {
+        let (l, mut net) = chain_net();
+        let by = Point::new(-150.0, 30.0);
+        drag(&mut net, &[1, 3], by, &free());
+        settle(&mut net, &free());
+        for i in [1, 3] {
+            assert!(close(net.node_pos(i), add(l.nodes[i], by)));
+        }
+        for i in [0, 2, 4] {
+            assert_eq!(net.node_pos(i), l.nodes[i]);
+        }
+    }
+
+    #[test]
+    fn nodes_push_each_other_away() {
+        // Two separate chains side by side: 0 -> 1 and 2 -> 3.
+        let input = LayoutInput {
+            sizes: vec![Point::new(60.0, 20.0); 4],
+            times: vec![4, 2, 3, 1],
+            edges: vec![edge(0, 1), edge(2, 3)],
+            priority: Vec::new(),
+        };
+        let (l, _) = net_for(&input);
+        assert_eq!(l.nodes[0].y, l.nodes[2].y, "tips share a row");
+        let (left, right) = if l.nodes[0].x < l.nodes[2].x {
+            (0, 2)
+        } else {
+            (2, 0)
+        };
+        // Bring the left tip within 10 of the right one.
+        let gap = l.nodes[right].x - l.nodes[left].x - 60.0;
+        let by = Point::new(gap - 10.0, 0.0);
+        let pushed = |push: f32| {
+            let (_, mut net) = net_for(&input);
+            let params = NetParams {
+                push,
+                ..NetParams::default()
+            };
+            drag(&mut net, &[left], by, &params);
+            settle(&mut net, &params);
+            net.node_pos(right).x - l.nodes[right].x
+        };
+        let (with, without) = (pushed(0.5), pushed(0.0));
+        assert!(
+            with > 5.0 && with > without + 3.0,
+            "pushed aside: {with} vs {without}"
+        );
+    }
+
+    #[test]
+    fn undo_and_redo() {
+        let (l, mut net) = chain_net();
+        let params = NetParams::default();
+        assert!(!net.can_undo());
+        drag(&mut net, &[2], Point::new(200.0, 0.0), &params);
+        settle(&mut net, &params);
+        let shape: Vec<Point> = (0..5).map(|i| net.node_pos(i)).collect();
+        assert!(net.undo());
+        settle(&mut net, &params);
+        for i in 0..5 {
+            assert!(close(net.node_pos(i), l.nodes[i]), "node {i} back");
+        }
+        assert!(!net.is_moved(2) && !net.any_displaced());
+        assert!(net.redo());
+        settle(&mut net, &params);
+        for (i, &p) in shape.iter().enumerate() {
+            assert!(close(net.node_pos(i), p), "node {i} redone");
+        }
+        assert!(net.is_moved(2));
+        // A reset is undoable too.
+        net.reset();
+        settle(&mut net, &params);
+        assert!(close(net.node_pos(2), l.nodes[2]));
+        assert!(net.undo());
+        settle(&mut net, &params);
+        assert!(close(net.node_pos(2), shape[2]));
+    }
+
+    #[test]
+    fn return_one_node_to_the_layout() {
+        let (l, mut net) = chain_net();
+        drag(&mut net, &[1, 2], Point::new(100.0, 0.0), &free());
+        settle(&mut net, &free());
+        net.return_to_layout(&[2]);
+        settle(&mut net, &free());
+        assert!(close(net.node_pos(2), l.nodes[2]) && !net.is_moved(2));
+        assert!(close(
+            net.node_pos(1),
+            Point::new(l.nodes[1].x + 100.0, l.nodes[1].y)
+        ));
+        assert!(net.is_moved(1));
+    }
+
+    #[test]
+    fn rest_offsets_round_trip() {
+        let (l, mut net) = chain_net();
+        drag(&mut net, &[3], Point::new(40.0, 0.0), &NetParams::default());
+        settle(&mut net, &NetParams::default());
+        let saved: Vec<(usize, Point, bool)> = net.rest_offsets().collect();
+        assert!(saved.iter().any(|&(i, _, moved)| i == 3 && moved));
+        let (_, mut fresh) = chain_net();
+        fresh.restore(saved);
+        assert!(!fresh.is_awake(), "restores at once");
+        for i in 0..5 {
+            assert!(close(fresh.node_pos(i), net.node_pos(i)), "node {i}");
+        }
+        assert!(fresh.is_moved(3) && !fresh.is_moved(2));
+        assert!(
+            fresh.node_pos(2).x > l.nodes[2].x,
+            "neighbours as they were"
+        );
     }
 
     #[test]
@@ -699,18 +1547,11 @@ mod tests {
         let input = LayoutInput {
             sizes: vec![Point::new(20.0, 10.0); n as usize],
             times: (0..n as i64).rev().collect(),
-            edges: (0..n - 1)
-                .map(|i| LayoutEdge {
-                    child: i,
-                    parent: i + 1,
-                    first_parent: true,
-                })
-                .collect(),
+            edges: (0..n - 1).map(|i| edge(i, i + 1)).collect(),
             priority: Vec::new(),
         };
-        let l = layout::layout(&input, &LayoutOptions::default());
-        let mut net = Net::new(&l, &input.sizes);
-        net.grab(0);
+        let (l, mut net) = net_for(&input);
+        net.grab(0, &[0], &[], true);
         assert!(net.active_count() <= ACTIVE_BUDGET + 1);
         net.drag_to(Point::new(l.nodes[0].x + 100.0, l.nodes[0].y));
         net.step(1.0 / 60.0, &NetParams::default());
@@ -719,25 +1560,9 @@ mod tests {
             l.nodes[n as usize - 1],
             "far end untouched"
         );
-        net.release();
+        net.release(&NetParams::default());
         settle(&mut net, &NetParams::default());
         assert_eq!(net.active_count(), 0, "everything goes back to sleep");
-    }
-
-    #[test]
-    fn pins_round_trip() {
-        let (l, mut net) = chain_net();
-        net.pin(3, Point::new(40.0, 0.0));
-        settle(&mut net, &NetParams::default());
-        assert_eq!(net.pins().collect::<Vec<_>>(), [(3, Point::new(40.0, 0.0))]);
-        assert_eq!(
-            net.node_pos(3),
-            Point::new(l.nodes[3].x + 40.0, l.nodes[3].y)
-        );
-        assert!(
-            net.node_pos(2).x > l.nodes[2].x,
-            "neighbours follow a restored pin"
-        );
     }
 
     #[test]
@@ -746,61 +1571,50 @@ mod tests {
         let input = LayoutInput {
             sizes: vec![Point::new(60.0, 20.0); 4],
             times: vec![1, 4, 3, 2],
-            edges: (1..4)
-                .map(|t| LayoutEdge {
-                    child: t,
-                    parent: 0,
-                    first_parent: true,
-                })
-                .collect(),
+            edges: (1..4).map(|t| edge(t, 0)).collect(),
             priority: Vec::new(),
         };
-        let l = layout::layout(&input, &LayoutOptions::default());
-        let mut net = Net::new(&l, &input.sizes);
-        let params = NetParams {
-            model: DragModel::Strings,
-            ..NetParams::default()
-        };
+        let (l, _) = net_for(&input);
         let order = |net: &Net| {
             let mut tips = vec![1, 2, 3];
             tips.sort_by(|&a, &b| net.node_pos(a).x.total_cmp(&net.node_pos(b).x));
             tips
         };
-        let before = order(&net);
-        // Drag the leftmost tip far past the others and drop it there, then reset.
-        let left = before[0];
-        net.grab(left);
-        net.drag_to(Point::new(l.nodes[before[2]].x + 200.0, l.nodes[left].y));
-        for _ in 0..60 {
-            net.step(1.0 / 60.0, &params);
-        }
-        net.release();
-        settle(&mut net, &params);
-        net.reset();
-        settle(&mut net, &params);
-        assert_eq!(order(&net), before);
-        for i in 0..4 {
-            let p = net.node_pos(i);
-            assert!(
-                (p.x - l.nodes[i].x).abs() < 1.0 && (p.y - l.nodes[i].y).abs() < 1.0,
-                "node {i} back home"
-            );
+        for params in [NetParams::default(), free()] {
+            let (_, mut net) = net_for(&input);
+            let before = order(&net);
+            // Drag the leftmost tip far past the others and drop it there, then reset.
+            let left = before[0];
+            let by = Point::new(l.nodes[before[2]].x - l.nodes[left].x + 200.0, 0.0);
+            drag(&mut net, &[left], by, &params);
+            settle(&mut net, &params);
+            if params.model.adapts() {
+                assert_eq!(order(&net), before, "pushed ahead like beads on a string");
+            }
+            net.reset();
+            settle(&mut net, &params);
+            assert_eq!(order(&net), before);
+            for i in 0..4 {
+                assert!(close(net.node_pos(i), l.nodes[i]), "node {i} back home");
+            }
         }
     }
 
     #[test]
-    fn reset_returns_to_layout() {
-        let (l, mut net) = chain_net();
-        let params = NetParams::default();
-        net.grab(1);
-        net.drag_to(Point::new(-300.0, 50.0));
-        net.release();
-        settle(&mut net, &params);
-        net.reset();
-        settle(&mut net, &params);
-        for i in 0..5 {
-            let p = net.node_pos(i);
-            assert!((p.x - l.nodes[i].x).abs() < 1.0 && (p.y - l.nodes[i].y).abs() < 1.0);
-        }
+    fn old_settings_still_load() {
+        assert_eq!(
+            serde_json_like("Net"),
+            DragModel::Adapt,
+            "the spider web became Adapt"
+        );
+        assert_eq!(serde_json_like("Rigid"), DragModel::Free);
+    }
+
+    /// Deserialises a unit variant by name without pulling in a format crate.
+    fn serde_json_like(name: &str) -> DragModel {
+        use serde::de::IntoDeserializer;
+        use serde::de::value::{Error, StrDeserializer};
+        let d: StrDeserializer<'_, Error> = name.into_deserializer();
+        DragModel::deserialize(d).expect("known variant")
     }
 }

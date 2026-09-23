@@ -41,7 +41,7 @@ pub struct Palette {
     pub other_ref: Color32,
     pub selection: Color32,
     pub search_hit: Color32,
-    pub pinned_marker: Color32,
+    pub moved_marker: Color32,
 }
 
 impl Palette {
@@ -61,7 +61,7 @@ impl Palette {
             other_ref: Color32::from_rgb(224, 224, 224),
             selection: Color32::from_rgb(0, 120, 215),
             search_hit: Color32::from_rgb(255, 140, 0),
-            pinned_marker: Color32::from_rgb(0, 120, 215),
+            moved_marker: Color32::from_rgb(0, 120, 215),
         }
     }
 
@@ -82,7 +82,7 @@ impl Palette {
             other_ref: invert_lightness(l.other_ref),
             selection: Color32::from_rgb(80, 170, 255),
             search_hit: Color32::from_rgb(255, 160, 40),
-            pinned_marker: Color32::from_rgb(80, 170, 255),
+            moved_marker: Color32::from_rgb(80, 170, 255),
         }
     }
 

@@ -14,7 +14,7 @@ crates/gitgraph-core   GUI-free; everything testable lives here
     order.rs           crossing minimisation (median sweeps, exact crossing count)
     position.rs        coordinates within layers (L1 via isotonic regression)
     mod.rs             pipeline, variable layer spacing, direction/rotation
-  physics.rs           the "spider web": springs + position-based dynamics for dragging
+  physics.rs           rearranging by hand: springs, weak magnets, drag modes, undo
 
 crates/gitgraph        the binary (eframe/egui)
   main.rs              CLI (clap), window setup
@@ -47,12 +47,20 @@ crates/gitgraph        the binary (eframe/egui)
 4. **Lay out** (`layout/`): rank → split wide layers → layered graph with dummies (optionally
    bundled per parent) → crossing minimisation → L1 coordinates → variable layer gaps →
    rotate to the chosen direction.
-5. **Simulate** (`physics.rs`): nodes and bend points become particles. Springs run along
-   edges, one-sided springs join neighbours in a layer, and weak anchors hold each particle to
-   the layout.
-   - **Shape:** each frame, the target shape is relaxed with Gauss-Seidel over displacements.
+5. **Simulate** (`physics.rs`): nodes and bend points become particles, each with a rest
+   position (at first the layout). Springs along edges keep the offsets between rest
+   positions; nodes near each other push apart like weak magnets, and neighbours in a row keep
+   their order; weak anchors hold each particle to its rest position.
+   - **Drag modes:** *Adapt* lets the rest of the graph give way; *Free* and *Subtree* move
+     only the dragged nodes (Subtree adds their first-parent descendants) and stretch the
+     edges to them.
+   - **Shape:** each frame of an adaptive drag, the target shape is relaxed with Gauss-Seidel
+     over displacements.
    - **Motion:** particles follow the target through damped springs.
-   - Only the dragged node's neighbourhood (up to 8000 particles) is simulated, and the
+   - **Drop:** whatever moved rests where it is from then on, so moved nodes keep giving way
+     to later drags instead of being pinned. Drops, resets and returns to the layout are
+     undoable.
+   - Only the dragged nodes' neighbourhood (up to 8000 particles) is simulated, and the
      simulation sleeps when still.
 6. **Paint** (`render.rs`): edges then nodes, culled to the viewport; text is skipped below
    4 px. Straight edges are clipped to box borders (TortoiseGit); curved edges leave and
@@ -68,7 +76,7 @@ crates/gitgraph        the binary (eframe/egui)
   - coordinates are finite and inside the bounds
   - network simplex is optimal on tiny graphs (checked by brute force)
   - every edge ends on a node
-  - the net returns home after a reset
+  - the net comes to rest and stays there; it returns home after a reset
 - `cargo test --release -p gitgraph-core --test properties_layout -- --ignored --nocapture`
   prints timings for large, awkward inputs.
 

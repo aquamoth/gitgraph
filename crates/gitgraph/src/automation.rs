@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use eframe::egui::{self, Rect, Vec2};
+use gitgraph_core::physics::NetParams;
 
 use crate::scene::{Scene, to_point};
 use crate::view::View;
@@ -14,7 +15,8 @@ pub struct Automation {
     pub screenshot: Option<PathBuf>,
     /// Start with the whole graph fitted instead of at HEAD.
     pub fit: bool,
-    /// Drag the node nearest the centre sideways before the screenshot.
+    /// Drag the node nearest the centre by this much before the screenshot (in the drag mode
+    /// of the settings).
     pub demo_drag: Option<Vec2>,
     /// Zoom to apply (around the canvas centre) after the initial view is set up.
     pub zoom: Option<f32>,
@@ -55,7 +57,14 @@ impl Automation {
         self.is_active().then_some(1.0 / 60.0)
     }
 
-    pub fn drive(&mut self, ctx: &egui::Context, scene: &mut Scene, view: &mut View, canvas: Rect) {
+    pub fn drive(
+        &mut self,
+        ctx: &egui::Context,
+        scene: &mut Scene,
+        view: &mut View,
+        canvas: Rect,
+        params: &NetParams,
+    ) {
         if !self.is_active() {
             return;
         }
@@ -79,7 +88,8 @@ impl Automation {
                         .total_cmp(&scene.node_center(b).distance_sq(centre))
                 });
                 if let Some(n) = node {
-                    scene.net.grab(n);
+                    let carried = scene.carried_nodes(&[n], params.model);
+                    scene.net.grab(n, &[n], &carried, params.model.adapts());
                     self.dragging = Some((n, scene.node_center(n)));
                 }
             } else if let Some((_, start)) = self.dragging {
@@ -87,7 +97,7 @@ impl Automation {
                     let t = (f - DRAG_START) as f32 / DRAG_FRAMES as f32;
                     scene.net.drag_to(to_point(start + delta * t));
                 } else if f == DRAG_START + DRAG_FRAMES + 1 {
-                    scene.net.release();
+                    scene.net.release(params);
                 }
             }
         }

@@ -103,6 +103,31 @@ fn decorated_mode_matches_simplify_by_decoration() {
 }
 
 #[test]
+fn subtrees_follow_first_parents() {
+    let r = feature_merge();
+    let repo = r.load();
+    // Subjects of the subtree grown from the nodes with the given subjects.
+    let subtree = |g: &RevGraph, roots: &[&str]| {
+        let subject = |i: usize| repo.commit(g.nodes[i].commit).subject.clone();
+        let roots: Vec<usize> = (0..g.nodes.len())
+            .filter(|&i| roots.contains(&subject(i).as_str()))
+            .collect();
+        let mut s: Vec<String> = g.subtree(&roots).into_iter().map(subject).collect();
+        s.sort();
+        s
+    };
+    let g = revgraph::build(&repo, &with_mode(Simplification::AllCommits));
+    // The feature branch without the merge, which belongs to main.
+    assert_eq!(subtree(&g, &["D"]), ["D", "E"]);
+    assert_eq!(subtree(&g, &["C"]), ["C", "M"]);
+    assert_eq!(subtree(&g, &["B"]), ["B", "C", "D", "E", "M"]);
+    assert_eq!(subtree(&g, &["C", "E"]), ["C", "E", "M"]);
+    // A node whose only edge is a merge edge hangs off that edge.
+    let g = revgraph::build(&repo, &with_mode(Simplification::Decorated));
+    assert_eq!(subtree(&g, &["E"]), ["E", "M"]);
+}
+
+#[test]
 fn decorated_mode_keeps_merges_joining_independent_lines() {
     let mut r = feature_merge();
     // Tag C: now M's parents rewrite to C and E, neither an ancestor of the other.

@@ -19,6 +19,7 @@ use std::process::ExitCode;
 use clap::{Parser, ValueEnum};
 use eframe::egui;
 use gitgraph_core::layout::Direction;
+use gitgraph_core::physics::DragModel;
 use gitgraph_core::revgraph::Simplification;
 
 use crate::automation::Automation;
@@ -95,6 +96,17 @@ struct Cli {
     /// Drag the centre node by DX,DY before taking the screenshot (demonstrates the physics).
     #[arg(long, value_name = "DX,DY", value_parser = parse_vec, hide = true)]
     demo_drag: Option<(f32, f32)>,
+
+    /// What moves when dragging (for --demo-drag).
+    #[arg(long, value_enum, hide = true)]
+    drag_mode: Option<DragModeArg>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DragModeArg {
+    Adapt,
+    Free,
+    Subtree,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -241,6 +253,13 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
     }
     if cli.no_tags {
         s.graph.show_tags = false;
+    }
+    if let Some(mode) = cli.drag_mode {
+        s.net.model = match mode {
+            DragModeArg::Adapt => DragModel::Adapt,
+            DragModeArg::Free => DragModel::Free,
+            DragModeArg::Subtree => DragModel::Subtree,
+        };
     }
     if let Some(theme) = cli.theme {
         s.theme = match theme {

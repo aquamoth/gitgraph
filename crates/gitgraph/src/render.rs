@@ -16,7 +16,10 @@ use crate::view::View;
 pub struct Marks {
     pub hovered: Option<usize>,
     pub hovered_edge: Option<usize>,
-    pub selected: Option<usize>,
+    /// Per node: selected.
+    pub selected: Vec<bool>,
+    /// Per node: would move along if the hovered node were dragged.
+    pub preview: Vec<bool>,
     /// Per node: matches the current search.
     pub search_hits: Vec<bool>,
 }
@@ -26,8 +29,16 @@ impl Marks {
         self.search_hits.get(node).copied().unwrap_or(false)
     }
 
+    fn is_selected(&self, node: usize) -> bool {
+        self.selected.get(node).copied().unwrap_or(false)
+    }
+
+    fn is_previewed(&self, node: usize) -> bool {
+        self.preview.get(node).copied().unwrap_or(false)
+    }
+
     fn emphasised(&self, node: usize) -> bool {
-        self.hovered == Some(node) || self.selected == Some(node)
+        self.hovered == Some(node) || self.is_selected(node)
     }
 }
 
@@ -113,18 +124,20 @@ pub fn paint_scene(
                 StrokeKind::Middle,
             );
         };
-        if marks.selected == Some(i) {
+        if marks.is_selected(i) {
             outline((4.0 * zoom).max(2.0), palette.selection);
         } else if marks.is_hit(i) {
             outline((3.0 * zoom).max(2.0), palette.search_hit);
         } else if marks.hovered == Some(i) {
             outline((2.0 * zoom).max(1.0), palette.selection);
+        } else if marks.is_previewed(i) {
+            outline((2.0 * zoom).max(1.0), palette.selection.gamma_multiply(0.5));
         }
-        if scene.net.is_pinned(i) {
+        if scene.net.is_moved(i) {
             painter.circle_filled(
                 rect.right_top() + vec2(-3.0, 3.0),
                 (3.0 * zoom).max(2.0),
-                palette.pinned_marker,
+                palette.moved_marker,
             );
         }
     }

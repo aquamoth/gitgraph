@@ -14,19 +14,44 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
    On Apps, ~160 remote branches hang off a few commits. In Classic that gives rows many
    thousands of pixels wide with fans of near-horizontal lines. Modern reads like a tree.
    Which do you want by default?
-2. **Dragging feel.** Menu *Drag* has three prototypes:
-   - **Spider web** (default): springs along edges and between neighbours in a row. The rest of
-     the graph follows with some inertia and wobble.
-   - **Strings**: springs along edges only, no wobble.
-   - **Rigid**: only the dragged node moves.
+2. **Rearranging by hand.** Reworked from your notes of 2026-09-24:
+   - A dropped node is no longer pinned. Wherever things come to rest becomes their new
+     resting shape, so moved nodes keep giving way to later drags like any other node.
+   - Three drag modes, in the toolbar, the *Drag* menu and on keys `1` `2` `3`:
+     - **Adapt** (default): neighbours follow along their edges (*pull* slider), and nodes
+       that come near are pushed aside like weak magnets (*push*). Nodes side by side in a row
+       are pushed ahead along it; lifting a node out of the row lets it pass them.
+     - **Free**: only the selected nodes move; the edges to them stretch.
+     - **Subtree**: the selected nodes and everything that grows out of them. Hovering shows
+       what would move.
+   - Switching back to Adapt keeps every node where it is, and from then on the springs hold
+     the new offsets between neighbours.
+   - Selecting: click; Ctrl+click toggles; Shift+click adds; Shift+drag the background selects
+     a rectangle; right-click → *Select subtree*. Dragging a selected node moves the whole
+     selection.
+   - Undo and redo with Ctrl+Z / Ctrl+Shift+Z; `R` (reset) can be undone too.
 
-   The *reach* and *wobble* sliders tune the first two. A dropped node stays pinned (blue dot);
-   right-click → "Return node to layout", or `R` for all nodes. Which feels right?
-   - **Remembering moves.** Drag → "Remember moved nodes" (off by default) keeps dropped nodes
-     per repository across runs and relayouts. Should it be on by default?
-   - **Same row.** Dragging a node through its neighbours in the same row pushes them ahead
-     of it, like beads on a string. Lifting it out of the row lets it pass them. This keeps a
-     reset from ever swapping nodes. OK?
+   Decisions you may want to overrule:
+   - **Subtree follows first parents.** A commit's subtree is everything whose first-parent
+     line leads back to it: its branch, and the branches forking off that. A merge that pulls
+     the branch in belongs to the line it merged into, so it stays put. Taking every descendant
+     instead would include everything merged later, often most of the graph.
+   - **What moved stays moved.** Neighbours that Adapt pulls or pushes keep their new places
+     after the drop. The alternative is for them to spring back, so that only the dragged node
+     keeps its new place.
+   - **Blue dots** mark only the nodes you grabbed. Nodes that gave way, or that a subtree
+     carried along, get none (but can still be returned to the layout).
+   - **Magnets act between nodes.** Edges make way only for nodes in their own row.
+   - **Free and Subtree allow overlaps.** A node dropped on another stays there until
+     something next to it is dragged in Adapt.
+   - **Defaults:** pull 0.3 (a neighbour moves about half as far as the dragged node, the next
+     one a quarter), push 0.5 (nodes start pushing each other 32 px apart), wobble 0.4. *Pull*
+     replaces the old *reach* setting and starts at its new default.
+   - **The old prototypes are gone.** Spider web and Strings became Adapt; Rigid became Free.
+   - **Mode switching** uses keys and buttons only. Shift and Ctrl already mean selection;
+     another modifier (such as holding Space) could give a one-off Free drag.
+   - **Remembering moves.** Drag → *Remember moved nodes* (off by default) keeps nodes where
+     they rest, per repository, across runs and relayouts. Should it be on by default?
 3. **Fidelity quirks in "Labelled commits" (TortoiseGit's default mode).** TortoiseGit uses
    `git log --simplify-by-decoration` and inherits git's simplifications:
    - A `--no-ff` merge whose first parent is an ancestor of its second is folded away.
@@ -70,7 +95,6 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 ## Planned
 
 - [ ] PNG export: SVG exists; TortoiseGit also offers raster formats.
-- [ ] Remember dragged positions per repository, if wanted (question 2).
 - [ ] Reload automatically when refs change; TortoiseGit only reloads on F5.
 - [ ] Tooltip on edges showing the collapsed commits.
 - [ ] Less memory for all-commits views of huge repositories (compact adjacency).
@@ -116,3 +140,8 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 
   Its randomised tests are now permanent property tests.
 - [x] Demo repository script (`scripts/make-demo-repo.sh`) and a README screenshot.
+- [x] Rearranging by hand (question 2):
+  - drops become the new resting shape instead of pins
+  - drag modes Adapt (springs and weak magnets), Free and Subtree
+  - multi-selection with rectangle selection, and "Select subtree"
+  - undo and redo; remembered positions per repository

@@ -16,17 +16,101 @@ use gitgraph_core::{CommitIx, Oid, Repo};
 use crate::automation::Automation;
 use crate::render::{self, Marks};
 use crate::scene::{FONT_SIZE, Scene, to_point};
-use crate::settings::{Arrows, EdgeStyle, Look, MOVES_KEY, RememberedMoves, STORAGE_KEY, Settings};
+use crate::settings::{
+    Arrows, EdgeStyle, Look, MOVES_KEY, RememberedMoves, STORAGE_KEY, Settings, load_moves,
+};
 use crate::theme::{Palette, ThemeChoice};
 use crate::view::View;
 
 #[derive(Clone, Copy, Debug)]
 enum Drag {
-    /// Dragging a node; `grab` is the pointer's offset from the node centre (world units).
+    /// Dragging nodes; `grab` is the pointer's offset from the grabbed node's centre (world
+    /// units).
     Node {
         grab: Vec2,
     },
     Pan,
+    /// Selecting the nodes in a rectangle from `start` (world coordinates) to the pointer.
+    Select {
+        start: Pos2,
+    },
+}
+
+/// Selected nodes, in the order they were selected. The last one is the current node, whose
+/// details the status bar shows.
+#[derive(Clone, Debug, Default)]
+struct Selection {
+    nodes: Vec<usize>,
+}
+
+impl Selection {
+    fn current(&self) -> Option<usize> {
+        self.nodes.last().copied()
+    }
+
+    fn contains(&self, node: usize) -> bool {
+        self.nodes.contains(&node)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Selects `node` alone, or nothing.
+    fn set(&mut self, node: Option<usize>) {
+        self.nodes.clear();
+        self.nodes.extend(node);
+    }
+
+    /// Adds `node`, making it the current node.
+    fn add(&mut self, node: usize) {
+        self.nodes.retain(|&n| n != node);
+        self.nodes.push(node);
+    }
+
+    /// Adds `nodes` that are not selected yet, keeping the current node current.
+    fn extend(&mut self, nodes: impl IntoIterator<Item = usize>) {
+        let mut seen: std::collections::HashSet<usize> = self.nodes.iter().copied().collect();
+        let current = self.nodes.pop();
+        self.nodes.extend(
+            nodes
+                .into_iter()
+                .filter(|&n| Some(n) != current && seen.insert(n)),
+        );
+        self.nodes.extend(current);
+    }
+
+    fn toggle(&mut self, node: usize) {
+        if self.contains(node) {
+            self.nodes.retain(|&n| n != node);
+        } else {
+            self.nodes.push(node);
+        }
+    }
+
+    /// Per node of a scene with `count` nodes: selected.
+    fn mask(&self, count: usize) -> Vec<bool> {
+        let mut mask = vec![false; count];
+        for &n in &self.nodes {
+            if n < count {
+                mask[n] = true;
+            }
+        }
+        mask
+    }
+}
+
+/// The nodes dragged along with `anchor`: the selection it belongs to, or `anchor` alone.
+fn dragged_with(selection: &Selection, anchor: usize) -> Vec<usize> {
+    if selection.contains(anchor) {
+        selection.nodes.clone()
+    } else {
+        vec![anchor]
+    }
 }
 
 /// Full commit messages for tooltips, fetched from git on a worker thread when first needed.
@@ -80,7 +164,7 @@ struct LayoutJob {
     rx: std::sync::mpsc::Receiver<Scene>,
     /// Commit near the view centre and its screen position, to keep the view steady.
     anchor: Option<(Oid, Pos2)>,
-    selected_commit: Option<Oid>,
+    selected_commits: Vec<Oid>,
 }
 
 #[derive(Debug, Default)]
@@ -108,10 +192,13 @@ pub struct GitGraphApp {
     canvas: Rect,
     hovered: Option<usize>,
     hovered_edge: Option<usize>,
-    selected: Option<usize>,
+    selection: Selection,
+    /// Nodes that would move if the hovered node were dragged in Subtree mode, cached for
+    /// the roots they were computed from.
+    preview: Option<(Vec<usize>, Vec<usize>)>,
     context_node: Option<usize>,
-    /// Commit to select once the scene has been rebuilt (after a reload).
-    pending_select: Option<Oid>,
+    /// Commits to select once the scene has been rebuilt (after a reload).
+    pending_select: Vec<Oid>,
     drag: Option<Drag>,
     search: Search,
     status: Option<(String, bool)>,
@@ -151,7 +238,7 @@ impl GitGraphApp {
         let moves: RememberedMoves = cc
             .storage
             .filter(|_| persist)
-            .and_then(|s| eframe::get_value(s, MOVES_KEY))
+            .map(load_moves)
             .unwrap_or_default();
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         GitGraphApp {
@@ -167,9 +254,10 @@ impl GitGraphApp {
             canvas: Rect::NOTHING,
             hovered: None,
             hovered_edge: None,
-            selected: None,
+            selection: Selection::default(),
+            preview: None,
             context_node: None,
-            pending_select: None,
+            pending_select: Vec::new(),
             drag: None,
             search: Search::default(),
             status: None,
@@ -205,13 +293,15 @@ impl GitGraphApp {
                 let _ = tx.send(input.lay_out());
                 repaint.request_repaint();
             });
+            let pending = std::mem::take(&mut self.pending_select);
             self.job = Some(LayoutJob {
                 rx,
                 anchor: self.view_anchor(),
-                selected_commit: self
-                    .pending_select
-                    .take()
-                    .or_else(|| self.selected_commit()),
+                selected_commits: if pending.is_empty() {
+                    self.selected_commits()
+                } else {
+                    pending
+                },
             });
         }
 
@@ -225,7 +315,14 @@ impl GitGraphApp {
         self.hovered_edge = None;
         self.context_node = None;
         self.drag = None;
-        self.selected = job.selected_commit.and_then(|oid| self.node_for(&oid));
+        self.preview = None;
+        let selected: Vec<usize> = job
+            .selected_commits
+            .iter()
+            .filter_map(|oid| self.node_for(oid))
+            .collect();
+        self.selection.set(None);
+        self.selection.extend(selected);
         self.update_search();
         self.restore_moves();
         if let (Some((oid, screen)), Some(scene)) = (job.anchor, &self.scene)
@@ -250,7 +347,7 @@ impl GitGraphApp {
         self.repo.path.display().to_string()
     }
 
-    /// Re-pins remembered nodes in a freshly laid-out scene.
+    /// Puts remembered nodes back where they were in a freshly laid-out scene.
     fn restore_moves(&mut self) {
         if !self.settings.remember_moves {
             return;
@@ -259,43 +356,47 @@ impl GitGraphApp {
             return;
         };
         let Some(scene) = &mut self.scene else { return };
-        for (hex, &(dx, dy)) in moves {
-            let node = Oid::from_hex(hex)
-                .and_then(|oid| scene.repo.lookup(&oid))
-                .and_then(|c| scene.graph.node_of(c));
-            if let Some(node) = node {
-                scene
-                    .net
-                    .pin(node as usize, gitgraph_core::layout::Point::new(dx, dy));
-            }
-        }
+        let saved: Vec<_> = moves
+            .iter()
+            .filter_map(|(hex, &(dx, dy, by_hand))| {
+                let node = Oid::from_hex(hex)
+                    .and_then(|oid| scene.repo.lookup(&oid))
+                    .and_then(|c| scene.graph.node_of(c))?;
+                Some((
+                    node as usize,
+                    gitgraph_core::layout::Point::new(dx, dy),
+                    by_hand,
+                ))
+            })
+            .collect();
+        scene.net.restore(saved);
     }
 
-    /// Records the current scene's pinned nodes for this repository.
+    /// Records where the current scene's nodes rest, for this repository.
     fn record_moves(&mut self) {
         if !self.settings.remember_moves {
             return;
         }
         let Some(scene) = &self.scene else { return };
-        let pins: std::collections::HashMap<String, (f32, f32)> = scene
+        let offsets: std::collections::HashMap<String, (f32, f32, bool)> = scene
             .net
-            .pins()
-            .map(|(node, d)| {
+            .rest_offsets()
+            .map(|(node, d, by_hand)| {
                 (
                     scene
                         .repo
                         .commit(scene.graph.nodes[node].commit)
                         .oid
                         .to_hex(),
-                    (d.x, d.y),
+                    (d.x, d.y, by_hand),
                 )
             })
             .collect();
         let key = self.repo_key();
-        if pins.is_empty() {
+        if offsets.is_empty() {
             self.moves.remove(&key);
         } else {
-            self.moves.insert(key, pins);
+            self.moves.insert(key, offsets);
         }
     }
 
@@ -310,7 +411,7 @@ impl GitGraphApp {
         if !self.canvas.is_positive() {
             return None;
         }
-        let node = self.selected.or_else(|| {
+        let node = self.selection.current().or_else(|| {
             let centre = self.view.to_world(self.canvas, self.canvas.center());
             (0..scene.node_count()).min_by(|&a, &b| {
                 let da = scene.node_center(a).distance_sq(centre);
@@ -330,9 +431,21 @@ impl GitGraphApp {
         Some(
             scene
                 .repo
-                .commit(scene.graph.nodes[self.selected?].commit)
+                .commit(scene.graph.nodes[self.selection.current()?].commit)
                 .oid,
         )
+    }
+
+    /// Commits of the selected nodes, the current node last.
+    fn selected_commits(&self) -> Vec<Oid> {
+        let Some(scene) = &self.scene else {
+            return Vec::new();
+        };
+        self.selection
+            .nodes
+            .iter()
+            .map(|&n| scene.repo.commit(scene.graph.nodes[n].commit).oid)
+            .collect()
     }
 
     fn reload(&mut self) {
@@ -340,7 +453,7 @@ impl GitGraphApp {
             Ok(repo) => {
                 // The scene on screen keeps its own snapshot until the new layout replaces it;
                 // the selection is carried over by commit id.
-                self.pending_select = self.selected_commit();
+                self.pending_select = self.selected_commits();
                 self.repo = Arc::new(repo);
                 self.requested = None;
                 self.status = Some(("Reloaded".into(), false));
@@ -384,7 +497,7 @@ impl GitGraphApp {
         };
         self.search.current = Some(next);
         let node = self.search.hits[next];
-        self.selected = Some(node);
+        self.selection.set(Some(node));
         self.center_on(node);
     }
 
@@ -421,11 +534,57 @@ impl GitGraphApp {
         }
     }
 
-    fn reset_positions(&mut self) {
+    /// Changes the arrangement of the nodes (reset, undo, …) and remembers the result.
+    fn rearrange(&mut self, change: impl FnOnce(&mut gitgraph_core::physics::Net)) {
         if let Some(scene) = &mut self.scene {
-            scene.net.reset();
+            change(&mut scene.net);
         }
         self.record_moves();
+    }
+
+    fn reset_positions(&mut self) {
+        self.rearrange(|net| net.reset());
+    }
+
+    fn undo(&mut self) {
+        self.rearrange(|net| {
+            net.undo();
+        });
+    }
+
+    fn redo(&mut self) {
+        self.rearrange(|net| {
+            net.redo();
+        });
+    }
+
+    fn return_to_layout(&mut self, nodes: &[usize]) {
+        self.rearrange(|net| net.return_to_layout(nodes));
+    }
+
+    /// Selects the nodes growing out of `roots` (see [`DragModel::Subtree`]).
+    fn select_subtree(&mut self, roots: &[usize]) {
+        if let Some(scene) = &self.scene {
+            self.selection.extend(scene.graph.subtree(roots));
+        }
+    }
+
+    /// The selected nodes that rest away from the layout.
+    fn displaced_selection(&self) -> Vec<usize> {
+        let Some(scene) = &self.scene else {
+            return Vec::new();
+        };
+        self.selection
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&n| scene.net.is_displaced(n))
+            .collect()
+    }
+
+    fn set_drag_model(&mut self, model: DragModel) {
+        self.settings.net.model = model;
+        self.status = Some((format!("Drag: {}", model.description()), false));
     }
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
@@ -442,6 +601,22 @@ impl GitGraphApp {
         }
         if command(Key::C) {
             self.copy_selected_hash(ctx);
+        }
+        // Most specific first: Ctrl+Z also matches Ctrl+Shift+Z.
+        let redo = ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z));
+        if redo || command(Key::Y) {
+            self.redo();
+        }
+        if command(Key::Z) {
+            self.undo();
+        }
+        for (key, model) in [Key::Num1, Key::Num2, Key::Num3]
+            .into_iter()
+            .zip(DragModel::ALL)
+        {
+            if pressed(key) {
+                self.set_drag_model(model);
+            }
         }
         if command(Key::Num0) || pressed(Key::Num0) {
             self.view
@@ -469,7 +644,7 @@ impl GitGraphApp {
                 .zoom_around(self.canvas, self.canvas.center(), 0.8);
         }
         if pressed(Key::Escape) {
-            self.selected = None;
+            self.selection.set(None);
         }
         if pressed(Key::F3) || pressed(Key::N) {
             let back = ctx.input(|i| i.modifiers.shift);
@@ -674,30 +849,83 @@ impl GitGraphApp {
     }
 
     fn drag_menu(&mut self, ui: &mut Ui) {
-        let n = &mut self.settings.net;
-        ui.label(RichText::new("When dragging a node").weak());
-        for m in DragModel::ALL {
-            ui.radio_value(&mut n.model, m, m.label());
+        ui.label(RichText::new("What moves when you drag").weak());
+        for (m, key) in DragModel::ALL.into_iter().zip(["1", "2", "3"]) {
+            let text = format!("{} ({key})", m.label());
+            if ui
+                .radio(self.settings.net.model == m, text)
+                .on_hover_text(m.description())
+                .clicked()
+            {
+                self.set_drag_model(m);
+            }
         }
         ui.separator();
-        ui.add_enabled(
-            n.model != DragModel::Rigid,
-            egui::Slider::new(&mut n.reach, 0.0..=1.0).text("reach"),
-        );
-        ui.add_enabled(
-            n.model == DragModel::Net,
-            egui::Slider::new(&mut n.wobble, 0.0..=1.0).text("wobble"),
-        );
-        ui.checkbox(&mut n.avoid_overlap, "Push overlapping nodes apart");
+        let n = &mut self.settings.net;
+        ui.add_enabled_ui(n.model.adapts(), |ui| {
+            ui.add(egui::Slider::new(&mut n.pull, 0.0..=1.0).text("pull"))
+                .on_hover_text("How far neighbours are pulled along their edges");
+            ui.add(egui::Slider::new(&mut n.push, 0.0..=1.0).text("push"))
+                .on_hover_text("How strongly, and from how far, nodes push each other away");
+            ui.add(egui::Slider::new(&mut n.wobble, 0.0..=1.0).text("wobble"));
+            ui.checkbox(&mut n.avoid_overlap, "Keep nodes from overlapping");
+        });
         let before = self.settings.remember_moves;
         ui.checkbox(&mut self.settings.remember_moves, "Remember moved nodes")
             .on_hover_text(
-                "Keep dropped nodes where they are, per repository, across runs and relayouts.",
+                "Keep nodes where you moved them, per repository, across runs and relayouts.",
             );
         if self.settings.remember_moves && !before {
             self.record_moves();
         }
         ui.separator();
+        let (can_undo, can_redo) = self
+            .scene
+            .as_ref()
+            .map_or((false, false), |s| (s.net.can_undo(), s.net.can_redo()));
+        if ui
+            .add_enabled(
+                can_undo,
+                egui::Button::new("Undo move").shortcut_text("Ctrl+Z"),
+            )
+            .clicked()
+        {
+            self.undo();
+        }
+        if ui
+            .add_enabled(
+                can_redo,
+                egui::Button::new("Redo move").shortcut_text("Ctrl+Shift+Z"),
+            )
+            .clicked()
+        {
+            self.redo();
+        }
+        ui.separator();
+        if ui
+            .add_enabled(
+                !self.selection.is_empty(),
+                egui::Button::new("Select subtree of selection"),
+            )
+            .on_hover_text("Add everything that grows out of the selected nodes")
+            .clicked()
+        {
+            let roots = self.selection.nodes.clone();
+            self.select_subtree(&roots);
+            ui.close();
+        }
+        let displaced = self.displaced_selection();
+        if !self.selection.is_empty()
+            && ui
+                .add_enabled(
+                    !displaced.is_empty(),
+                    egui::Button::new("Return selection to layout"),
+                )
+                .clicked()
+        {
+            self.return_to_layout(&displaced);
+            ui.close();
+        }
         if ui
             .add(egui::Button::new("Return all nodes to layout").shortcut_text("R"))
             .clicked()
@@ -708,7 +936,8 @@ impl GitGraphApp {
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
+        // Wraps onto a second line in narrow windows.
+        ui.horizontal_wrapped(|ui| {
             let g = &mut self.settings.graph;
             for s in Simplification::ALL {
                 ui.selectable_value(&mut g.simplification, s, s.label());
@@ -753,10 +982,21 @@ impl GitGraphApp {
             {
                 self.go_to_head();
             }
-            if self.scene.as_ref().is_some_and(|s| s.net.any_pinned())
+            ui.separator();
+            ui.label("Drag:");
+            for (m, key) in DragModel::ALL.into_iter().zip(["1", "2", "3"]) {
+                if ui
+                    .selectable_label(self.settings.net.model == m, m.label())
+                    .on_hover_text(format!("{} ({key})", m.description()))
+                    .clicked()
+                {
+                    self.set_drag_model(m);
+                }
+            }
+            if self.scene.as_ref().is_some_and(|s| s.net.any_displaced())
                 && ui
-                    .button("Unpin all")
-                    .on_hover_text("Return dragged nodes to the layout (R)")
+                    .button("Reset")
+                    .on_hover_text("Return all nodes to the layout (R)")
                     .clicked()
             {
                 self.reset_positions();
@@ -801,7 +1041,10 @@ impl GitGraphApp {
                 ui.separator();
             }
             if let Some(scene) = &self.scene {
-                if let Some(sel) = self.selected {
+                if self.selection.len() > 1 {
+                    ui.label(format!("{} nodes selected ·", self.selection.len()));
+                }
+                if let Some(sel) = self.selection.current() {
                     let commit = scene.repo.commit(scene.graph.nodes[sel].commit);
                     ui.monospace(commit.oid.short(10));
                     ui.label(format!(
@@ -864,21 +1107,42 @@ impl GitGraphApp {
             _ => None,
         };
 
-        // Dragging: nodes follow the pointer, the background pans.
+        // Dragging: nodes (with their selection) follow the pointer, the background pans, and
+        // Shift- or Ctrl-dragging the background selects.
+        let modifiers = ui.input(|i| i.modifiers);
+        let extend = modifiers.shift || modifiers.command;
         if response.drag_started() {
             let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or_default();
             let world = self.view.to_world(canvas, origin);
             let node = scene.node_at(world);
+            let middle = response.dragged_by(PointerButton::Middle);
             self.drag = match node {
-                Some(n) if !response.dragged_by(PointerButton::Middle) => {
-                    scene.net.grab(n);
+                Some(n) if !middle => {
+                    if !self.selection.contains(n) {
+                        if extend {
+                            self.selection.add(n);
+                        } else {
+                            self.selection.set(Some(n));
+                        }
+                    }
+                    let model = self.settings.net.model;
+                    let nodes = dragged_with(&self.selection, n);
+                    let carried = scene.carried_nodes(&nodes, model);
+                    scene.net.grab(n, &nodes, &carried, model.adapts());
                     Some(Drag::Node {
                         grab: world - scene.node_center(n),
                     })
                 }
+                None if extend && !middle => Some(Drag::Select { start: world }),
                 _ => Some(Drag::Pan),
             };
         }
+        let band = match (self.drag, response.interact_pointer_pos()) {
+            (Some(Drag::Select { start }), Some(p)) => {
+                Some(Rect::from_two_pos(start, self.view.to_world(canvas, p)))
+            }
+            _ => None,
+        };
         if response.dragged() {
             match self.drag {
                 Some(Drag::Node { grab }) => {
@@ -887,26 +1151,45 @@ impl GitGraphApp {
                         scene.net.drag_to(to_point(target));
                     }
                 }
+                Some(Drag::Select { .. }) => {}
                 Some(Drag::Pan) | None => self.view.pan_screen(response.drag_delta()),
             }
         }
         let mut moved = false;
         if response.drag_stopped() {
-            if matches!(self.drag, Some(Drag::Node { .. })) {
-                scene.net.release();
-                moved = true;
+            match self.drag {
+                Some(Drag::Node { .. }) => {
+                    scene.net.release(&self.settings.net);
+                    moved = true;
+                }
+                Some(Drag::Select { start }) => {
+                    let end = response
+                        .interact_pointer_pos()
+                        .map_or(start, |p| self.view.to_world(canvas, p));
+                    self.selection
+                        .extend(scene.nodes_in(Rect::from_two_pos(start, end)));
+                }
+                Some(Drag::Pan) | None => {}
             }
             self.drag = None;
         }
 
-        // Clicks.
+        // Clicks: select a node; Ctrl toggles it, Shift adds it.
         if response.clicked() {
-            self.selected = self.hovered;
+            match self.hovered {
+                Some(n) if modifiers.command => self.selection.toggle(n),
+                Some(n) if modifiers.shift => self.selection.add(n),
+                Some(n) => self.selection.set(Some(n)),
+                None if extend => {}
+                None => self.selection.set(None),
+            }
         }
         if response.secondary_clicked() {
             self.context_node = self.hovered;
-            if self.hovered.is_some() {
-                self.selected = self.hovered;
+            if let Some(n) = self.hovered
+                && !self.selection.contains(n)
+            {
+                self.selection.set(Some(n));
             }
         }
         if response.double_clicked() && self.hovered.is_none() {
@@ -934,14 +1217,39 @@ impl GitGraphApp {
         }
 
         let palette = palette_for(ui);
-        let mut hits = vec![false; scene.node_count()];
+        let count = scene.node_count();
+        let mut hits = vec![false; count];
         for &h in &self.search.hits {
             hits[h] = true;
+        }
+        let mut selected = self.selection.mask(count);
+        if let Some(band) = band {
+            for node in scene.nodes_in(band) {
+                selected[node] = true;
+            }
+        }
+        // In Subtree mode, show what a drag would move.
+        let mut preview = vec![false; count];
+        match (self.hovered, self.drag, self.settings.net.model) {
+            (Some(n), None, DragModel::Subtree) => {
+                let roots = dragged_with(&self.selection, n);
+                if self.preview.as_ref().is_none_or(|(r, _)| *r != roots) {
+                    let nodes = scene.carried_nodes(&roots, DragModel::Subtree);
+                    self.preview = Some((roots, nodes));
+                }
+                if let Some((_, nodes)) = &self.preview {
+                    for &node in nodes {
+                        preview[node] = true;
+                    }
+                }
+            }
+            _ => self.preview = None,
         }
         let marks = Marks {
             hovered: self.hovered,
             hovered_edge: self.hovered_edge,
-            selected: self.selected,
+            selected,
+            preview,
             search_hits: hits,
         };
         let painter = ui.painter_at(canvas);
@@ -954,6 +1262,16 @@ impl GitGraphApp {
             &self.settings,
             &marks,
         );
+
+        if let Some(band) = band {
+            painter.rect(
+                self.view.rect_to_screen(canvas, band),
+                0.0,
+                palette.selection.gamma_multiply(0.12),
+                egui::Stroke::new(1.0, palette.selection),
+                egui::StrokeKind::Inside,
+            );
+        }
 
         if scene.node_count() == 0 {
             painter.text(
@@ -1059,6 +1377,12 @@ impl GitGraphApp {
 
         // Context menu.
         let context_node = self.context_node;
+        // A node's menu acts on the selection it belongs to.
+        let group: Vec<usize> = match context_node {
+            Some(n) if self.selection.contains(n) => self.selection.nodes.clone(),
+            Some(n) => vec![n],
+            None => Vec::new(),
+        };
         let mut action = None;
         response.context_menu(|ui| {
             let Some(node) = context_node else {
@@ -1097,8 +1421,28 @@ impl GitGraphApp {
                 ui.close();
             }
             ui.separator();
-            if scene.net.is_pinned(node) && ui.button("Return node to layout").clicked() {
-                action = Some(MenuAction::Unpin(node));
+            if ui
+                .button("Select subtree")
+                .on_hover_text(
+                    "Select everything that grows out of this (first-parent descendants)",
+                )
+                .clicked()
+            {
+                action = Some(MenuAction::SelectSubtree(group.clone()));
+                ui.close();
+            }
+            let displaced: Vec<usize> = group
+                .iter()
+                .copied()
+                .filter(|&n| scene.net.is_displaced(n))
+                .collect();
+            let label = if group.len() > 1 {
+                "Return selection to layout"
+            } else {
+                "Return node to layout"
+            };
+            if !displaced.is_empty() && ui.button(label).clicked() {
+                action = Some(MenuAction::ReturnToLayout(displaced));
                 ui.close();
             }
             if ui.button("Centre view here").clicked() {
@@ -1109,12 +1453,8 @@ impl GitGraphApp {
         match action {
             Some(MenuAction::Fit) => self.fit(),
             Some(MenuAction::ResetAll) => self.reset_positions(),
-            Some(MenuAction::Unpin(node)) => {
-                if let Some(scene) = &mut self.scene {
-                    scene.net.unpin(node);
-                }
-                self.record_moves();
-            }
+            Some(MenuAction::ReturnToLayout(nodes)) => self.return_to_layout(&nodes),
+            Some(MenuAction::SelectSubtree(roots)) => self.select_subtree(&roots),
             Some(MenuAction::Center(node)) => self.center_on(node),
             None => {}
         }
@@ -1259,8 +1599,25 @@ impl GitGraphApp {
                     for (keys, what) in [
                         (
                             "Drag a node",
-                            "Move it; the graph follows like a web. It stays pinned.",
+                            "Move it, with the rest of the selection it belongs to",
                         ),
+                        (
+                            "1 / 2 / 3",
+                            "Drag mode Adapt (the graph gives way) / Free (nothing else \
+                             moves) / Subtree (take along what grows out of it)",
+                        ),
+                        ("Click a node", "Select it"),
+                        (
+                            "Ctrl+click / Shift+click",
+                            "Toggle it in / add it to the selection",
+                        ),
+                        (
+                            "Shift+drag the background",
+                            "Select the nodes in a rectangle",
+                        ),
+                        ("Esc", "Clear the selection"),
+                        ("Ctrl+Z / Ctrl+Shift+Z", "Undo / redo a move"),
+                        ("R", "Return all nodes to the layout"),
                         ("Drag the background", "Pan"),
                         ("Wheel / Shift+wheel", "Scroll vertically / horizontally"),
                         ("Ctrl+wheel, pinch", "Zoom around the pointer"),
@@ -1270,9 +1627,11 @@ impl GitGraphApp {
                         ("Ctrl+F", "Find; Enter / Shift+Enter for next / previous"),
                         ("F3, N", "Next search hit"),
                         ("Ctrl+C", "Copy the selected commit's hash"),
-                        ("R", "Return all dragged nodes to the layout"),
                         ("F5", "Reload the repository"),
-                        ("Right-click a node", "Copy hash or refs, unpin"),
+                        (
+                            "Right-click a node",
+                            "Copy hash or refs, select its subtree, return it to the layout",
+                        ),
                     ] {
                         ui.strong(keys);
                         ui.label(what);
@@ -1294,7 +1653,8 @@ fn palette_for(ui: &Ui) -> Palette {
 enum MenuAction {
     Fit,
     ResetAll,
-    Unpin(usize),
+    ReturnToLayout(Vec<usize>),
+    SelectSubtree(Vec<usize>),
     Center(usize),
 }
 
@@ -1319,7 +1679,7 @@ impl eframe::App for GitGraphApp {
 
         if let Some(scene) = &mut self.scene {
             self.automation
-                .drive(&ctx, scene, &mut self.view, self.canvas);
+                .drive(&ctx, scene, &mut self.view, self.canvas, &self.settings.net);
         }
     }
 
