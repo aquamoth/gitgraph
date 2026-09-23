@@ -942,11 +942,11 @@ impl GitGraphApp {
             for s in Simplification::ALL {
                 ui.selectable_value(&mut g.simplification, s, s.label());
             }
-            ui.separator();
+            group_break(ui, 190.0);
             ui.toggle_value(&mut g.show_local_branches, "Local");
             ui.toggle_value(&mut g.show_remote_branches, "Remote");
             ui.toggle_value(&mut g.show_tags, "Tags");
-            ui.separator();
+            group_break(ui, 290.0);
             let current = Look::of(&self.settings);
             egui::ComboBox::from_id_salt("look")
                 .selected_text(current.map_or("Custom", Look::label))
@@ -967,7 +967,7 @@ impl GitGraphApp {
                         ui.selectable_value(&mut self.settings.layout.direction, d, d.label());
                     }
                 });
-            ui.separator();
+            group_break(ui, 100.0);
             if ui
                 .button("Fit")
                 .on_hover_text("Fit the whole graph (F)")
@@ -982,7 +982,7 @@ impl GitGraphApp {
             {
                 self.go_to_head();
             }
-            ui.separator();
+            group_break(ui, 230.0);
             ui.label("Drag:");
             for (m, key) in DragModel::ALL.into_iter().zip(["1", "2", "3"]) {
                 if ui
@@ -1001,7 +1001,7 @@ impl GitGraphApp {
             {
                 self.reset_positions();
             }
-            ui.separator();
+            group_break(ui, 210.0);
             let search = egui::TextEdit::singleline(&mut self.search.query)
                 .id(egui::Id::new("search"))
                 .hint_text("Find (Ctrl+F)")
@@ -1639,6 +1639,17 @@ impl GitGraphApp {
                     }
                 });
             });
+    }
+}
+
+/// Separates groups in the (wrapping) toolbar: a separator, or a new line if the next group,
+/// about `width` wide, would not fit.
+fn group_break(ui: &mut Ui, width: f32) {
+    // (In a wrapping layout `available_width` is the whole row.)
+    if ui.max_rect().right() - ui.cursor().min.x < width {
+        ui.end_row();
+    } else {
+        ui.separator();
     }
 }
 

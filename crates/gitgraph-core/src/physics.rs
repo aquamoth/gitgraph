@@ -748,9 +748,16 @@ impl Net {
     }
 
     fn activate(&mut self, p: usize) {
+        let t = self.target[p];
+        self.activate_heading(p, t);
+    }
+
+    /// Wakes particle `p`, which is heading for `target` (for use while `self.target` is
+    /// being relaxed elsewhere).
+    fn activate_heading(&mut self, p: usize, target: Point) {
         if !self.is_active[p] {
             self.is_active[p] = true;
-            self.before[p] = self.target[p];
+            self.before[p] = target;
             self.active.push(p as u32);
         }
     }
@@ -1137,8 +1144,8 @@ impl Net {
                 continue;
             }
             let (a, b) = (pair.a as usize, pair.b as usize);
-            self.activate(a);
-            self.activate(b);
+            self.activate_heading(a, target[a]);
+            self.activate_heading(b, target[b]);
             let wa = if self.held[a] { 0.0 } else { 1.0 };
             let wb = if self.held[b] { 0.0 } else { 1.0 };
             if wa + wb == 0.0 {
@@ -1563,6 +1570,40 @@ mod tests {
         net.release(&NetParams::default());
         settle(&mut net, &NetParams::default());
         assert_eq!(net.active_count(), 0, "everything goes back to sleep");
+    }
+
+    #[test]
+    fn pushing_wakes_resting_nodes_in_big_graphs() {
+        // A row of more tips than are simulated at once, under one root.
+        let tips = ACTIVE_BUDGET as u32 + 2_000;
+        let input = LayoutInput {
+            sizes: vec![Point::new(40.0, 20.0); tips as usize + 1],
+            times: (0..=tips as i64).rev().collect(),
+            edges: (0..tips).map(|t| edge(t, tips)).collect(),
+            priority: Vec::new(),
+        };
+        let (l, mut net) = net_for(&input);
+        let row = |i: usize| l.nodes[i].x;
+        let first = (0..tips as usize)
+            .min_by(|&a, &b| row(a).total_cmp(&row(b)))
+            .unwrap();
+        let params = NetParams::default();
+        net.grab(first, &[first], &[], true);
+        let asleep = (0..tips as usize).filter(|&i| !net.is_active[i]).count();
+        assert!(asleep > 0, "part of the row is not simulated");
+        // Sweep through the whole row in big jumps.
+        let span = (0..tips as usize).map(row).fold(0.0f32, f32::max) - row(first);
+        for f in 1..=40 {
+            let x = row(first) + span * f as f32 / 40.0;
+            net.drag_to(Point::new(x, l.nodes[first].y + 3.0));
+            net.step(1.0 / 60.0, &params);
+        }
+        net.release(&params);
+        settle(&mut net, &params);
+        for i in 0..=tips as usize {
+            let p = net.node_pos(i);
+            assert!(p.x.is_finite() && p.y.is_finite());
+        }
     }
 
     #[test]
