@@ -254,3 +254,44 @@ fn decorated_mode_drops_merges_of_empty_rooted_histories() {
     let g = revgraph::build(&repo, &with_mode(Simplification::BranchesAndMerges));
     assert!(node_subjects(&repo, &g).contains(&"R".to_owned()));
 }
+
+#[test]
+fn filters_limit_history_to_matching_refs() {
+    let mut r = TestRepo::new();
+    r.commit("A");
+    r.branch("feature/x");
+    r.commit("X");
+    r.checkout("main");
+    r.branch("bugfix/y");
+    r.commit("Y");
+    r.checkout("main");
+    r.commit("B");
+    r.git(&["tag", "t-on-b"]);
+    let repo = r.load();
+
+    let mut opts = with_mode(Simplification::AllCommits);
+    assert_eq!(
+        node_subjects(&repo, &revgraph::build(&repo, &opts)),
+        ["A", "B", "X", "Y"]
+    );
+
+    opts.current_branch_only = true;
+    let g = revgraph::build(&repo, &opts);
+    assert_eq!(node_subjects(&repo, &g), ["A", "B"]);
+    let labels: Vec<&str> = g
+        .nodes
+        .iter()
+        .flat_map(|n| n.refs.iter().map(|&i| repo.refs[i].name.as_str()))
+        .collect();
+    assert!(
+        labels.contains(&"t-on-b"),
+        "refs inside the shown history keep their labels"
+    );
+
+    opts.current_branch_only = false;
+    opts.ref_filter = "FEATURE, nothing".into();
+    assert_eq!(
+        node_subjects(&repo, &revgraph::build(&repo, &opts)),
+        ["A", "B", "X"]
+    );
+}

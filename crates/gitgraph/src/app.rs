@@ -496,6 +496,14 @@ impl GitGraphApp {
             .on_hover_text(
                 "Refs outside heads, remotes and tags, e.g. refs/pull/* or tool checkpoints.",
             );
+        ui.separator();
+        ui.checkbox(&mut g.current_branch_only, "Current branch only")
+            .on_hover_text("Only HEAD's history (TortoiseGit filter \"Current branch\").");
+        ui.horizontal(|ui| {
+            ui.label("Branch filter");
+            ui.add(egui::TextEdit::singleline(&mut g.ref_filter).hint_text("e.g. main, release").desired_width(160.0))
+                .on_hover_text("Only branches and tags whose names contain one of these comma-separated words start history.");
+        });
         ui.checkbox(&mut g.first_parent_only, "First parent only")
             .on_hover_text(
                 "Follow only first parents: merged side branches without refs disappear.",

@@ -47,6 +47,14 @@ struct Cli {
     #[arg(long)]
     max_row_width: Option<f32>,
 
+    /// Show only the history of HEAD.
+    #[arg(long)]
+    current_branch: bool,
+
+    /// Only branches and tags whose names contain one of these comma-separated words.
+    #[arg(long, value_name = "WORDS")]
+    filter: Option<String>,
+
     /// Hide remote-tracking branches.
     #[arg(long)]
     no_remotes: bool,
@@ -212,6 +220,12 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
     }
     if let Some(w) = cli.max_row_width {
         s.layout.max_layer_width = w;
+    }
+    if cli.current_branch {
+        s.graph.current_branch_only = true;
+    }
+    if let Some(filter) = &cli.filter {
+        s.graph.ref_filter = filter.clone();
     }
     if cli.no_remotes {
         s.graph.show_remote_branches = false;

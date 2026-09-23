@@ -66,6 +66,12 @@ pub struct GraphOptions {
     pub show_other_refs: bool,
     /// Follow only first parents: merged-in side branches without refs of their own vanish.
     pub first_parent_only: bool,
+    /// Show only the history of HEAD (TortoiseGit's "Current branch" filter). Other refs are
+    /// still shown where they point into that history.
+    pub current_branch_only: bool,
+    /// Only refs whose name contains one of these comma-separated words (case-insensitive)
+    /// start history; empty = all. Refs on commits shown anyway are always labelled.
+    pub ref_filter: String,
 }
 
 impl Default for GraphOptions {
@@ -79,11 +85,25 @@ impl Default for GraphOptions {
             show_stash: true,
             show_other_refs: false,
             first_parent_only: false,
+            current_branch_only: false,
+            ref_filter: String::new(),
         }
     }
 }
 
 impl GraphOptions {
+    /// True if a ref with this display name passes [`GraphOptions::ref_filter`].
+    pub fn filter_matches(&self, name: &str) -> bool {
+        let words: Vec<String> = self
+            .ref_filter
+            .split(',')
+            .map(|w| w.trim().to_lowercase())
+            .filter(|w| !w.is_empty())
+            .collect();
+        let name = name.to_lowercase();
+        words.is_empty() || words.iter().any(|w| name.contains(w.as_str()))
+    }
+
     pub fn shows(&self, kind: RefKind) -> bool {
         match kind {
             RefKind::LocalBranch => self.show_local_branches,
@@ -178,9 +198,15 @@ pub fn build(repo: &Repo, options: &GraphOptions) -> RevGraph {
         }
     };
 
-    // Commits reachable from visible refs.
+    // Commits reachable from the refs that start history (visible and passing the filters).
+    let starts_history = |i: usize| {
+        let r = &repo.refs[i];
+        r.is_head || (!options.current_branch_only && options.filter_matches(&r.name))
+    };
     let mut visible = vec![false; n];
-    let mut stack: Vec<usize> = (0..n).filter(|&c| !refs_on[c].is_empty()).collect();
+    let mut stack: Vec<usize> = (0..n)
+        .filter(|&c| refs_on[c].iter().any(|&i| starts_history(i)))
+        .collect();
     stack.extend(head);
     let mut visible_commits = 0;
     while let Some(c) = stack.pop() {
