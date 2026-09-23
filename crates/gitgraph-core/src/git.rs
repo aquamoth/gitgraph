@@ -174,6 +174,14 @@ impl Git {
     }
 }
 
+impl Git {
+    /// The full commit message (subject and body) of a commit.
+    pub fn message(&self, oid: &Oid) -> Result<String, GitError> {
+        let out = self.run(&["log", "-1", "--no-color", "--format=%B", &oid.to_hex()])?;
+        Ok(out.trim_end().to_owned())
+    }
+}
+
 /// Convenience wrapper: load the repository containing `dir`.
 pub fn load_repo(dir: &Path) -> Result<Repo, GitError> {
     Git::new(dir).load()

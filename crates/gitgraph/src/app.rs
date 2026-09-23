@@ -27,6 +27,51 @@ enum Drag {
     Pan,
 }
 
+/// Full commit messages for tooltips, fetched from git on a worker thread when first needed.
+#[derive(Debug, Default)]
+struct Messages {
+    /// `None` while loading.
+    cache: std::collections::HashMap<gitgraph_core::Oid, Option<String>>,
+    rx: Option<std::sync::mpsc::Receiver<(gitgraph_core::Oid, String)>>,
+    tx: Option<std::sync::mpsc::Sender<gitgraph_core::Oid>>,
+}
+
+impl Messages {
+    /// The message of `oid` if already loaded; otherwise requests it.
+    fn get(
+        &mut self,
+        repo_path: &std::path::Path,
+        oid: gitgraph_core::Oid,
+        ctx: &egui::Context,
+    ) -> Option<&str> {
+        while let Some(Ok((oid, msg))) = self.rx.as_ref().map(|rx| rx.try_recv()) {
+            self.cache.insert(oid, Some(msg));
+        }
+        if !self.cache.contains_key(&oid) {
+            self.cache.insert(oid, None);
+            let tx = self.tx.get_or_insert_with(|| {
+                let (req_tx, req_rx) = std::sync::mpsc::channel::<gitgraph_core::Oid>();
+                let (res_tx, res_rx) = std::sync::mpsc::channel();
+                let git = gitgraph_core::git::Git::new(repo_path);
+                let ctx = ctx.clone();
+                std::thread::spawn(move || {
+                    for oid in req_rx {
+                        let msg = git.message(&oid).unwrap_or_else(|e| format!("({e})"));
+                        if res_tx.send((oid, msg)).is_err() {
+                            break;
+                        }
+                        ctx.request_repaint();
+                    }
+                });
+                self.rx = Some(res_rx);
+                req_tx
+            });
+            let _ = tx.send(oid);
+        }
+        self.cache.get(&oid).and_then(|m| m.as_deref())
+    }
+}
+
 /// A layout running on a worker thread.
 #[derive(Debug)]
 struct LayoutJob {
@@ -68,6 +113,7 @@ pub struct GitGraphApp {
     show_shortcuts: bool,
     /// Path being edited in the "Export as SVG" dialog, when open.
     export_path: Option<String>,
+    messages: Messages,
     automation: Automation,
 }
 
@@ -115,6 +161,7 @@ impl GitGraphApp {
             status: None,
             show_shortcuts: false,
             export_path: None,
+            messages: Messages::default(),
             automation,
         }
     }
@@ -830,6 +877,9 @@ impl GitGraphApp {
                 .iter()
                 .map(|&r| self.repo.refs[r].full_name.as_str())
                 .collect();
+            let messages = &mut self.messages;
+            let repo_path = &self.repo.path;
+            let ctx = ui.ctx().clone();
             response.clone().on_hover_ui_at_pointer(|ui| {
                 ui.monospace(commit.oid.to_hex());
                 ui.label(format!(
@@ -838,6 +888,19 @@ impl GitGraphApp {
                 ));
                 ui.add_space(4.0);
                 ui.label(RichText::new(&commit.subject).strong());
+                match messages.get(repo_path, commit.oid, &ctx) {
+                    Some(message) => {
+                        let body = message.split_once('\n').map_or("", |(_, b)| b.trim());
+                        if !body.is_empty() {
+                            // TortoiseGit truncates at 8000 characters.
+                            let body: String = body.lines().take(40).collect::<Vec<_>>().join("\n");
+                            ui.label(body.chars().take(4000).collect::<String>());
+                        }
+                    }
+                    None => {
+                        ui.spinner();
+                    }
+                }
                 if !refs.is_empty() {
                     ui.add_space(4.0);
                     ui.label(RichText::new(refs.join("\n")).weak());

@@ -295,3 +295,16 @@ fn filters_limit_history_to_matching_refs() {
         ["A", "B", "X"]
     );
 }
+
+#[test]
+fn reads_full_commit_messages() {
+    let mut r = TestRepo::new();
+    r.commit("Subject line\n\nBody paragraph\nsecond line");
+    let repo = r.load();
+    let c = repo.head_commit().unwrap();
+    assert_eq!(repo.commit(c).subject, "Subject line");
+    let msg = gitgraph_core::git::Git::new(r.path())
+        .message(&repo.commit(c).oid)
+        .unwrap();
+    assert_eq!(msg, "Subject line\n\nBody paragraph\nsecond line");
+}
