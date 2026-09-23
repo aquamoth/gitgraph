@@ -78,17 +78,6 @@ impl SceneInput {
 }
 
 impl Scene {
-    /// Builds and lays out in one go (see [`Scene::prepare`]).
-    #[cfg(test)]
-    pub fn build(
-        repo: &Repo,
-        settings: &Settings,
-        text_width: &mut dyn FnMut(&str) -> f32,
-        text_height: f32,
-    ) -> Scene {
-        Scene::prepare(repo, settings, text_width, text_height).lay_out()
-    }
-
     /// Builds the graph for the current settings and measures its nodes. `text_width`
     /// measures a string at [`FONT_SIZE`]; `text_height` is the height of one line of text.
     pub fn prepare(
