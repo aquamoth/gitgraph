@@ -4,7 +4,7 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
-use gitgraph_core::layout::{self, Layout, LayoutEdge, LayoutInput, Point};
+use gitgraph_core::layout::{self, Layout, LayoutEdge, LayoutInput, LayoutOptions, Point};
 use gitgraph_core::physics::Net;
 use gitgraph_core::revgraph::{self, RevGraph};
 use gitgraph_core::{RefKind, Repo};
@@ -48,15 +48,55 @@ pub struct Scene {
     pub layout_time: Duration,
 }
 
+/// Everything needed to lay a scene out, prepared on the UI thread (which owns the fonts);
+/// [`SceneInput::lay_out`] can then run on any thread.
+#[derive(Debug)]
+pub struct SceneInput {
+    graph: RevGraph,
+    visuals: Vec<NodeVisual>,
+    input: LayoutInput,
+    options: LayoutOptions,
+    row_height: f32,
+    build_time: Duration,
+}
+
+impl SceneInput {
+    pub fn lay_out(self) -> Scene {
+        let t = Instant::now();
+        let layout = layout::layout(&self.input, &self.options);
+        let net = Net::new(&layout, &self.input.sizes);
+        Scene {
+            graph: self.graph,
+            layout,
+            visuals: self.visuals,
+            net,
+            row_height: self.row_height,
+            build_time: self.build_time,
+            layout_time: t.elapsed(),
+        }
+    }
+}
+
 impl Scene {
-    /// Builds the graph for the current settings and lays it out. `text_width` measures a
-    /// string at [`FONT_SIZE`]; `text_height` is the height of one line of text.
+    /// Builds and lays out in one go (see [`Scene::prepare`]).
+    #[cfg(test)]
     pub fn build(
         repo: &Repo,
         settings: &Settings,
         text_width: &mut dyn FnMut(&str) -> f32,
         text_height: f32,
     ) -> Scene {
+        Scene::prepare(repo, settings, text_width, text_height).lay_out()
+    }
+
+    /// Builds the graph for the current settings and measures its nodes. `text_width`
+    /// measures a string at [`FONT_SIZE`]; `text_height` is the height of one line of text.
+    pub fn prepare(
+        repo: &Repo,
+        settings: &Settings,
+        text_width: &mut dyn FnMut(&str) -> f32,
+        text_height: f32,
+    ) -> SceneInput {
         let t = Instant::now();
         let graph = revgraph::build(repo, &settings.graph);
         let build_time = t.elapsed();
@@ -96,7 +136,6 @@ impl Scene {
             })
             .collect();
 
-        let t = Instant::now();
         let sizes: Vec<Point> = visuals
             .iter()
             .map(|v| Point::new(v.size.x, v.size.y))
@@ -120,18 +159,13 @@ impl Scene {
                 .collect(),
             priority: head.map(|h| vec![h as u32]).unwrap_or_default(),
         };
-        let layout = layout::layout(&input, &settings.layout);
-        let net = Net::new(&layout, &sizes);
-        let layout_time = t.elapsed();
-
-        Scene {
+        SceneInput {
             graph,
-            layout,
             visuals,
-            net,
+            input,
+            options: settings.layout.clone(),
             row_height,
             build_time,
-            layout_time,
         }
     }
 

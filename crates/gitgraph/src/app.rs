@@ -27,6 +27,15 @@ enum Drag {
     Pan,
 }
 
+/// A layout running on a worker thread.
+#[derive(Debug)]
+struct LayoutJob {
+    rx: std::sync::mpsc::Receiver<Scene>,
+    /// Commit near the view centre and its screen position, to keep the view steady.
+    anchor: Option<(CommitIx, Pos2)>,
+    selected_commit: Option<CommitIx>,
+}
+
 #[derive(Debug, Default)]
 struct Search {
     query: String,
@@ -42,7 +51,9 @@ pub struct GitGraphApp {
     /// False for automated runs, so they don't overwrite the user's settings.
     persist: bool,
     scene: Option<Scene>,
-    built_for: Option<(GraphOptions, LayoutOptions)>,
+    /// Options of the most recently requested layout.
+    requested: Option<(GraphOptions, LayoutOptions)>,
+    job: Option<LayoutJob>,
     view: View,
     needs_initial_view: bool,
     canvas: Rect,
@@ -88,7 +99,8 @@ impl GitGraphApp {
             settings,
             persist,
             scene: None,
-            built_for: None,
+            requested: None,
+            job: None,
             view: View::default(),
             needs_initial_view: true,
             canvas: Rect::NOTHING,
@@ -104,31 +116,49 @@ impl GitGraphApp {
         }
     }
 
-    /// Rebuilds the scene when the graph or layout options changed, keeping the commit at the
-    /// centre of the view (or the selected one) where it was on screen.
+    /// Starts a new layout when the graph or layout options changed, and installs finished
+    /// layouts. Layout runs on a worker thread; the previous scene stays visible meanwhile.
     fn ensure_scene(&mut self, ctx: &egui::Context) {
         let key = (self.settings.graph.clone(), self.settings.layout.clone());
-        if self.built_for.as_ref() == Some(&key) && self.scene.is_some() {
-            return;
+        if self.requested.as_ref() != Some(&key) {
+            self.requested = Some(key);
+            let font = FontId::monospace(FONT_SIZE);
+            let text_height = ctx.fonts_mut(|f| f.row_height(&font));
+            let input = ctx.fonts_mut(|f| {
+                let mut width = |s: &str| {
+                    f.layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE)
+                        .size()
+                        .x
+                };
+                Scene::prepare(&self.repo, &self.settings, &mut width, text_height)
+            });
+            let (tx, rx) = std::sync::mpsc::channel();
+            let repaint = ctx.clone();
+            std::thread::spawn(move || {
+                // The receiver is gone if a newer layout superseded this one.
+                let _ = tx.send(input.lay_out());
+                repaint.request_repaint();
+            });
+            self.job = Some(LayoutJob {
+                rx,
+                anchor: self.view_anchor(),
+                selected_commit: self
+                    .pending_select
+                    .take()
+                    .or_else(|| self.selected_commit()),
+            });
         }
-        let anchor = self.view_anchor();
-        let selected_commit = self.selected_commit();
 
-        let font = FontId::monospace(FONT_SIZE);
-        let text_height = ctx.fonts_mut(|f| f.row_height(&font));
-        let scene = ctx.fonts_mut(|f| {
-            let mut width = |s: &str| {
-                f.layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE)
-                    .size()
-                    .x
-            };
-            Scene::build(&self.repo, &self.settings, &mut width, text_height)
-        });
+        let Some(job) = &self.job else { return };
+        let Ok(scene) = job.rx.try_recv() else {
+            return;
+        };
+        let job = self.job.take().expect("job exists");
         self.scene = Some(scene);
-        self.built_for = Some(key);
         self.hovered = None;
+        self.context_node = None;
         self.drag = None;
-        self.selected = selected_commit.and_then(|c| {
+        self.selected = job.selected_commit.and_then(|c| {
             self.scene
                 .as_ref()?
                 .graph
@@ -136,13 +166,18 @@ impl GitGraphApp {
                 .map(|n| n as usize)
         });
         self.update_search();
-        if let (Some((commit, screen)), Some(scene)) = (anchor, &self.scene)
+        if let (Some((commit, screen)), Some(scene)) = (job.anchor, &self.scene)
             && let Some(node) = scene.graph.represented_by(commit)
+            && self.canvas.is_positive()
         {
             let world = scene.node_center(node as usize);
             let fraction = (screen - self.canvas.min) / self.canvas.size();
             self.view.show_at(self.canvas, world, fraction);
         }
+    }
+
+    pub fn is_laying_out(&self) -> bool {
+        self.job.is_some()
     }
 
     /// A commit near the middle of the view, with its screen position, for keeping the view
@@ -176,8 +211,7 @@ impl GitGraphApp {
             Ok(repo) => {
                 let selected = self.selected_commit().map(|c| self.repo.commit(c).oid);
                 self.repo = repo;
-                self.built_for = None;
-                self.selected = None;
+                self.requested = None;
                 self.status = Some(("Reloaded".into(), false));
                 // Re-select the same commit after the rebuild if it still exists.
                 if let Some(oid) = selected {
@@ -606,6 +640,11 @@ impl GitGraphApp {
 
     fn status_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
+            if self.is_laying_out() {
+                ui.spinner();
+                ui.label("Laying out…");
+                ui.separator();
+            }
             if let Some(scene) = &self.scene {
                 if let Some(sel) = self.selected {
                     let commit = self.repo.commit(scene.graph.nodes[sel].commit);
@@ -937,13 +976,6 @@ impl eframe::App for GitGraphApp {
             ThemeChoice::Dark => egui::ThemePreference::Dark,
         });
         self.ensure_scene(&ctx);
-        if let Some(commit) = self.pending_select.take() {
-            self.selected = self
-                .scene
-                .as_ref()
-                .and_then(|s| s.graph.represented_by(commit))
-                .map(|n| n as usize);
-        }
         self.handle_keys(&ctx);
 
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
