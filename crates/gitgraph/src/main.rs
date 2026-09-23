@@ -6,6 +6,7 @@
 mod app;
 mod automation;
 mod export;
+mod icon;
 mod render;
 mod scene;
 mod settings;
@@ -167,7 +168,8 @@ fn main() -> ExitCode {
             .with_title(format!("{} – gitgraph", repo.display_name()))
             .with_app_id("gitgraph")
             .with_inner_size([w, h])
-            .with_min_inner_size([400.0, 300.0]),
+            .with_min_inner_size([400.0, 300.0])
+            .with_icon(std::sync::Arc::new(icon::icon())),
         ..Default::default()
     };
     let automation = Automation::new(

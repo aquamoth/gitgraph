@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=gitgraph
+Comment=Revision graph of a git repository (TortoiseGit style)
+Exec=gitgraph %f
+Terminal=false
+Categories=Development;RevisionControl;
+StartupWMClass=gitgraph
