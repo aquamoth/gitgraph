@@ -21,8 +21,12 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
    - **Rigid**: only the dragged node moves.
 
    The *reach* and *wobble* sliders tune the first two. A dropped node stays pinned (blue dot);
-   right-click → "Return node to layout", or `R` for all nodes. Which feels right, and should
-   moved positions be remembered per repository between runs?
+   right-click → "Return node to layout", or `R` for all nodes. Which feels right?
+   - **Remembering moves.** Drag → "Remember moved nodes" (off by default) keeps dropped nodes
+     per repository across runs and relayouts. Should it be on by default?
+   - **Same row.** Dragging a node through its neighbours in the same row pushes them ahead
+     of it, like beads on a string. Lifting it out of the row lets it pass them. This keeps a
+     reset from ever swapping nodes. OK?
 3. **Fidelity quirks in "Labelled commits" (TortoiseGit's default mode).** TortoiseGit uses
    `git log --simplify-by-decoration` and inherits git's simplifications:
    - A `--no-ff` merge whose first parent is an ancestor of its second is folded away.
@@ -100,3 +104,15 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 - [x] Filters: current branch only, and a ref-name filter.
 - [x] Full commit messages in tooltips, loaded on demand.
 - [x] Window icon drawn in code; Linux `.desktop` entry; pre-commit hook (fmt and clippy).
+- [x] Hovering an edge lists the commits collapsed into it. Help → Legend explains the colours.
+- [x] Independent code review. Fixed:
+  - a crash when reloading after deleting a branch or tag
+  - loading failures on odd characters in subjects or names
+  - lost labels on tags of tags
+  - swapped nodes after a reset
+  - long edges when splitting rows
+  - a race between refs and log during reload
+  - debug-build panics on cyclic input
+
+  Its randomised tests are now permanent property tests.
+- [x] Demo repository script (`scripts/make-demo-repo.sh`) and a README screenshot.
