@@ -1,0 +1,99 @@
+//! Loads a repository and reports graph sizes and timings for every simplification mode.
+//!
+//! Usage: `cargo run --release -p gitgraph-core --example stats -- <repo> [--dump-nodes <mode>]`
+
+use std::time::Instant;
+
+use gitgraph_core::layout::{self, LayoutEdge, LayoutInput, LayoutOptions, Point, Ranking};
+use gitgraph_core::revgraph::{self, GraphOptions, Simplification};
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let path = args.get(1).map(String::as_str).unwrap_or(".");
+    let t = Instant::now();
+    let repo = gitgraph_core::git::load_repo(path.as_ref()).expect("load");
+    eprintln!(
+        "loaded {} commits, {} refs in {:?}",
+        repo.commits.len(),
+        repo.refs.len(),
+        t.elapsed()
+    );
+
+    if let Some(i) = args.iter().position(|a| a == "--dump-nodes") {
+        let mode = match args.get(i + 1).map(String::as_str) {
+            Some("branches") => Simplification::BranchesAndMerges,
+            Some("all") => Simplification::AllCommits,
+            _ => Simplification::Decorated,
+        };
+        let g = revgraph::build(
+            &repo,
+            &GraphOptions {
+                simplification: mode,
+                ..Default::default()
+            },
+        );
+        for n in &g.nodes {
+            println!("{}", repo.commit(n.commit).oid);
+        }
+        return;
+    }
+
+    for mode in Simplification::ALL {
+        let t = Instant::now();
+        let g = revgraph::build(
+            &repo,
+            &GraphOptions {
+                simplification: mode,
+                ..Default::default()
+            },
+        );
+        let build = t.elapsed();
+        let input = LayoutInput {
+            sizes: g
+                .nodes
+                .iter()
+                .map(|n| Point::new(90.0, 18.0 * n.refs.len().max(1) as f32))
+                .collect(),
+            times: g
+                .nodes
+                .iter()
+                .map(|n| repo.commit(n.commit).commit_time)
+                .collect(),
+            edges: g
+                .edges
+                .iter()
+                .map(|e| LayoutEdge {
+                    child: e.child,
+                    parent: e.parent,
+                    first_parent: e.first_parent,
+                })
+                .collect(),
+            priority: Vec::new(),
+        };
+        for ranking in Ranking::ALL {
+            let t = Instant::now();
+            let l = layout::layout(
+                &input,
+                &LayoutOptions {
+                    ranking,
+                    ..Default::default()
+                },
+            );
+            let layers = l.layers.iter().max().map_or(0, |m| m + 1);
+            let bends: usize = l.edges.iter().map(|e| e.len() - 2).sum();
+            println!(
+                "{:<22} nodes {:>6} edges {:>6} build {:>9.2?} | {:<20} layers {:>6} dummies {:>7} size {:>7.0}x{:<7.0} layout {:>9.2?}",
+                mode.label(),
+                g.nodes.len(),
+                g.edges.len(),
+                build,
+                ranking.label(),
+                layers,
+                bends,
+                l.max.x - l.min.x,
+                l.max.y - l.min.y,
+                t.elapsed()
+            );
+        }
+    }
+}

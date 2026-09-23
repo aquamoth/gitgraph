@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/gitgraph-core", "crates/gitgraph"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Mattias Åslund <mattias@trustfall.se>"]
+publish = false
+
+[workspace.dependencies]
+gitgraph-core = { path = "crates/gitgraph-core" }
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
+eframe = { version = "0.36", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+    "wayland",
+    "x11",
+] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# Keep dev builds snappy at runtime: optimise dependencies (egui is slow unoptimised)
+# while leaving our own crates quick to compile and debuggable.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
