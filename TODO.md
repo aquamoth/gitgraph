@@ -51,20 +51,26 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
     machine needs a linker: `sudo apt install mingw-w64`, `cargo-zigbuild`, or `cargo-xwin`
     (which means accepting Microsoft's CRT license). Alternatively, build natively on Windows,
     or set up CI once the repo has a remote. Which do you prefer?
-13. **Performance target.** 15k commits in "All commits" mode lay out in about 200 ms and
-    draw in 7–11 ms per frame. Nothing has been tried at 100k yet. Do you have a repo that
-    size to test with?
+13. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
+    commits, 2,490 refs and 1,846 merges:
+    - Loading takes 0.6 s.
+    - "Labelled commits" (3.6k nodes) lays out in 0.15 s, "Branchings and merges" (7.3k nodes)
+      in 0.2 s.
+    - "All commits" takes 2.8 s on a background thread, because long-lived branches create
+      1.5M bend points. Peak memory is then about 880 MB.
+    - Dragging runs at 8 ms per frame.
+
+    Is 2.8 s and 880 MB for the all-commits view of a 100k repo acceptable, or worth more
+    work? (Apps, at 15k commits, needs 0.2 s.)
 
 ## Planned
 
-- [ ] Crossing reduction: add a transpose pass and several restarts, as OGDF does (15 runs).
-- [ ] Run layout on a background thread for very large graphs (the UI currently blocks ~0.2 s).
-- [ ] Export the graph as SVG/PNG, as TortoiseGit's "Save graph as".
-- [ ] Filter: current branch only, or only branches matching a pattern (TortoiseGit's
-      filter dialog).
-- [ ] Load commit bodies on demand for the tooltip (TortoiseGit shows the full message).
-- [ ] App icon; `.desktop` file for Linux.
-- [ ] Try on macOS.
+- [ ] PNG export: SVG exists; TortoiseGit also offers raster formats.
+- [ ] Remember dragged positions per repository, if wanted (question 2).
+- [ ] Reload automatically when refs change; TortoiseGit only reloads on F5.
+- [ ] Tooltip on edges showing the collapsed commits.
+- [ ] Less memory for all-commits views of huge repositories (compact adjacency).
+- [ ] Windows `.exe` icon resource; try on macOS.
 
 ## Done
 
@@ -83,5 +89,14 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 - [x] Window: TortoiseGit colours and node geometry, light and dark themes, straight or
       curved edges with arrows, pan and zoom, fit, go to HEAD, search, tooltips, context
       menu, overview map, persisted settings, status bar.
-- [x] Draggable nodes with spider-web physics (three models), pinning, reset.
+- [x] Draggable nodes with spider-web physics, in three models. The net's shape minimises
+      spring and anchor energy over displacements; only the dragged node's neighbourhood is
+      simulated. Pinning and reset.
 - [x] Windows type-check (`cargo check --target x86_64-pc-windows-gnu`).
+- [x] Crossing reduction with transposition and 12 restarts, as OGDF does: 16–30% fewer
+      crossings.
+- [x] Layout on a background thread, with the view kept anchored on the same commit.
+- [x] SVG export from the menu, plus headless `--export out.svg`.
+- [x] Filters: current branch only, and a ref-name filter.
+- [x] Full commit messages in tooltips, loaded on demand.
+- [x] Window icon drawn in code; Linux `.desktop` entry; pre-commit hook (fmt and clippy).
