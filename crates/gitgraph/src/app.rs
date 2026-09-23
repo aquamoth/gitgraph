@@ -112,6 +112,7 @@ pub struct GitGraphApp {
     search: Search,
     status: Option<(String, bool)>,
     show_shortcuts: bool,
+    show_legend: bool,
     /// Path being edited in the "Export as SVG" dialog, when open.
     export_path: Option<String>,
     messages: Messages,
@@ -162,6 +163,7 @@ impl GitGraphApp {
             search: Search::default(),
             status: None,
             show_shortcuts: false,
+            show_legend: false,
             export_path: None,
             messages: Messages::default(),
             automation,
@@ -523,6 +525,10 @@ impl GitGraphApp {
             ui.menu_button("Help", |ui| {
                 if ui.button("Keyboard and mouse").clicked() {
                     self.show_shortcuts = true;
+                    ui.close();
+                }
+                if ui.button("Legend").clicked() {
+                    self.show_legend = true;
                     ui.close();
                 }
             });
@@ -1095,6 +1101,67 @@ impl GitGraphApp {
         }
     }
 
+    fn legend_window(&mut self, ctx: &egui::Context) {
+        let palette = if ctx.global_style().visuals.dark_mode {
+            Palette::dark()
+        } else {
+            Palette::light()
+        };
+        egui::Window::new("Legend")
+            .open(&mut self.show_legend)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                let swatch = |ui: &mut Ui, fill: Color32, text: &str, what: &str| {
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::hover());
+                        ui.painter().rect_filled(rect, 4.0, fill);
+                        ui.painter().text(
+                            rect.left_center() + vec2(8.0, 0.0),
+                            egui::Align2::LEFT_CENTER,
+                            text,
+                            FontId::monospace(12.0),
+                            crate::theme::text_on(fill),
+                        );
+                        ui.label(what);
+                    });
+                };
+                swatch(
+                    ui,
+                    palette.current_branch,
+                    "main",
+                    "Current branch (HEAD), or a detached HEAD",
+                );
+                swatch(ui, palette.local_branch, "feature/x", "Local branch");
+                swatch(
+                    ui,
+                    palette.remote_branch,
+                    "origin/feature/x",
+                    "Remote-tracking branch",
+                );
+                swatch(ui, palette.tag, "v1.2.0", "Tag");
+                swatch(ui, palette.stash, "stash", "Stash");
+                swatch(ui, palette.other_ref, "pull/12/head", "Other ref");
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::hover());
+                    ui.painter().rect_filled(rect, 4.0, palette.plain_fill);
+                    ui.painter().text(
+                        rect.left_center() + vec2(8.0, 0.0),
+                        egui::Align2::LEFT_CENTER,
+                        "1a2b3c4d",
+                        FontId::monospace(12.0),
+                        palette.plain_text,
+                    );
+                    ui.label("Commit without refs (branch point or merge)");
+                });
+                ui.add_space(6.0);
+                ui.label(
+                    "Arrows point from a commit to its parents. Edges may stand for many hidden",
+                );
+                ui.label("commits; hover an edge to list them. A blue dot marks a node you moved.");
+            });
+    }
+
     fn shortcuts_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("Keyboard and mouse")
             .open(&mut self.show_shortcuts)
@@ -1160,6 +1227,7 @@ impl eframe::App for GitGraphApp {
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
         self.shortcuts_window(&ctx);
+        self.legend_window(&ctx);
         self.export_window(&ctx);
 
         if let Some(scene) = &mut self.scene {
