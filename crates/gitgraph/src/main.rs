@@ -84,6 +84,10 @@ struct Cli {
     #[arg(long)]
     fit: bool,
 
+    /// Show the overview map.
+    #[arg(long, hide = true)]
+    overview: bool,
+
     /// Zoom level for the screenshot (1 = 100%), applied around the centre of the initial view.
     #[arg(long, hide = true)]
     zoom: Option<f32>,
@@ -222,6 +226,9 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
     }
     if let Some(w) = cli.max_row_width {
         s.layout.max_layer_width = w;
+    }
+    if cli.overview {
+        s.show_overview = true;
     }
     if cli.current_branch {
         s.graph.current_branch_only = true;
