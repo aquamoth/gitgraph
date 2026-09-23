@@ -47,8 +47,8 @@ impl Messages {
         while let Some(Ok((oid, msg))) = self.rx.as_ref().map(|rx| rx.try_recv()) {
             self.cache.insert(oid, Some(msg));
         }
-        if !self.cache.contains_key(&oid) {
-            self.cache.insert(oid, None);
+        if let std::collections::hash_map::Entry::Vacant(slot) = self.cache.entry(oid) {
+            slot.insert(None);
             let tx = self.tx.get_or_insert_with(|| {
                 let (req_tx, req_rx) = std::sync::mpsc::channel::<gitgraph_core::Oid>();
                 let (res_tx, res_rx) = std::sync::mpsc::channel();
