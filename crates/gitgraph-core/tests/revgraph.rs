@@ -346,3 +346,73 @@ fn lists_commits_collapsed_into_an_edge() {
     assert_eq!(hidden, ["D", "B"]);
     assert_eq!(g.collapsed_commits(&repo, e_to_a, 1).len(), 1);
 }
+
+#[test]
+fn tags_of_tags_are_peeled_to_their_commit() {
+    let mut r = TestRepo::new();
+    r.commit("A");
+    r.git(&["tag", "-a", "-m", "one", "t1"]);
+    r.git(&["tag", "-a", "-m", "two", "t2", "t1"]);
+    r.commit("B");
+    let repo = r.load();
+    let t2 = repo
+        .refs
+        .iter()
+        .find(|r| r.name == "t2")
+        .expect("nested tag loaded");
+    assert_eq!(repo.commit(t2.target).subject, "A");
+    assert!(t2.annotated);
+}
+
+#[test]
+fn separator_characters_in_subjects_and_names_are_harmless() {
+    let mut r = TestRepo::new();
+    r.git(&["config", "user.name", "Wei\x1fZhang"]);
+    r.commit("subject with \x1e record and \x1f unit separators");
+    r.commit("second");
+    let repo = r.load();
+    assert_eq!(repo.commits.len(), 2);
+    let first = repo.commits.iter().find(|c| c.parents.is_empty()).unwrap();
+    assert_eq!(
+        first.subject,
+        "subject with \x1e record and \x1f unit separators"
+    );
+    assert_eq!(first.author_name, "Wei\x1fZhang");
+    assert!(first.commit_time > 0);
+}
+
+#[test]
+fn empty_repository_loads_without_commits() {
+    let r = TestRepo::new();
+    let repo = r.load();
+    assert!(repo.commits.is_empty());
+    assert!(matches!(repo.head, Head::Branch { target: None, .. }));
+    let g = revgraph::build(&repo, &GraphOptions::default());
+    assert!(g.nodes.is_empty());
+}
+
+#[test]
+fn loads_from_inside_the_git_directory() {
+    let mut r = TestRepo::new();
+    r.commit("A");
+    let repo = gitgraph_core::git::load_repo(&r.path().join(".git")).expect("load from .git");
+    assert_eq!(repo.commits.len(), 1);
+}
+
+#[test]
+fn notes_are_not_walked() {
+    let mut r = TestRepo::new();
+    r.commit("A");
+    r.git(&["notes", "add", "-m", "a note"]);
+    let repo = r.load();
+    assert_eq!(
+        repo.commits.len(),
+        1,
+        "the notes commit is not part of the history"
+    );
+    assert!(
+        repo.refs
+            .iter()
+            .all(|r| !r.full_name.starts_with("refs/notes/"))
+    );
+}

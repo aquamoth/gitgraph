@@ -31,10 +31,13 @@ pub struct Git {
     dir: PathBuf,
 }
 
+/// Separator for `for-each-ref` fields (ref names cannot contain control characters).
 const FIELD: char = '\x1f';
+/// `git log -z` format: NUL-separated fields, so subjects and names may contain anything.
+const LOG_FORMAT: &str = "--format=%H%x00%P%x00%T%x00%an%x00%ae%x00%at%x00%ad%x00%ct%x00%s";
+const LOG_FIELDS: usize = 9;
 const EMPTY_TREE_SHA1: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const EMPTY_TREE_SHA256: &str = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
-const RECORD: char = '\x1e';
 
 impl Git {
     pub fn new(dir: impl Into<PathBuf>) -> Git {
@@ -87,6 +90,30 @@ impl Git {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
+    /// Runs git with `input` on stdin and returns stdout, failing on a non-zero exit status.
+    fn run_with_input(&self, args: &[&str], input: String) -> Result<String, GitError> {
+        use std::io::Write as _;
+        let mut child = self
+            .command(args)
+            .stdin(Stdio::piped())
+            .spawn()
+            .map_err(GitError::Spawn)?;
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        // Write from another thread so a large output cannot deadlock against a full pipe.
+        let writer = std::thread::spawn(move || {
+            let _ = stdin.write_all(input.as_bytes());
+        });
+        let out = child.wait_with_output().map_err(GitError::Spawn)?;
+        let _ = writer.join();
+        if !out.status.success() {
+            return Err(GitError::Failed {
+                args: args.join(" "),
+                stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+            });
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
     /// Runs git and returns trimmed stdout, or `None` on a non-zero exit status (for queries
     /// such as `symbolic-ref -q` that signal "no" through the exit code).
     fn query(&self, args: &[&str]) -> Result<Option<String>, GitError> {
@@ -111,37 +138,74 @@ impl Git {
         if bare {
             return Ok(PathBuf::from(git_dir));
         }
-        let top = self.run(&["rev-parse", "--show-toplevel"])?;
-        Ok(PathBuf::from(top.trim()))
+        // Inside a `.git` directory there is no work tree: use the git dir itself.
+        Ok(match self.query(&["rev-parse", "--show-toplevel"])? {
+            Some(top) if !top.is_empty() => PathBuf::from(top),
+            _ => PathBuf::from(git_dir),
+        })
     }
 
-    /// Loads every commit reachable from any ref (notes excluded) together with all refs.
+    /// Loads all refs (notes excluded) and every commit reachable from them.
+    ///
+    /// Refs and HEAD are read first and the log is then walked from exactly those commits, so
+    /// a concurrent fetch cannot leave refs pointing at commits that were not loaded.
     pub fn load(&self) -> Result<Repo, GitError> {
         let root = self.repo_root()?;
         let git = Git::new(&root);
 
-        let log_format = format!(
-            "--format=%H{FIELD}%P{FIELD}%T{FIELD}%an{FIELD}%ae{FIELD}%at{FIELD}%ad{FIELD}%ct{FIELD}%s{RECORD}"
-        );
-        let log = git.run(&[
-            "log",
-            "--no-color",
-            "--no-decorate",
-            "--date=format-local:%Y-%m-%d %H:%M",
-            &log_format,
-            "--exclude=refs/notes/*",
-            "--all",
-        ])?;
-        let (commits, by_oid) = parse_log(&log)?;
-
         let ref_format = format!(
             "--format=%(refname){FIELD}%(objecttype){FIELD}%(objectname){FIELD}%(*objecttype){FIELD}%(*objectname){FIELD}%(symref)"
         );
-        let refs_out = git.run(&["for-each-ref", &ref_format])?;
+        let listing = git.run(&["for-each-ref", &ref_format])?;
+        let mut raw_refs = parse_refs(&listing);
+        // Tags of tags: let git peel them all the way to a commit.
+        let nested: Vec<usize> = (0..raw_refs.len())
+            .filter(|&i| raw_refs[i].commit.is_none())
+            .collect();
+        if !nested.is_empty() {
+            let input: String = nested
+                .iter()
+                .map(|&i| format!("{}^{{commit}}\n", raw_refs[i].full_name))
+                .collect();
+            let out = git.run_with_input(&["cat-file", "--batch-check"], input)?;
+            for (&i, line) in nested.iter().zip(out.lines()) {
+                if let Some((oid, "commit")) = line
+                    .split_once(' ')
+                    .map(|(o, rest)| (o, rest.split(' ').next().unwrap_or("")))
+                {
+                    raw_refs[i].commit = Oid::from_hex(oid);
+                }
+            }
+        }
+        raw_refs.retain(|r| r.commit.is_some());
+
         let head_branch = git.query(&["symbolic-ref", "-q", "HEAD"])?;
         let head_oid = git
             .query(&["rev-parse", "-q", "--verify", "HEAD^{commit}"])?
             .and_then(|s| Oid::from_hex(&s));
+
+        let mut starts: Vec<Oid> = raw_refs.iter().filter_map(|r| r.commit).collect();
+        starts.extend(head_oid);
+        starts.sort_unstable();
+        starts.dedup();
+        let (commits, by_oid) = if starts.is_empty() {
+            (Vec::new(), HashMap::new())
+        } else {
+            let input: String = starts.iter().map(|o| format!("{o}\n")).collect();
+            let log = git.run_with_input(
+                &[
+                    "log",
+                    "--no-color",
+                    "--no-decorate",
+                    "--date=format-local:%Y-%m-%d %H:%M",
+                    "-z",
+                    LOG_FORMAT,
+                    "--stdin",
+                ],
+                input,
+            )?;
+            parse_log(&log)?
+        };
 
         let lookup = |oid: &Oid| by_oid.get(oid).copied();
         let head = match (&head_branch, head_oid) {
@@ -159,7 +223,21 @@ impl Git {
             }
         };
 
-        let mut refs = parse_refs(&refs_out, head_branch.as_deref(), lookup);
+        let mut refs: Vec<GitRef> = raw_refs
+            .into_iter()
+            .filter_map(|r| {
+                let target = lookup(&r.commit?)?;
+                let (kind, name) = classify_ref(&r.full_name);
+                Some(GitRef {
+                    is_head: Some(r.full_name.as_str()) == head_branch.as_deref(),
+                    full_name: r.full_name,
+                    name,
+                    kind,
+                    target,
+                    annotated: r.annotated,
+                })
+            })
+            .collect();
         if let Head::Detached(c) = head {
             refs.push(GitRef {
                 full_name: "HEAD".into(),
@@ -200,20 +278,28 @@ fn parse_log(log: &str) -> Result<(Vec<Commit>, HashMap<Oid, CommitIx>), GitErro
         subject: &'a str,
     }
 
-    let mut raw = Vec::new();
-    for record in log.split(RECORD) {
-        let record = record.trim_start_matches(['\n', '\r']);
-        if record.is_empty() {
-            continue;
-        }
-        let f: Vec<&str> = record.splitn(9, FIELD).collect();
-        let [hash, parents, tree, an, ae, at, ad, ct, subject] = f[..] else {
-            return Err(GitError::Parse(format!("bad log record {record:?}")));
+    let mut tokens: Vec<&str> = log.split('\0').collect();
+    // `-z` terminates the last record with a NUL too.
+    if tokens.last() == Some(&"") && tokens.len() % LOG_FIELDS == 1 {
+        tokens.pop();
+    }
+    if tokens.len() % LOG_FIELDS != 0 {
+        return Err(GitError::Parse(format!(
+            "log output has {} fields, not a multiple of {LOG_FIELDS}",
+            tokens.len()
+        )));
+    }
+    let mut raw = Vec::with_capacity(tokens.len() / LOG_FIELDS);
+    for record in tokens.chunks_exact(LOG_FIELDS) {
+        let [hash, parents, tree, an, ae, at, ad, ct, subject] = record else {
+            unreachable!("chunks have LOG_FIELDS items");
         };
+        let hash = hash.trim_start_matches('\n');
         raw.push(Raw {
-            oid: Oid::from_hex(hash).ok_or_else(|| GitError::Parse(format!("bad hash {hash}")))?,
+            oid: Oid::from_hex(hash)
+                .ok_or_else(|| GitError::Parse(format!("bad hash {hash:?}")))?,
             parents,
-            empty_tree: tree == EMPTY_TREE_SHA1 || tree == EMPTY_TREE_SHA256,
+            empty_tree: *tree == EMPTY_TREE_SHA1 || *tree == EMPTY_TREE_SHA256,
             author_name: an,
             author_email: ae,
             author_time: at.parse().unwrap_or(0),
@@ -259,41 +345,40 @@ fn parse_log(log: &str) -> Result<(Vec<Commit>, HashMap<Oid, CommitIx>), GitErro
     Ok((commits, by_oid))
 }
 
-fn parse_refs(
-    out: &str,
-    head_branch: Option<&str>,
-    lookup: impl Fn(&Oid) -> Option<CommitIx>,
-) -> Vec<GitRef> {
+/// A ref as listed by `for-each-ref`, before its commit is looked up.
+#[derive(Debug)]
+struct RawRef {
+    full_name: String,
+    /// The commit it points at (tags peeled), or `None` for a tag of a tag, which still needs
+    /// peeling.
+    commit: Option<Oid>,
+    annotated: bool,
+}
+
+/// Parses `for-each-ref` output. Symbolic refs (duplicates), notes, and refs to trees or
+/// blobs are skipped.
+fn parse_refs(out: &str) -> Vec<RawRef> {
     let mut refs = Vec::new();
     for line in out.lines() {
         let f: Vec<&str> = line.split(FIELD).collect();
         let [full_name, obj_type, obj, peeled_type, peeled, symref] = f[..] else {
             continue;
         };
-        if !symref.is_empty() {
-            // e.g. refs/remotes/origin/HEAD -> origin/main: a duplicate label, skip it.
+        // e.g. refs/remotes/origin/HEAD -> origin/main: a duplicate label.
+        if !symref.is_empty() || full_name.starts_with("refs/notes/") {
             continue;
         }
-        let (annotated, commit_oid) = match (obj_type, peeled_type) {
-            ("commit", _) => (false, obj),
-            ("tag", "commit") => (true, peeled),
-            // Trees, blobs, or tags of tags: nothing to draw.
+        let (annotated, commit) = match (obj_type, peeled_type) {
+            ("commit", _) => (false, Oid::from_hex(obj)),
+            ("tag", "commit") => (true, Oid::from_hex(peeled)),
+            ("tag", "tag") => (true, None),
+            // Trees and blobs: nothing to draw.
             _ => continue,
         };
-        let Some(target) = Oid::from_hex(commit_oid).and_then(|o| lookup(&o)) else {
-            continue;
-        };
-        let (kind, name) = classify_ref(full_name);
-        if kind == RefKind::Other && full_name.starts_with("refs/notes/") {
-            continue;
-        }
-        refs.push(GitRef {
+        refs.push(RawRef {
             full_name: full_name.to_owned(),
-            name,
-            kind,
-            target,
+            commit,
             annotated,
-            is_head: Some(full_name) == head_branch,
         });
     }
     refs
@@ -353,8 +438,8 @@ mod tests {
         let missing = "c".repeat(40);
         let tree = "d".repeat(40);
         let log = format!(
-            "{b}\x1f{a} {missing}\x1f{tree}\x1fAnn\x1fann@x\x1f20\x1f2024-01-02 03:04\x1f21\x1fsecond\x1fwith sep\x1e\n\
-             {a}\x1f\x1f{EMPTY_TREE_SHA1}\x1fBob\x1fbob@x\x1f10\x1f2024-01-01 00:00\x1f11\x1ffirst\x1e\n"
+            "{b}\0{a} {missing}\0{tree}\0A\x1fnn\0ann@x\020\02024-01-02 03:04\021\0second\x1fwith\x1eseps\0\
+             {a}\0\0{EMPTY_TREE_SHA1}\0Bob\0bob@x\010\02024-01-01 00:00\011\0first\0"
         );
         let (commits, by_oid) = parse_log(&log).unwrap();
         assert_eq!(commits.len(), 2);
@@ -364,9 +449,8 @@ mod tests {
             second.truncated,
             "missing parent marks the commit truncated"
         );
-        assert_eq!(second.subject, "second\x1fwith sep");
-        assert_eq!(second.author_time, 20);
-        assert_eq!(second.author_date, "2024-01-02 03:04");
+        assert_eq!(second.subject, "second\x1fwith\x1eseps");
+        assert_eq!(second.author_name, "A\x1fnn");
         assert_eq!(second.commit_time, 21);
         let first = &commits[1];
         assert!(first.parents.is_empty() && !first.truncated);
