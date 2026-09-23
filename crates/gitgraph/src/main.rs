@@ -38,9 +38,9 @@ struct Cli {
     #[arg(long, value_enum)]
     direction: Option<Dir>,
 
-    /// Merge parallel edges into one trunk.
-    #[arg(long)]
-    bundle: bool,
+    /// Overall look: "modern" (curved, bundled edges) or "classic" (as TortoiseGit).
+    #[arg(long, value_enum)]
+    look: Option<LookArg>,
 
     /// Maximum row width before siblings stack up (0 = unlimited, as TortoiseGit).
     #[arg(long)]
@@ -86,6 +86,12 @@ enum Mode {
     Branches,
     /// Every commit.
     All,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LookArg {
+    Modern,
+    Classic,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -160,8 +166,10 @@ fn main() -> ExitCode {
                 Dir::Right => Direction::NewestRight,
             };
         }
-        if cli.bundle {
-            s.layout.concentrate_edges = true;
+        match cli.look {
+            Some(LookArg::Modern) => settings::Look::Modern.apply(s),
+            Some(LookArg::Classic) => settings::Look::Classic.apply(s),
+            None => {}
         }
         if let Some(w) = cli.max_row_width {
             s.layout.max_layer_width = w;

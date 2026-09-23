@@ -20,6 +20,7 @@ pub struct Automation {
     pub zoom: Option<f32>,
     frame: u32,
     requested: bool,
+    frame_times: Vec<std::time::Instant>,
     dragging: Option<(usize, egui::Pos2)>,
 }
 
@@ -59,6 +60,7 @@ impl Automation {
             return;
         }
         self.frame += 1;
+        self.frame_times.push(std::time::Instant::now());
         ctx.request_repaint();
         if self.frame == 2
             && let Some(z) = self.zoom
@@ -106,6 +108,20 @@ impl Automation {
             })
         });
         if let Some(image) = image {
+            let gaps: Vec<f32> = self
+                .frame_times
+                .windows(2)
+                .skip(3)
+                .map(|w| (w[1] - w[0]).as_secs_f32() * 1000.0)
+                .collect();
+            if !gaps.is_empty() {
+                let mean = gaps.iter().sum::<f32>() / gaps.len() as f32;
+                let max = gaps.iter().copied().fold(0.0, f32::max);
+                eprintln!(
+                    "frame interval: mean {mean:.1} ms, max {max:.1} ms over {} frames",
+                    gaps.len()
+                );
+            }
             if let Some(path) = &self.screenshot {
                 let [w, h] = image.size;
                 let bytes: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();

@@ -2,35 +2,86 @@
 
 ## Open questions (HITL)
 
-_Decisions I made on my own that you may want to overrule. Newest last._
+_Decisions I made on my own that you may want to overrule. Try them with `gitgraph` on
+`~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-1. **Fidelity quirks in the default ("Labelled commits") mode.** TortoiseGit uses
-   `git log --simplify-by-decoration`, so it inherits some of git's simplifications:
-   - A `--no-ff` merge whose first parent is an ancestor of its second parent is folded away.
-   - A merge that brings in a history whose root has an **empty tree** (svn imports,
-     `--allow-empty` initial commits) is folded away, along with the root.
+1. **Default look: "Modern" or "Classic"?** The toolbar has a Look selector.
+   - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
+     needed.
+   - **Modern** (current default) uses curved edges and bundles edges that run into the same
+     commit into one trunk. It also splits rows wider than 1800 px so sibling branches stack.
 
-   gitgraph copies this exactly. On `Cosmo/Apps` its node set is identical to git's: 266 nodes.
-   The "Branchings and merges" and "All commits" modes show the real topology. Keep this?
-2. **Stash** is shown, as in TortoiseGit, but only as a single edge to its base commit. The
-   internal index and untracked-files snapshot commits are hidden.
-3. **`origin/HEAD`**-style symbolic refs are hidden, because they duplicate `origin/main`.
+   On Apps, ~160 remote branches hang off a few commits. In Classic that gives rows many
+   thousands of pixels wide with fans of near-horizontal lines. Modern reads like a tree.
+   Which do you want by default?
+2. **Dragging feel.** Menu *Drag* has three prototypes:
+   - **Spider web** (default): springs along edges and between neighbours in a row. The rest of
+     the graph follows with some inertia and wobble.
+   - **Strings**: springs along edges only, no wobble.
+   - **Rigid**: only the dragged node moves.
+
+   The *reach* and *wobble* sliders tune the first two. A dropped node stays pinned (blue dot);
+   right-click → "Return node to layout", or `R` for all nodes. Which feels right, and should
+   moved positions be remembered per repository between runs?
+3. **Fidelity quirks in "Labelled commits" (TortoiseGit's default mode).** TortoiseGit uses
+   `git log --simplify-by-decoration` and inherits git's simplifications:
+   - A `--no-ff` merge whose first parent is an ancestor of its second is folded away.
+   - A merge that brings in a history whose root has an *empty tree* (svn imports,
+     `--allow-empty` first commits) is folded away.
+
+   gitgraph copies this exactly; its node set for Apps is identical to git's (266 nodes).
+   "Branchings and merges" and "All commits" show the real topology. Keep the fidelity?
+4. **Initial view.** As in TortoiseGit, the window opens at 100% with HEAD near the top. On
+   big graphs that shows only a small area. Would fit-to-window, or a fixed zoom such as 60%,
+   be better?
+5. **Layer spacing.** Gaps between rows grow when long sideways edges cross them. TortoiseGit
+   (OGDF) does the same, capped at 300 px. This keeps edges steep but makes the graph taller.
+   Tune it under Graph → Spacing. Happy with the default?
+6. **Stash** is shown, as in TortoiseGit, as a single edge to its base commit. The index and
+   untracked-files snapshot commits are hidden.
+7. **`origin/HEAD`**-style symbolic refs are hidden, because they duplicate `origin/main`.
    TortoiseGit shows them.
-4. **Other refs** such as `refs/t3/*` are hidden by default, with a toggle to show them.
-   TortoiseGit doesn't decorate them either.
+8. **Other refs** (`refs/t3/*` in Apps) are hidden by default; Graph → Other refs shows them.
+9. **HEAD marker.** Like TortoiseGit, only the current branch's row is highlighted (red). A
+   detached HEAD gets its own red "HEAD" row, which TortoiseGit doesn't have.
+10. **No git actions.** Per your brief, there's no checkout, log, diff or delete. The context
+    menu only copies hashes, ref names or the subject. Should any actions be added?
+11. **License?** None is chosen yet (e.g. MIT OR Apache-2.0).
+12. **Windows builds.** The code type-checks for Windows. Producing an `.exe` from this
+    machine needs a linker: `sudo apt install mingw-w64`, `cargo-zigbuild`, or `cargo-xwin`
+    (which means accepting Microsoft's CRT license). Alternatively, build natively on Windows,
+    or set up CI once the repo has a remote. Which do you prefer?
+13. **Performance target.** 15k commits in "All commits" mode lay out in about 200 ms and
+    draw in 7–11 ms per frame. Nothing has been tried at 100k yet. Do you have a repo that
+    size to test with?
 
 ## Planned
 
-- [ ] GUI: window, pan/zoom, node rendering with TortoiseGit colours, edges with arrows.
-- [ ] View options panel: the TortoiseGit toggles, plus direction and ranking.
-- [ ] Drag a node so the rest of the graph follows (spider web): prototype several models.
-- [ ] Tooltips, search (Ctrl+F), jump to HEAD, overview map.
-- [ ] Windows build and CI.
+- [ ] Crossing reduction: add a transpose pass and several restarts, as OGDF does (15 runs).
+- [ ] Run layout on a background thread for very large graphs (the UI currently blocks ~0.2 s).
+- [ ] Export the graph as SVG/PNG, as TortoiseGit's "Save graph as".
+- [ ] Filter: current branch only, or only branches matching a pattern (TortoiseGit's
+      filter dialog).
+- [ ] Load commit bodies on demand for the tooltip (TortoiseGit shows the full message).
+- [ ] App icon; `.desktop` file for Linux.
+- [ ] Try on macOS.
 
 ## Done
 
-- [x] Workspace scaffold, lints, release profile.
+- [x] Workspace scaffold, lints, release profile, docs (`docs/architecture.md`,
+      `docs/building.md`).
+- [x] Research into how TortoiseGit's revision graph works (`docs/research/`).
 - [x] Git loading through the git CLI (about 100 ms for 15k commits).
-- [x] Revision-graph reduction in TortoiseGit's three modes, with integration tests.
-- [x] Layered layout: network-simplex ranking, median crossing reduction, and L1 coordinate
-      assignment by isotonic regression. About 1 ms for 277 nodes and 200 ms for 15k.
+- [x] Revision-graph reduction in TortoiseGit's modes, with integration tests; matches
+      `git log --simplify-by-decoration` exactly on Apps.
+- [x] Layered layout:
+  - network-simplex ranking, median crossing reduction, L1 coordinates
+  - variable layer spacing
+  - splitting of over-wide rows
+  - optional edge bundling
+  - four directions
+- [x] Window: TortoiseGit colours and node geometry, light and dark themes, straight or
+      curved edges with arrows, pan and zoom, fit, go to HEAD, search, tooltips, context
+      menu, overview map, persisted settings, status bar.
+- [x] Draggable nodes with spider-web physics (three models), pinning, reset.
+- [x] Windows type-check (`cargo check --target x86_64-pc-windows-gnu`).

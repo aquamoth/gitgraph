@@ -51,6 +51,53 @@ impl Arrows {
     }
 }
 
+/// Bundles of drawing choices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Look {
+    /// As close to TortoiseGit as possible: straight edges, every edge separate, rows as wide
+    /// as they need to be.
+    Classic,
+    /// gitgraph's default: curved edges bundled into trunks, and very wide rows split so that
+    /// sibling branches stack up.
+    Modern,
+}
+
+impl Look {
+    pub const ALL: [Look; 2] = [Look::Modern, Look::Classic];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Look::Classic => "Classic (TortoiseGit)",
+            Look::Modern => "Modern",
+        }
+    }
+
+    pub fn apply(self, s: &mut Settings) {
+        let defaults = LayoutOptions::default();
+        match self {
+            Look::Classic => {
+                s.edge_style = EdgeStyle::Straight;
+                s.layout.concentrate_edges = false;
+                s.layout.max_layer_width = 0.0;
+            }
+            Look::Modern => {
+                s.edge_style = EdgeStyle::Curved;
+                s.layout.concentrate_edges = true;
+                s.layout.max_layer_width = defaults.max_layer_width;
+            }
+        }
+    }
+
+    /// The look `s` currently matches, if any.
+    pub fn of(s: &Settings) -> Option<Look> {
+        Look::ALL.into_iter().find(|look| {
+            let mut probe = s.clone();
+            look.apply(&mut probe);
+            probe == *s
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -70,7 +117,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings {
+        let mut s = Settings {
             graph: GraphOptions::default(),
             layout: LayoutOptions::default(),
             net: NetParams::default(),
@@ -80,6 +127,8 @@ impl Default for Settings {
             show_overview: false,
             show_hidden_counts: false,
             highlight_edges: true,
-        }
+        };
+        Look::Modern.apply(&mut s);
+        s
     }
 }

@@ -117,6 +117,11 @@ pub struct LayoutOptions {
     pub node_gap: f32,
     /// Width reserved for an edge passing through a layer.
     pub edge_gap: f32,
+    /// Extra gap between layers per unit of the widest horizontal edge span across the gap,
+    /// keeping long edges steep (0 = fixed spacing).
+    pub gap_per_span: f32,
+    /// Upper bound for the variable layer gap. TortoiseGit (OGDF): 300.
+    pub max_layer_gap: f32,
     /// Layers wider than this are split into several (0 = never, as TortoiseGit).
     pub max_layer_width: f32,
     /// Merge edges that run into the same parent into one trunk.
@@ -131,6 +136,8 @@ impl Default for LayoutOptions {
             layer_gap: 30.0,
             node_gap: 25.0,
             edge_gap: 12.0,
+            gap_per_span: 0.1,
+            max_layer_gap: 300.0,
             max_layer_width: 1800.0,
             concentrate_edges: false,
         }
@@ -214,19 +221,36 @@ pub fn layout(input: &LayoutInput, options: &LayoutOptions) -> Layout {
     order::minimize_crossings(&mut graph, input);
     let u = position::assign(&graph, options.node_gap);
 
-    // Layer depth = deepest node in the layer; layers are stacked with `layer_gap` between.
+    // Layer depth = deepest node in the layer. Layers are stacked with at least `layer_gap`
+    // between them, more where edges cross the gap at a shallow angle (as OGDF's
+    // FastHierarchyLayout does), so that edges stay steep enough to follow.
     let layer_count = graph.layers.len();
     let mut layer_depth = vec![0.0f32; layer_count];
     for (node, &l) in layers.iter().enumerate() {
         layer_depth[l as usize] = layer_depth[l as usize].max(depth[node]);
     }
+    let mut span_below = vec![0.0f32; layer_count];
+    for (i, item) in graph.items.iter().enumerate() {
+        for &(below, _) in &item.down {
+            let dx = (u[i] - u[below as usize]).abs();
+            span_below[item.layer as usize] = span_below[item.layer as usize].max(dx);
+        }
+    }
+    let gap_after = |l: usize| {
+        (span_below[l] * options.gap_per_span).clamp(
+            options.layer_gap,
+            options.layer_gap.max(options.max_layer_gap),
+        )
+    };
     let mut layer_v = Vec::with_capacity(layer_count);
     let mut v = 0.0;
-    for d in &layer_depth {
+    let mut last_gap = 0.0;
+    for (l, d) in layer_depth.iter().enumerate() {
         layer_v.push(v + d / 2.0);
-        v += d + options.layer_gap;
+        last_gap = gap_after(l);
+        v += d + last_gap;
     }
-    let total_v = v - options.layer_gap;
+    let total_v = v - last_gap;
 
     let (min_u, max_u) =
         graph

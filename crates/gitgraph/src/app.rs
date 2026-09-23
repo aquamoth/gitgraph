@@ -14,7 +14,7 @@ use gitgraph_core::{CommitIx, Repo};
 use crate::automation::Automation;
 use crate::render::{self, Marks};
 use crate::scene::{FONT_SIZE, Scene, to_point};
-use crate::settings::{Arrows, EdgeStyle, STORAGE_KEY, Settings};
+use crate::settings::{Arrows, EdgeStyle, Look, STORAGE_KEY, Settings};
 use crate::theme::{Palette, ThemeChoice};
 use crate::view::View;
 
@@ -398,6 +398,16 @@ impl GitGraphApp {
                     "Highlight edges of selection",
                 );
                 ui.separator();
+                ui.menu_button("Look", |ui| {
+                    for look in Look::ALL {
+                        if ui
+                            .radio(Look::of(&self.settings) == Some(look), look.label())
+                            .clicked()
+                        {
+                            look.apply(&mut self.settings);
+                        }
+                    }
+                });
                 ui.menu_button("Edges", |ui| {
                     for s in EdgeStyle::ALL {
                         ui.radio_value(&mut self.settings.edge_style, s, s.label());
@@ -464,6 +474,8 @@ impl GitGraphApp {
             );
         ui.menu_button("Spacing", |ui| {
             ui.add(egui::Slider::new(&mut l.layer_gap, 10.0..=120.0).text("between layers"));
+            ui.add(egui::Slider::new(&mut l.gap_per_span, 0.0..=0.5).text("extra for slanted edges"))
+                .on_hover_text("Widen gaps that long sideways edges cross, so edges stay steep (TortoiseGit does this, up to 300).");
             ui.add(egui::Slider::new(&mut l.node_gap, 5.0..=100.0).text("between nodes"));
             ui.add(egui::Slider::new(&mut l.edge_gap, 2.0..=40.0).text("between edges"));
             ui.add(egui::Slider::new(&mut l.max_layer_width, 0.0..=10000.0).text("max row width"))
@@ -517,6 +529,19 @@ impl GitGraphApp {
             ui.toggle_value(&mut g.show_remote_branches, "Remote");
             ui.toggle_value(&mut g.show_tags, "Tags");
             ui.separator();
+            let current = Look::of(&self.settings);
+            egui::ComboBox::from_id_salt("look")
+                .selected_text(current.map_or("Custom", Look::label))
+                .show_ui(ui, |ui| {
+                    for look in Look::ALL {
+                        if ui
+                            .selectable_label(current == Some(look), look.label())
+                            .clicked()
+                        {
+                            look.apply(&mut self.settings);
+                        }
+                    }
+                });
             egui::ComboBox::from_id_salt("direction")
                 .selected_text(self.settings.layout.direction.label())
                 .show_ui(ui, |ui| {
