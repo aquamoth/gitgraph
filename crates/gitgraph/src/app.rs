@@ -103,6 +103,7 @@ pub struct GitGraphApp {
     needs_initial_view: bool,
     canvas: Rect,
     hovered: Option<usize>,
+    hovered_edge: Option<usize>,
     selected: Option<usize>,
     context_node: Option<usize>,
     /// Commit to select once the scene has been rebuilt (after a reload).
@@ -153,6 +154,7 @@ impl GitGraphApp {
             needs_initial_view: true,
             canvas: Rect::NOTHING,
             hovered: None,
+            hovered_edge: None,
             selected: None,
             context_node: None,
             pending_select: None,
@@ -206,6 +208,7 @@ impl GitGraphApp {
         let job = self.job.take().expect("job exists");
         self.scene = Some(scene);
         self.hovered = None;
+        self.hovered_edge = None;
         self.context_node = None;
         self.drag = None;
         self.selected = job.selected_commit.and_then(|c| {
@@ -762,6 +765,17 @@ impl GitGraphApp {
         // Hover.
         let pointer = response.hover_pos();
         self.hovered = pointer.and_then(|p| scene.node_at(self.view.to_world(canvas, p)));
+        let view = self.view;
+        self.hovered_edge = match (pointer, self.hovered, self.drag) {
+            (Some(p), None, None) => render::edge_at(
+                scene,
+                self.settings.edge_style,
+                |w| view.to_screen(canvas, w),
+                p,
+                5.0,
+            ),
+            _ => None,
+        };
 
         // Dragging: nodes follow the pointer, the background pans.
         if response.drag_started() {
@@ -837,6 +851,7 @@ impl GitGraphApp {
         }
         let marks = Marks {
             hovered: self.hovered,
+            hovered_edge: self.hovered_edge,
             selected: self.selected,
             search_hits: hits,
         };
@@ -907,6 +922,48 @@ impl GitGraphApp {
                 }
                 if hidden > 0 {
                     ui.label(RichText::new(format!("{hidden} commits collapsed below")).weak());
+                }
+            });
+        }
+
+        // Tooltip for the hovered edge: the commits collapsed into it.
+        if let (Some(e), None) = (self.hovered_edge, self.drag) {
+            let edge = scene.graph.edges[e];
+            let child = &scene.graph.nodes[edge.child as usize];
+            let parent = &scene.graph.nodes[edge.parent as usize];
+            let hidden = scene.graph.collapsed_commits(&self.repo, edge, 12);
+            response.clone().on_hover_ui_at_pointer(|ui| {
+                let short = |c: CommitIx| self.repo.commit(c).oid.short(8);
+                ui.label(format!(
+                    "{} → {}{}",
+                    short(child.commit),
+                    short(parent.commit),
+                    if edge.first_parent {
+                        ""
+                    } else {
+                        "  (merged branch)"
+                    }
+                ));
+                if edge.hidden == 0 {
+                    ui.label(RichText::new("direct parent").weak());
+                    return;
+                }
+                ui.label(RichText::new(format!("{} commits collapsed:", edge.hidden)).strong());
+                for c in &hidden {
+                    let commit = self.repo.commit(*c);
+                    ui.horizontal(|ui| {
+                        ui.monospace(commit.oid.short(8));
+                        ui.label(&commit.subject);
+                    });
+                }
+                if (edge.hidden as usize) > hidden.len() {
+                    ui.label(
+                        RichText::new(format!(
+                            "… and {} more",
+                            edge.hidden as usize - hidden.len()
+                        ))
+                        .weak(),
+                    );
                 }
             });
         }

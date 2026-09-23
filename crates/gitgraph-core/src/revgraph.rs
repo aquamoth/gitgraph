@@ -163,6 +163,30 @@ impl RevGraph {
     pub fn represented_by(&self, commit: CommitIx) -> Option<u32> {
         self.represented_by.get(commit.ix()).copied().flatten()
     }
+
+    /// Up to `limit` of the commits collapsed into `edge`, newest first: the run of hidden
+    /// commits from the child's matching parent down to the parent node.
+    pub fn collapsed_commits(&self, repo: &Repo, edge: RevEdge, limit: usize) -> Vec<CommitIx> {
+        let child = self.nodes[edge.child as usize].commit;
+        let on_edge =
+            |c: CommitIx| self.node_of(c).is_none() && self.represented_by(c) == Some(edge.parent);
+        let parents = &repo.commit(child).parents;
+        let start = if edge.first_parent {
+            parents.first().copied().filter(|&p| on_edge(p))
+        } else {
+            parents.iter().skip(1).copied().find(|&p| on_edge(p))
+        };
+        let mut out = Vec::new();
+        let mut cur = start;
+        while let Some(c) = cur {
+            if out.len() >= limit {
+                break;
+            }
+            out.push(c);
+            cur = repo.commit(c).parents.iter().copied().find(|&p| on_edge(p));
+        }
+        out
+    }
 }
 
 const NO_REP: u32 = u32::MAX;

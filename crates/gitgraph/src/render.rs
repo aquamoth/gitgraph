@@ -15,6 +15,7 @@ use crate::view::View;
 #[derive(Clone, Debug, Default)]
 pub struct Marks {
     pub hovered: Option<usize>,
+    pub hovered_edge: Option<usize>,
     pub selected: Option<usize>,
     /// Per node: matches the current search.
     pub search_hits: Vec<bool>,
@@ -51,7 +52,9 @@ pub fn paint_scene(
     let mut emphasised = Vec::new();
     for (e, edge) in scene.graph.edges.iter().enumerate() {
         let (c, p) = (edge.child as usize, edge.parent as usize);
-        if settings.highlight_edges && (marks.emphasised(c) || marks.emphasised(p)) {
+        if marks.hovered_edge == Some(e)
+            || settings.highlight_edges && (marks.emphasised(c) || marks.emphasised(p))
+        {
             emphasised.push(e);
             continue;
         }
@@ -208,6 +211,42 @@ pub fn arrowhead_points(path: &[Pos2], arrows: Arrows, len: f32) -> Option<[[Pos
         Arrows::ToChild => arrowhead(path[1], path[0], len),
         Arrows::None => None,
     }
+}
+
+/// The edge whose drawn path passes within `tolerance` of `pointer` (screen space), if any.
+pub fn edge_at(
+    scene: &Scene,
+    style: EdgeStyle,
+    to_screen: impl Fn(Pos2) -> Pos2 + Copy,
+    pointer: Pos2,
+    tolerance: f32,
+) -> Option<usize> {
+    let probe = Rect::from_center_size(pointer, Vec2::splat(2.0 * tolerance));
+    let mut best = None;
+    let mut best_d = tolerance;
+    for e in 0..scene.graph.edges.len() {
+        let Some(path) = edge_path(scene, e, style, to_screen, Some(probe)) else {
+            continue;
+        };
+        for w in path.windows(2) {
+            let d = distance_to_segment(pointer, w[0], w[1]);
+            if d < best_d {
+                best_d = d;
+                best = Some(e);
+            }
+        }
+    }
+    best
+}
+
+fn distance_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = b - a;
+    let t = if ab.length_sq() > 0.0 {
+        ((p - a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (a + ab * t).distance(p)
 }
 
 /// Where the ray from `rect`'s centre towards `toward` leaves the rectangle.

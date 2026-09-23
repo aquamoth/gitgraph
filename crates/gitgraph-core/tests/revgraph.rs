@@ -308,3 +308,41 @@ fn reads_full_commit_messages() {
         .unwrap();
     assert_eq!(msg, "Subject line\n\nBody paragraph\nsecond line");
 }
+
+#[test]
+fn lists_commits_collapsed_into_an_edge() {
+    let r = feature_merge();
+    let repo = r.load();
+    let g = revgraph::build(&repo, &with_mode(Simplification::BranchesAndMerges));
+    let subject = |c: gitgraph_core::CommitIx| repo.commit(c).subject.clone();
+    // E -> B collapses D.
+    let e_to_b = g
+        .edges
+        .iter()
+        .find(|e| subject(g.nodes[e.child as usize].commit) == "E")
+        .copied()
+        .unwrap();
+    let hidden: Vec<String> = g
+        .collapsed_commits(&repo, e_to_b, 10)
+        .into_iter()
+        .map(subject)
+        .collect();
+    assert_eq!(hidden, ["D"]);
+
+    let g = revgraph::build(&repo, &with_mode(Simplification::Decorated));
+    // E -> A collapses D and B (newest first).
+    let e_to_a = g
+        .edges
+        .iter()
+        .find(|e| subject(g.nodes[e.child as usize].commit) == "E")
+        .copied()
+        .unwrap();
+    assert_eq!(e_to_a.hidden, 2);
+    let hidden: Vec<String> = g
+        .collapsed_commits(&repo, e_to_a, 10)
+        .into_iter()
+        .map(subject)
+        .collect();
+    assert_eq!(hidden, ["D", "B"]);
+    assert_eq!(g.collapsed_commits(&repo, e_to_a, 1).len(), 1);
+}
