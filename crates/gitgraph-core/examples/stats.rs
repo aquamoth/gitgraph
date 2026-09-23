@@ -82,7 +82,7 @@ fn main() {
             let layers = l.layers.iter().max().map_or(0, |m| m + 1);
             let bends: usize = l.edges.iter().map(|e| e.len() - 2).sum();
             println!(
-                "{:<22} nodes {:>6} edges {:>6} build {:>9.2?} | {:<20} layers {:>6} dummies {:>7} size {:>7.0}x{:<7.0} layout {:>9.2?}",
+                "{:<22} nodes {:>6} edges {:>6} build {:>9.2?} | {:<20} layers {:>6} dummies {:>7} crossings {:>6} size {:>7.0}x{:<7.0} layout {:>9.2?}",
                 mode.label(),
                 g.nodes.len(),
                 g.edges.len(),
@@ -90,6 +90,7 @@ fn main() {
                 ranking.label(),
                 layers,
                 bends,
+                l.crossings,
                 l.max.x - l.min.x,
                 l.max.y - l.min.y,
                 t.elapsed()

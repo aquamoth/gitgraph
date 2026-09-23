@@ -1,21 +1,64 @@
 //! Crossing minimisation: ordering items within their layers.
 //!
 //! Starts from a depth-first order that keeps first-parent lines together, then applies
-//! layer-by-layer median sweeps (Eades & Wormald; Gansner et al.) keeping the best ordering
-//! seen, as measured by an exact crossing count (Barth, Jünger & Mutzel).
+//! layer-by-layer median sweeps (Eades & Wormald; Gansner et al.) with transposition,
+//! keeping the best ordering seen, as measured by an exact crossing count (Barth, Jünger &
+//! Mutzel). Several runs from perturbed starting orders are made, as OGDF does.
 
 use super::{LayeredGraph, LayoutInput};
 
-/// Maximum number of down+up sweep pairs.
+/// Maximum number of down+up sweep pairs per run.
 const MAX_SWEEPS: usize = 24;
-/// Stop after this many sweeps without improvement.
+/// Stop a run after this many sweeps without improvement.
 const PATIENCE: usize = 4;
+/// Transpose passes per sweep at most.
+const MAX_TRANSPOSE_PASSES: usize = 8;
 
-pub fn minimize_crossings(g: &mut LayeredGraph, input: &LayoutInput) {
+/// Orders every layer to reduce crossings and returns the number of crossings left.
+///
+/// Like OGDF's `SugiyamaLayout` (15 runs by default), several runs are made from different
+/// starting orders and the best result is kept: the first run starts from the depth-first
+/// order, later ones from randomly perturbed copies of it. Large graphs get fewer runs.
+pub fn minimize_crossings(g: &mut LayeredGraph, input: &LayoutInput) -> u64 {
     initial_order(g, input);
     if g.layers.len() < 2 {
-        return;
+        return 0;
     }
+    let items = g.items.len();
+    let runs = match items {
+        0..=2_000 => 12,
+        2_001..=10_000 => 4,
+        10_001..=40_000 => 2,
+        _ => 1,
+    };
+    let transpose = items <= 40_000;
+
+    let start = g.layers.clone();
+    let mut best = g.layers.clone();
+    let mut best_crossings = u64::MAX;
+    let mut rng = XorShift(0x9E37_79B9_7F4A_7C15);
+    for run in 0..runs {
+        if run > 0 {
+            g.layers = start.clone();
+            perturb(g, &mut rng);
+        }
+        let crossings = sweep_run(g, transpose);
+        if crossings < best_crossings {
+            best_crossings = crossings;
+            best = g.layers.clone();
+        }
+        if best_crossings == 0 {
+            break;
+        }
+    }
+    g.layers = best;
+    g.update_positions();
+    best_crossings
+}
+
+/// One run of alternating median sweeps (with transposition), keeping the best ordering.
+fn sweep_run(g: &mut LayeredGraph, transpose: bool) -> u64 {
+    g.update_positions();
     let mut best = g.layers.clone();
     let mut best_crossings = total_crossings(g);
     let mut stale = 0;
@@ -28,6 +71,9 @@ pub fn minimize_crossings(g: &mut LayeredGraph, input: &LayoutInput) {
         }
         for l in (0..g.layers.len() - 1).rev() {
             reorder_layer(g, l, false, sweep);
+        }
+        if transpose {
+            transpose_all(g);
         }
         let crossings = total_crossings(g);
         if crossings < best_crossings {
@@ -43,6 +89,91 @@ pub fn minimize_crossings(g: &mut LayeredGraph, input: &LayoutInput) {
     }
     g.layers = best;
     g.update_positions();
+    best_crossings
+}
+
+/// Randomly swaps some neighbouring items in every layer, so that a run explores a different
+/// part of the search space while keeping most of the depth-first structure.
+fn perturb(g: &mut LayeredGraph, rng: &mut XorShift) {
+    for layer in &mut g.layers {
+        let n = layer.len();
+        if n < 2 {
+            continue;
+        }
+        for _ in 0..n.div_ceil(3) {
+            let i = (rng.next() % (n as u64 - 1)) as usize;
+            layer.swap(i, i + 1);
+        }
+    }
+    g.update_positions();
+}
+
+/// Swaps adjacent items wherever that reduces crossings with both neighbouring layers, until
+/// no swap helps (the "transpose" heuristic of Gansner et al.).
+fn transpose_all(g: &mut LayeredGraph) {
+    let mut up_a = Vec::new();
+    let mut up_b = Vec::new();
+    for _ in 0..MAX_TRANSPOSE_PASSES {
+        let mut improved = false;
+        for l in 0..g.layers.len() {
+            for i in 0..g.layers[l].len().saturating_sub(1) {
+                let (a, b) = (g.layers[l][i] as usize, g.layers[l][i + 1] as usize);
+                let mut keep = 0;
+                let mut swap = 0;
+                for up in [true, false] {
+                    neighbour_positions(g, a, up, &mut up_a);
+                    neighbour_positions(g, b, up, &mut up_b);
+                    keep += pair_crossings(&up_a, &up_b);
+                    swap += pair_crossings(&up_b, &up_a);
+                }
+                if swap < keep {
+                    g.layers[l].swap(i, i + 1);
+                    g.pos[a] = (i + 1) as u32;
+                    g.pos[b] = i as u32;
+                    improved = true;
+                }
+            }
+        }
+        if !improved {
+            break;
+        }
+    }
+}
+
+fn neighbour_positions(g: &LayeredGraph, item: usize, up: bool, out: &mut Vec<u32>) {
+    let it = &g.items[item];
+    let list = if up { &it.up } else { &it.down };
+    out.clear();
+    out.extend(list.iter().map(|&(nb, _)| g.pos[nb as usize]));
+    out.sort_unstable();
+}
+
+/// Crossings between the edges of a left item (neighbour positions `left`, sorted) and a right
+/// item (`right`, sorted): pairs where the left item's neighbour lies right of the other's.
+fn pair_crossings(left: &[u32], right: &[u32]) -> u64 {
+    let mut count = 0;
+    let mut j = 0;
+    for &a in left {
+        while j < right.len() && right[j] < a {
+            j += 1;
+        }
+        count += j as u64;
+    }
+    count
+}
+
+/// Small deterministic PRNG (layouts must be reproducible).
+struct XorShift(u64);
+
+impl XorShift {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
 }
 
 /// Depth-first from the tips (priority nodes first), descending into first parents before
@@ -202,6 +333,13 @@ mod tests {
         assert_eq!(bilayer_crossings(&mut [(0, 0), (0, 1), (1, 1)], 2), 0);
         // Complete reversal of three edges: three crossings.
         assert_eq!(bilayer_crossings(&mut [(0, 2), (1, 1), (2, 0)], 3), 3);
+    }
+
+    #[test]
+    fn pair_crossings_counts_inversions() {
+        assert_eq!(pair_crossings(&[0], &[1]), 0);
+        assert_eq!(pair_crossings(&[1], &[0]), 1);
+        assert_eq!(pair_crossings(&[2, 3], &[0, 1, 2]), 5);
     }
 
     #[test]

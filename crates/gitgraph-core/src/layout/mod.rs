@@ -179,6 +179,8 @@ pub struct Layout {
     pub edge_ends: Vec<(u32, u32)>,
     /// Layer of every node (0 = newest).
     pub layers: Vec<u32>,
+    /// Edge crossings between adjacent layers after ordering (bundled edges count once).
+    pub crossings: u64,
     /// Top-left and bottom-right corner of the drawing.
     pub min: Point,
     pub max: Point,
@@ -218,7 +220,7 @@ pub fn layout(input: &LayoutInput, options: &LayoutOptions) -> Layout {
         options.edge_gap,
         options.concentrate_edges,
     );
-    order::minimize_crossings(&mut graph, input);
+    let crossings = order::minimize_crossings(&mut graph, input);
     let u = position::assign(&graph, options.node_gap);
 
     // Layer depth = deepest node in the layer. Layers are stacked with at least `layer_gap`
@@ -311,6 +313,7 @@ pub fn layout(input: &LayoutInput, options: &LayoutOptions) -> Layout {
         edges,
         edge_ends: input.edges.iter().map(|e| (e.child, e.parent)).collect(),
         layers,
+        crossings,
         min: Point::new(origin.x.min(extent.x), origin.y.min(extent.y)),
         max: Point::new(origin.x.max(extent.x), origin.y.max(extent.y)),
     }
