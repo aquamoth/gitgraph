@@ -41,3 +41,8 @@ opt-level = 2
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# The layout is heavy numeric code; optimise it even in dev and test builds (debug assertions
+# and overflow checks stay on) so the property tests and the debug app stay fast.
+[profile.dev.package.gitgraph-core]
+opt-level = 2

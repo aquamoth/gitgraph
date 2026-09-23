@@ -3,6 +3,9 @@
 
 use super::LayoutInput;
 
+/// Upper bound on dummy items; see [`LayeredGraph::build`].
+const MAX_DUMMIES: u64 = 3_000_000;
+
 /// A node or an edge dummy placed in one layer.
 #[derive(Clone, Debug)]
 pub struct Item {
@@ -62,6 +65,34 @@ impl LayeredGraph {
             })
             .collect();
         let mut chains = Vec::with_capacity(input.edges.len());
+        // Safety valve for pathological inputs: if routing every edge through every layer would
+        // need more than MAX_DUMMIES bend points, the longest edges get none and are drawn as
+        // direct lines.
+        let spans: Vec<u32> = input
+            .edges
+            .iter()
+            .map(|e| layers[e.parent as usize].saturating_sub(layers[e.child as usize]))
+            .collect();
+        let max_span = {
+            let total: u64 = spans.iter().map(|&s| s.saturating_sub(1) as u64).sum();
+            if total <= MAX_DUMMIES {
+                u32::MAX
+            } else {
+                let mut sorted = spans.clone();
+                sorted.sort_unstable();
+                let mut budget = MAX_DUMMIES;
+                let mut limit = 1;
+                for &s in &sorted {
+                    let cost = s.saturating_sub(1) as u64;
+                    if cost > budget {
+                        break;
+                    }
+                    budget -= cost;
+                    limit = s;
+                }
+                limit
+            }
+        };
         // (parent, layer) -> shared dummy, when concentrating.
         let mut shared: std::collections::HashMap<(u32, u32), u32> =
             std::collections::HashMap::new();
@@ -70,6 +101,11 @@ impl LayeredGraph {
             let (c, p) = (e.child as usize, e.parent as usize);
             let mut chain = Vec::new();
             let mut prev = c as u32;
+            if layers[p].saturating_sub(layers[c]) > max_span {
+                // Too long to route: no bend points and no pull on the coordinates.
+                chains.push(chain);
+                continue;
+            }
             for layer in layers[c] + 1..layers[p] {
                 let existing = if concentrate {
                     shared.get(&(p as u32, layer)).copied()

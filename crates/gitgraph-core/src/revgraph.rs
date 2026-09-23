@@ -13,7 +13,9 @@
 //!
 //! In the decorated mode, an undecorated root commit with an empty tree counts as unchanged
 //! ("TREESAME") to git: it only appears as the end point of an edge, and merge parents leading
-//! to it are dropped, so merges that join otherwise empty histories disappear.
+//! to it are dropped, so merges that join otherwise empty histories disappear. One deliberate
+//! difference: git also hides such a root when it carries a tag or branch; gitgraph shows it,
+//! rather than silently dropping a label.
 //!
 //! All modes share one pass over the commits in parents-first order that decides whether each
 //! commit is kept and, for hidden commits, which kept commit represents them.
@@ -159,7 +161,8 @@ impl RevGraph {
     }
 
     /// The node a commit is shown as: itself if it is a node, else the kept ancestor it was
-    /// collapsed into. `None` if the commit is not visible at all.
+    /// collapsed into. `None` if the commit is not visible, or if it collapses into an
+    /// empty-tree root that is not shown (see the module docs).
     pub fn represented_by(&self, commit: CommitIx) -> Option<u32> {
         self.represented_by.get(commit.ix()).copied().flatten()
     }

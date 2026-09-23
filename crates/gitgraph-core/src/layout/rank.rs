@@ -101,24 +101,33 @@ impl RankGraph {
         let mut stack: Vec<usize> = (0..self.n).rev().filter(|&v| indeg[v] == 0).collect();
         let mut order = Vec::with_capacity(self.n);
         let mut done = vec![false; self.n];
+        let mut next_unvisited = 0;
         loop {
             while let Some(v) = stack.pop() {
+                if done[v] {
+                    continue;
+                }
                 done[v] = true;
                 order.push(v);
                 for &e in &self.incident[v] {
                     if self.tail[e] == v {
                         let h = self.head[e];
-                        indeg[h] -= 1;
-                        if indeg[h] == 0 {
+                        // A node forced out of a cycle may already be done.
+                        indeg[h] = indeg[h].saturating_sub(1);
+                        if indeg[h] == 0 && !done[h] {
                             stack.push(h);
                         }
                     }
                 }
             }
-            match (0..self.n).find(|&v| !done[v]) {
-                Some(v) if order.len() < self.n => stack.push(v),
-                _ => break,
+            while next_unvisited < self.n && done[next_unvisited] {
+                next_unvisited += 1;
             }
+            if next_unvisited == self.n {
+                break;
+            }
+            // Only reachable through a cycle: break it at the first unvisited node.
+            stack.push(next_unvisited);
         }
         order
     }
@@ -606,12 +615,19 @@ pub fn limit_width(
                 .copied()
                 .filter(|&c| in_run[c])
                 .filter(|&c| {
-                    pending[c] -= 1;
+                    pending[c] = pending[c].saturating_sub(1);
                     pending[c] == 0
                 })
                 .collect();
             next.sort_by_key(|&c| std::cmp::Reverse((time(c), c)));
             ready.extend(next);
+        }
+        // Nodes on a cycle (impossible in git) never become ready: put them on top.
+        for &v in &run {
+            if rows.row_of[v] == usize::MAX {
+                let r = rows.open(rows.nodes.len());
+                rows.put(v, r, breadth[v]);
+            }
         }
         region_start = last_layer_rows.saturating_add(1).min(rows.nodes.len());
         i = j + 1;

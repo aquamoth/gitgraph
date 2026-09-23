@@ -35,22 +35,42 @@ crates/gitgraph        the binary (eframe/egui)
 2. **Reduce** (`revgraph.rs`): pick visible refs → reachable commits → decide which commits
    are nodes in one parents-first pass, recording for each hidden commit the node that
    represents it. Edges go from each node to the representatives of its parents.
-   - *Labelled commits* reproduces `git log --simplify-by-decoration` exactly, including
+   - *Labelled commits* reproduces `git log --simplify-by-decoration`, including
      `simplify_merges` (redundant parents dropped) and empty-tree roots (TREESAME).
-     Verified against git on a 15k-commit repository: identical node sets.
+     The node sets are identical on the 15k-commit Apps repository and on 400 random
+     repositories, and the edges match on 300 of them.
+     - One deliberate exception: git hides an empty-tree root even when it carries a label;
+       gitgraph shows it.
    - *Branchings and merges* reproduces TortoiseGit's chain collapse.
 3. **Measure** (`scene.rs`): node boxes use TortoiseGit's geometry: one row per ref, or an
    8-digit hash; 20 px side margins and 5 px top and bottom margins; monospace 12 px.
 4. **Lay out** (`layout/`): rank → split wide layers → layered graph with dummies (optionally
    bundled per parent) → crossing minimisation → L1 coordinates → variable layer gaps →
    rotate to the chosen direction.
-5. **Simulate** (`physics.rs`): nodes and bend points become particles. They are tied by
-   offset-preserving springs along edges, with one-sided springs between layer neighbours and
-   weak anchors to their home positions. Dropped nodes are pinned. The simulation sleeps when
-   still.
+5. **Simulate** (`physics.rs`): nodes and bend points become particles. Springs run along
+   edges, one-sided springs join neighbours in a layer, and weak anchors hold each particle to
+   the layout.
+   - **Shape:** each frame, the target shape is relaxed with Gauss-Seidel over displacements.
+   - **Motion:** particles follow the target through damped springs.
+   - Only the dragged node's neighbourhood (up to 8000 particles) is simulated, and the
+     simulation sleeps when still.
 6. **Paint** (`render.rs`): edges then nodes, culled to the viewport; text is skipped below
    4 px. Straight edges are clipped to box borders (TortoiseGit); curved edges leave and
    enter along the history direction.
+
+## Testing
+
+- Unit tests next to the code, plus integration tests (`crates/gitgraph-core/tests/`) that
+  build throwaway repositories with the git CLI.
+- Property tests (`properties_*.rs`) run random DAGs, repositories and drags against the
+  invariants:
+  - every parent is below its children
+  - coordinates are finite and inside the bounds
+  - network simplex is optimal on tiny graphs (checked by brute force)
+  - every edge ends on a node
+  - the net returns home after a reset
+- `cargo test --release -p gitgraph-core --test properties_layout -- --ignored --nocapture`
+  prints timings for large, awkward inputs.
 
 ## Why these choices
 
