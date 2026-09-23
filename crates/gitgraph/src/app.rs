@@ -9,7 +9,9 @@ use eframe::egui::{
 use gitgraph_core::layout::{Direction, LayoutOptions, Ranking};
 use gitgraph_core::physics::DragModel;
 use gitgraph_core::revgraph::{GraphOptions, Simplification};
-use gitgraph_core::{CommitIx, Repo};
+use std::sync::Arc;
+
+use gitgraph_core::{CommitIx, Oid, Repo};
 
 use crate::automation::Automation;
 use crate::render::{self, Marks};
@@ -77,8 +79,8 @@ impl Messages {
 struct LayoutJob {
     rx: std::sync::mpsc::Receiver<Scene>,
     /// Commit near the view centre and its screen position, to keep the view steady.
-    anchor: Option<(CommitIx, Pos2)>,
-    selected_commit: Option<CommitIx>,
+    anchor: Option<(Oid, Pos2)>,
+    selected_commit: Option<Oid>,
 }
 
 #[derive(Debug, Default)]
@@ -91,7 +93,9 @@ struct Search {
 
 pub struct GitGraphApp {
     repo_path: PathBuf,
-    repo: Repo,
+    /// The most recently loaded snapshot, used for new layouts. The scene on screen keeps its
+    /// own snapshot until a new layout replaces it.
+    repo: Arc<Repo>,
     settings: Settings,
     /// False for automated runs, so they don't overwrite the user's settings.
     persist: bool,
@@ -107,7 +111,7 @@ pub struct GitGraphApp {
     selected: Option<usize>,
     context_node: Option<usize>,
     /// Commit to select once the scene has been rebuilt (after a reload).
-    pending_select: Option<CommitIx>,
+    pending_select: Option<Oid>,
     drag: Option<Drag>,
     search: Search,
     status: Option<(String, bool)>,
@@ -152,7 +156,7 @@ impl GitGraphApp {
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         GitGraphApp {
             repo_path,
-            repo,
+            repo: Arc::new(repo),
             settings,
             persist,
             scene: None,
@@ -221,23 +225,25 @@ impl GitGraphApp {
         self.hovered_edge = None;
         self.context_node = None;
         self.drag = None;
-        self.selected = job.selected_commit.and_then(|c| {
-            self.scene
-                .as_ref()?
-                .graph
-                .represented_by(c)
-                .map(|n| n as usize)
-        });
+        self.selected = job.selected_commit.and_then(|oid| self.node_for(&oid));
         self.update_search();
         self.restore_moves();
-        if let (Some((commit, screen)), Some(scene)) = (job.anchor, &self.scene)
-            && let Some(node) = scene.graph.represented_by(commit)
+        if let (Some((oid, screen)), Some(scene)) = (job.anchor, &self.scene)
+            && let Some(node) = self.node_for(&oid)
             && self.canvas.is_positive()
         {
-            let world = scene.node_center(node as usize);
+            let world = scene.node_center(node);
             let fraction = (screen - self.canvas.min) / self.canvas.size();
             self.view.show_at(self.canvas, world, fraction);
         }
+    }
+
+    /// The node that shows commit `oid` in the current scene: the commit itself, or the node
+    /// it is collapsed into.
+    fn node_for(&self, oid: &Oid) -> Option<usize> {
+        let scene = self.scene.as_ref()?;
+        let commit = scene.repo.lookup(oid)?;
+        scene.graph.represented_by(commit).map(|n| n as usize)
     }
 
     fn repo_key(&self) -> String {
@@ -254,8 +260,8 @@ impl GitGraphApp {
         };
         let Some(scene) = &mut self.scene else { return };
         for (hex, &(dx, dy)) in moves {
-            let node = gitgraph_core::Oid::from_hex(hex)
-                .and_then(|oid| self.repo.lookup(&oid))
+            let node = Oid::from_hex(hex)
+                .and_then(|oid| scene.repo.lookup(&oid))
                 .and_then(|c| scene.graph.node_of(c));
             if let Some(node) = node {
                 scene
@@ -276,7 +282,8 @@ impl GitGraphApp {
             .pins()
             .map(|(node, d)| {
                 (
-                    self.repo
+                    scene
+                        .repo
                         .commit(scene.graph.nodes[node].commit)
                         .oid
                         .to_hex(),
@@ -298,7 +305,7 @@ impl GitGraphApp {
 
     /// A commit near the middle of the view, with its screen position, for keeping the view
     /// stable across rebuilds.
-    fn view_anchor(&self) -> Option<(CommitIx, Pos2)> {
+    fn view_anchor(&self) -> Option<(Oid, Pos2)> {
         let scene = self.scene.as_ref()?;
         if !self.canvas.is_positive() {
             return None;
@@ -311,28 +318,32 @@ impl GitGraphApp {
                 da.total_cmp(&db)
             })
         })?;
-        let commit = scene.graph.nodes[node].commit;
+        let oid = scene.repo.commit(scene.graph.nodes[node].commit).oid;
         Some((
-            commit,
+            oid,
             self.view.to_screen(self.canvas, scene.node_center(node)),
         ))
     }
 
-    fn selected_commit(&self) -> Option<CommitIx> {
-        Some(self.scene.as_ref()?.graph.nodes[self.selected?].commit)
+    fn selected_commit(&self) -> Option<Oid> {
+        let scene = self.scene.as_ref()?;
+        Some(
+            scene
+                .repo
+                .commit(scene.graph.nodes[self.selected?].commit)
+                .oid,
+        )
     }
 
     fn reload(&mut self) {
         match gitgraph_core::git::load_repo(&self.repo_path) {
             Ok(repo) => {
-                let selected = self.selected_commit().map(|c| self.repo.commit(c).oid);
-                self.repo = repo;
+                // The scene on screen keeps its own snapshot until the new layout replaces it;
+                // the selection is carried over by commit id.
+                self.pending_select = self.selected_commit();
+                self.repo = Arc::new(repo);
                 self.requested = None;
                 self.status = Some(("Reloaded".into(), false));
-                // Re-select the same commit after the rebuild if it still exists.
-                if let Some(oid) = selected {
-                    self.pending_select = self.repo.lookup(&oid);
-                }
             }
             Err(e) => self.status = Some((format!("Reload failed: {e}"), true)),
         }
@@ -347,12 +358,12 @@ impl GitGraphApp {
             return;
         }
         for (i, node) in scene.graph.nodes.iter().enumerate() {
-            let commit = self.repo.commit(node.commit);
+            let commit = scene.repo.commit(node.commit);
             let matches = commit.oid.to_hex().starts_with(&q)
                 || node
                     .refs
                     .iter()
-                    .any(|&r| self.repo.refs[r].name.to_lowercase().contains(&q))
+                    .any(|&r| scene.repo.refs[r].name.to_lowercase().contains(&q))
                 || commit.subject.to_lowercase().contains(&q)
                 || commit.author_name.to_lowercase().contains(&q);
             if matches {
@@ -482,8 +493,8 @@ impl GitGraphApp {
     }
 
     fn copy_selected_hash(&self, ctx: &egui::Context) {
-        if let Some(c) = self.selected_commit() {
-            ctx.copy_text(self.repo.commit(c).oid.to_hex());
+        if let Some(oid) = self.selected_commit() {
+            ctx.copy_text(oid.to_hex());
         }
     }
 
@@ -791,14 +802,14 @@ impl GitGraphApp {
             }
             if let Some(scene) = &self.scene {
                 if let Some(sel) = self.selected {
-                    let commit = self.repo.commit(scene.graph.nodes[sel].commit);
+                    let commit = scene.repo.commit(scene.graph.nodes[sel].commit);
                     ui.monospace(commit.oid.short(10));
                     ui.label(format!(
                         "{} — {}, {}",
                         commit.subject, commit.author_name, commit.author_date
                     ));
                 } else {
-                    ui.label(self.repo.path.display().to_string());
+                    ui.label(scene.repo.path.display().to_string());
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(format!("{:.0}%", self.view.zoom * 100.0));
@@ -957,7 +968,7 @@ impl GitGraphApp {
         // Tooltip for the hovered node.
         if let (Some(node), None) = (self.hovered, self.drag) {
             let n = &scene.graph.nodes[node];
-            let commit = self.repo.commit(n.commit);
+            let commit = scene.repo.commit(n.commit);
             let hidden: u32 = scene
                 .graph
                 .edges
@@ -968,10 +979,10 @@ impl GitGraphApp {
             let refs: Vec<&str> = n
                 .refs
                 .iter()
-                .map(|&r| self.repo.refs[r].full_name.as_str())
+                .map(|&r| scene.repo.refs[r].full_name.as_str())
                 .collect();
             let messages = &mut self.messages;
-            let repo_path = &self.repo.path;
+            let repo_path = &scene.repo.path;
             let ctx = ui.ctx().clone();
             response.clone().on_hover_ui_at_pointer(|ui| {
                 ui.monospace(commit.oid.to_hex());
@@ -1009,9 +1020,9 @@ impl GitGraphApp {
             let edge = scene.graph.edges[e];
             let child = &scene.graph.nodes[edge.child as usize];
             let parent = &scene.graph.nodes[edge.parent as usize];
-            let hidden = scene.graph.collapsed_commits(&self.repo, edge, 12);
+            let hidden = scene.graph.collapsed_commits(&scene.repo, edge, 12);
             response.clone().on_hover_ui_at_pointer(|ui| {
-                let short = |c: CommitIx| self.repo.commit(c).oid.short(8);
+                let short = |c: CommitIx| scene.repo.commit(c).oid.short(8);
                 ui.label(format!(
                     "{} → {}{}",
                     short(child.commit),
@@ -1028,7 +1039,7 @@ impl GitGraphApp {
                 }
                 ui.label(RichText::new(format!("{} commits collapsed:", edge.hidden)).strong());
                 for c in &hidden {
-                    let commit = self.repo.commit(*c);
+                    let commit = scene.repo.commit(*c);
                     ui.horizontal(|ui| {
                         ui.monospace(commit.oid.short(8));
                         ui.label(&commit.subject);
@@ -1062,7 +1073,7 @@ impl GitGraphApp {
                 return;
             };
             let n = &scene.graph.nodes[node];
-            let commit = self.repo.commit(n.commit);
+            let commit = scene.repo.commit(n.commit);
             if ui.button("Copy hash").clicked() {
                 ui.ctx().copy_text(commit.oid.to_hex());
                 ui.close();
@@ -1071,7 +1082,7 @@ impl GitGraphApp {
                 let names: Vec<&str> = n
                     .refs
                     .iter()
-                    .map(|&r| self.repo.refs[r].full_name.as_str())
+                    .map(|&r| scene.repo.refs[r].full_name.as_str())
                     .collect();
                 let text = if names.is_empty() {
                     commit.oid.to_hex()

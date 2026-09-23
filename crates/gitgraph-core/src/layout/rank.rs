@@ -11,13 +11,20 @@ use super::{LayoutInput, Ranking};
 /// Network simplex gives up improving after this many pivots per component; the result is
 /// always a valid layering, just possibly not a minimal one.
 const MAX_SIMPLEX_ITERATIONS: usize = 5_000;
+/// Total work (pivots times graph size) network simplex may spend before stopping early.
+const SIMPLEX_WORK: usize = 60_000_000;
 
 /// Assigns a layer to every node.
 pub fn rank(input: &LayoutInput, ranking: Ranking) -> Vec<u32> {
     let graph = RankGraph::new(input);
     match ranking {
         Ranking::LongestPath => graph.longest_path(),
-        Ranking::Compact => graph.network_simplex(MAX_SIMPLEX_ITERATIONS),
+        Ranking::Compact => {
+            // Each pivot costs O(V + E); keep the total work bounded for huge or odd graphs.
+            let size = graph.n + graph.tail.len();
+            let budget = (SIMPLEX_WORK / size.max(1)).clamp(50, MAX_SIMPLEX_ITERATIONS);
+            graph.network_simplex(budget)
+        }
         Ranking::Chronological => chronological(input),
     }
 }
@@ -482,12 +489,15 @@ impl<'a> Simplex<'a> {
     }
 }
 
-/// Splits layers wider than `max_width` into several layers, so that many siblings (typically
+/// Splits layers wider than `max_width` into several rows, so that many siblings (typically
 /// branch tips forking from one commit) stack up instead of forming one enormous row.
 ///
-/// Any node can move into a new layer inserted directly above its own without breaking the
-/// parents-below-children order. Nodes with children go into the lowest part; tips fill the
-/// layers above, oldest nearest to their parents.
+/// Rows are built bottom-up. A layer that fits becomes one row, as before. Consecutive
+/// overfull layers are placed together, node by node in depth-first order (a node, then its
+/// children as soon as all their parents are placed), each into the lowest row above all its
+/// parents that has room. Parents and their children therefore end up in neighbouring rows
+/// rather than in two separate stacks. Every node stays above all of its parents, so the result
+/// is always a valid layering.
 pub fn limit_width(
     layers: &mut [u32],
     input: &LayoutInput,
@@ -496,56 +506,158 @@ pub fn limit_width(
     gap: f32,
 ) {
     let n = layers.len();
-    if max_width <= 0.0 || n == 0 {
+    // Also catches a NaN limit.
+    if max_width.is_nan() || max_width <= 0.0 || n == 0 {
         return;
     }
-    let mut has_children = vec![false; n];
+    let mut parents: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
     for e in &input.edges {
-        has_children[e.parent as usize] = true;
+        let (c, p) = (e.child as usize, e.parent as usize);
+        if c != p {
+            parents[c].push(p);
+            children[p].push(c);
+        }
     }
     let time = |v: usize| input.times.get(v).copied().unwrap_or(0);
 
-    let mut by_layer: Vec<Vec<usize>> = Vec::new();
+    // Original layers from the bottom (oldest) up.
+    let layer_count = layers.iter().map(|&l| l as usize + 1).max().unwrap_or(0);
+    let mut bottom_up: Vec<Vec<usize>> = vec![Vec::new(); layer_count];
     for (v, &l) in layers.iter().enumerate() {
-        if by_layer.len() <= l as usize {
-            by_layer.resize(l as usize + 1, Vec::new());
-        }
-        by_layer[l as usize].push(v);
+        bottom_up[layer_count - 1 - l as usize].push(v);
     }
-    // Rebuild bottom-up (oldest layer first), splitting as needed; `stack` ends up with the
-    // new layers from the bottom.
-    let mut stack: Vec<Vec<usize>> = Vec::with_capacity(by_layer.len());
-    for mut nodes in by_layer.into_iter().rev() {
-        let width = |ns: &[usize]| {
-            ns.iter().map(|&v| breadth[v]).sum::<f32>() + gap * ns.len().saturating_sub(1) as f32
-        };
-        let total = width(&nodes);
-        if total <= max_width || nodes.len() < 2 {
-            stack.push(nodes);
+    bottom_up.retain(|l| !l.is_empty());
+    let width_of = |nodes: &[usize]| {
+        nodes.iter().map(|&v| breadth[v]).sum::<f32>() + gap * nodes.len().saturating_sub(1) as f32
+    };
+    let overfull = |nodes: &[usize]| nodes.len() > 1 && width_of(nodes) > max_width;
+
+    let mut rows = Rows {
+        nodes: Vec::new(),
+        width: Vec::new(),
+        row_of: vec![usize::MAX; n],
+        gap,
+    };
+    // Rows below this one are closed to the layers still to come.
+    let mut region_start = 0;
+    let mut i = 0;
+    while i < bottom_up.len() {
+        if !overfull(&bottom_up[i]) {
+            let first = rows.nodes.len().max(region_start);
+            let r = rows.open(first);
+            for &v in &bottom_up[i] {
+                rows.put(v, r, breadth[v]);
+            }
+            region_start = r + 1;
+            i += 1;
             continue;
         }
-        let parts = (total / max_width).ceil() as usize;
-        let target = total / parts as f32;
-        // Structural nodes first (they stay lowest), then tips from oldest to newest.
-        nodes.sort_by_key(|&v| (!has_children[v], time(v), v));
-        let mut current = Vec::new();
-        let mut used = 0.0;
-        for v in nodes {
-            let w = breadth[v] + if current.is_empty() { 0.0 } else { gap };
-            if !current.is_empty() && used + w > target * 1.05 {
-                stack.push(std::mem::take(&mut current));
-                used = 0.0;
+        // A run of consecutive overfull layers.
+        let mut j = i;
+        while j + 1 < bottom_up.len() && overfull(&bottom_up[j + 1]) {
+            j += 1;
+        }
+        let run: Vec<usize> = bottom_up[i..=j].iter().flatten().copied().collect();
+        let mut in_run = vec![false; n];
+        for &v in &run {
+            in_run[v] = true;
+        }
+        let mut pending: Vec<usize> = vec![0; n];
+        for &v in &run {
+            pending[v] = parents[v].iter().filter(|&&p| in_run[p]).count();
+        }
+        // Rows are filled evenly: as full as the widest layer of the run needs when spread
+        // over its rows, never beyond the limit.
+        let capacity = bottom_up[i..=j]
+            .iter()
+            .map(|l| {
+                let total = width_of(l);
+                total / (total / max_width).ceil() * 1.05
+            })
+            .fold(0.0f32, f32::max)
+            .min(max_width);
+        let floor = |v: usize, row_of: &[usize]| {
+            parents[v]
+                .iter()
+                .map(|&p| row_of[p] + 1)
+                .max()
+                .unwrap_or(0)
+                .max(region_start)
+        };
+        let mut ready: Vec<usize> = run.iter().copied().filter(|&v| pending[v] == 0).collect();
+        // Nodes whose parents sit lowest first, then nodes with children, then oldest; the
+        // stack pops from the end.
+        ready.sort_by_key(|&v| {
+            std::cmp::Reverse((floor(v, &rows.row_of), children[v].is_empty(), time(v), v))
+        });
+        let mut last_layer_rows = usize::MAX;
+        while let Some(v) = ready.pop() {
+            let lowest = floor(v, &rows.row_of);
+            let r = (lowest..rows.nodes.len())
+                .find(|&r| rows.fits(r, breadth[v], capacity))
+                .unwrap_or_else(|| rows.open(rows.nodes.len().max(lowest)));
+            rows.put(v, r, breadth[v]);
+            if bottom_up[j].contains(&v) {
+                last_layer_rows = last_layer_rows.min(r);
             }
-            used += breadth[v] + if current.is_empty() { 0.0 } else { gap };
-            current.push(v);
+            let mut next: Vec<usize> = children[v]
+                .iter()
+                .copied()
+                .filter(|&c| in_run[c])
+                .filter(|&c| {
+                    pending[c] -= 1;
+                    pending[c] == 0
+                })
+                .collect();
+            next.sort_by_key(|&c| std::cmp::Reverse((time(c), c)));
+            ready.extend(next);
         }
-        stack.push(current);
+        region_start = last_layer_rows.saturating_add(1).min(rows.nodes.len());
+        i = j + 1;
     }
-    let top = stack.len() as u32 - 1;
-    for (i, nodes) in stack.iter().enumerate() {
-        for &v in nodes {
-            layers[v] = top - i as u32;
+    let top = rows.nodes.len().saturating_sub(1);
+    for (v, &r) in rows.row_of.iter().enumerate() {
+        layers[v] = (top - r) as u32;
+    }
+}
+
+/// Rows under construction in [`limit_width`], bottom first.
+struct Rows {
+    nodes: Vec<Vec<usize>>,
+    width: Vec<f32>,
+    row_of: Vec<usize>,
+    gap: f32,
+}
+
+impl Rows {
+    /// Makes sure row `r` exists (creating empty rows as needed) and returns it.
+    fn open(&mut self, r: usize) -> usize {
+        while self.nodes.len() <= r {
+            self.nodes.push(Vec::new());
+            self.width.push(0.0);
         }
+        r
+    }
+
+    fn fits(&self, r: usize, w: f32, capacity: f32) -> bool {
+        let gap = if self.nodes[r].is_empty() {
+            0.0
+        } else {
+            self.gap
+        };
+        self.nodes[r].is_empty() || self.width[r] + gap + w <= capacity
+    }
+
+    fn put(&mut self, v: usize, r: usize, w: f32) {
+        let gap = if self.nodes[r].is_empty() {
+            0.0
+        } else {
+            self.gap
+        };
+        self.width[r] += gap + w;
+        self.nodes[r].push(v);
+        self.row_of[v] = r;
     }
 }
 
@@ -713,6 +825,35 @@ mod tests {
         }
         assert!(per_layer.values().all(|&c| c <= 4), "{per_layer:?}");
         assert_eq!(per_layer.len(), 3);
+    }
+
+    #[test]
+    fn split_layers_keep_children_close_to_their_parents() {
+        // 400 parent/child pairs on one root: both the parent layer and the child layer overflow.
+        let pairs = 400u32;
+        let mut edges = Vec::new();
+        for i in 0..pairs {
+            let (parent, child) = (1 + 2 * i, 2 + 2 * i);
+            edges.push((parent, 0));
+            edges.push((child, parent));
+        }
+        let n = 1 + 2 * pairs as usize;
+        let inp = input(n, &edges);
+        let breadth = vec![100.0; n];
+        let mut l = rank(&inp, Ranking::Compact);
+        limit_width(&mut l, &inp, &breadth, 1800.0, 25.0);
+        assert_valid(&inp, &l);
+        // Edges into the root are long by necessity (400 siblings stack up); the edges from
+        // each child to its own parent must stay short.
+        let pair_edges = inp.edges.iter().filter(|e| e.parent != 0);
+        let longest = pair_edges
+            .map(|e| l[e.parent as usize] - l[e.child as usize])
+            .max()
+            .unwrap();
+        assert!(
+            longest <= 2,
+            "child/parent edges stay short (longest {longest})"
+        );
     }
 
     #[test]

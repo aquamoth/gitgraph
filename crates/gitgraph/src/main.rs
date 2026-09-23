@@ -157,7 +157,7 @@ fn main() -> ExitCode {
     if let Some(path) = cli.export.clone() {
         let mut settings = settings::Settings::default();
         apply_cli(&cli, &mut settings);
-        return match export_headless(&repo, &settings, &path) {
+        return match export_headless(&std::sync::Arc::new(repo), &settings, &path) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("gitgraph: could not write {}: {e}", path.display());
@@ -253,7 +253,7 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
 
 /// Lays the graph out without a window and writes it as SVG.
 fn export_headless(
-    repo: &gitgraph_core::Repo,
+    repo: &std::sync::Arc<gitgraph_core::Repo>,
     settings: &settings::Settings,
     path: &std::path::Path,
 ) -> std::io::Result<()> {

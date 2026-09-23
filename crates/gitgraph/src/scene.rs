@@ -1,6 +1,7 @@
 //! A laid-out revision graph ready to draw: node contents and sizes, layout, and the physics
 //! net that holds the current (possibly dragged) positions.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
@@ -39,6 +40,9 @@ pub struct NodeVisual {
 
 #[derive(Debug)]
 pub struct Scene {
+    /// The repository snapshot this scene was built from. Everything that maps nodes back to
+    /// commits and refs must use this one (not a newer reload).
+    pub repo: Arc<Repo>,
     pub graph: RevGraph,
     pub layout: Layout,
     pub visuals: Vec<NodeVisual>,
@@ -52,6 +56,7 @@ pub struct Scene {
 /// [`SceneInput::lay_out`] can then run on any thread.
 #[derive(Debug)]
 pub struct SceneInput {
+    repo: Arc<Repo>,
     graph: RevGraph,
     visuals: Vec<NodeVisual>,
     input: LayoutInput,
@@ -66,6 +71,7 @@ impl SceneInput {
         let layout = layout::layout(&self.input, &self.options);
         let net = Net::new(&layout, &self.input.sizes);
         Scene {
+            repo: self.repo,
             graph: self.graph,
             layout,
             visuals: self.visuals,
@@ -81,7 +87,7 @@ impl Scene {
     /// Builds the graph for the current settings and measures its nodes. `text_width`
     /// measures a string at [`FONT_SIZE`]; `text_height` is the height of one line of text.
     pub fn prepare(
-        repo: &Repo,
+        repo: &Arc<Repo>,
         settings: &Settings,
         text_width: &mut dyn FnMut(&str) -> f32,
         text_height: f32,
@@ -149,6 +155,7 @@ impl Scene {
             priority: head.map(|h| vec![h as u32]).unwrap_or_default(),
         };
         SceneInput {
+            repo: Arc::clone(repo),
             graph,
             visuals,
             input,

@@ -52,7 +52,17 @@ fn main() {
             sizes: g
                 .nodes
                 .iter()
-                .map(|n| Point::new(90.0, 18.0 * n.refs.len().max(1) as f32))
+                // Roughly the app's boxes: 12 px monospace (7.2 px per char), 20 px margins.
+                .map(|n| {
+                    let chars = n
+                        .refs
+                        .iter()
+                        .map(|&r| repo.refs[r].name.chars().count())
+                        .max()
+                        .unwrap_or(0)
+                        .max(8);
+                    Point::new(40.0 + 7.2 * chars as f32, 24.0 * n.refs.len().max(1) as f32)
+                })
                 .collect(),
             times: g
                 .nodes

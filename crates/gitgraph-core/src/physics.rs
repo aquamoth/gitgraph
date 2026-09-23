@@ -112,6 +112,9 @@ pub struct Net {
     target: Vec<Point>,
     /// Half extents of node boxes (zero for bend points).
     half: Vec<Point>,
+    /// Layer of every node, and whether layers run horizontally (newest on top or bottom).
+    node_layer: Vec<u32>,
+    vertical: bool,
     /// Displacement a dropped node is pinned at.
     pinned: Vec<Option<Point>>,
     springs: Vec<Spring>,
@@ -213,6 +216,8 @@ impl Net {
             vel: vec![Point::default(); count],
             target: vec![Point::default(); count],
             half,
+            node_layer: layout.layers.clone(),
+            vertical,
             pinned: vec![None; count],
             springs,
             adjacent,
@@ -419,7 +424,9 @@ impl Net {
                 }
                 target[i] = scale(num, 1.0 / den);
             }
-            if params.avoid_overlap && sweep % 4 == 3 {
+            // With nothing held, the net is just returning to the (overlap-free) layout.
+            let holding = self.grabbed.is_some() || self.any_pinned();
+            if params.avoid_overlap && holding && sweep % 4 == 3 {
                 self.separate_nodes(&mut target);
             }
         }
@@ -512,7 +519,23 @@ impl Net {
             if wa + wb == 0.0 {
                 continue;
             }
-            let push = if ox < oy {
+            let push = if self.node_layer[a] == self.node_layer[b] {
+                // Same layer: push apart along the layer, in their layout order, so that
+                // neighbours never get pushed past each other.
+                let along = if self.vertical {
+                    Point::new(1.0, 0.0)
+                } else {
+                    Point::new(0.0, 1.0)
+                };
+                let order = if dot(sub(self.origin[b], self.origin[a]), along) < 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                };
+                let needed = dot(add(self.half[a], self.half[b]), along) + OVERLAP_MARGIN;
+                let have = dot(d, along) * order;
+                scale(along, order * (needed - have).max(0.0))
+            } else if ox < oy {
                 Point::new(if d.x < 0.0 { -ox } else { ox }, 0.0)
             } else {
                 Point::new(0.0, if d.y < 0.0 { -oy } else { oy })
@@ -715,6 +738,54 @@ mod tests {
             net.node_pos(2).x > l.nodes[2].x,
             "neighbours follow a restored pin"
         );
+    }
+
+    #[test]
+    fn neighbours_in_a_layer_keep_their_order() {
+        // Root 0 with three tips side by side in one layer.
+        let input = LayoutInput {
+            sizes: vec![Point::new(60.0, 20.0); 4],
+            times: vec![1, 4, 3, 2],
+            edges: (1..4)
+                .map(|t| LayoutEdge {
+                    child: t,
+                    parent: 0,
+                    first_parent: true,
+                })
+                .collect(),
+            priority: Vec::new(),
+        };
+        let l = layout::layout(&input, &LayoutOptions::default());
+        let mut net = Net::new(&l, &input.sizes);
+        let params = NetParams {
+            model: DragModel::Strings,
+            ..NetParams::default()
+        };
+        let order = |net: &Net| {
+            let mut tips = vec![1, 2, 3];
+            tips.sort_by(|&a, &b| net.node_pos(a).x.total_cmp(&net.node_pos(b).x));
+            tips
+        };
+        let before = order(&net);
+        // Drag the leftmost tip far past the others and drop it there, then reset.
+        let left = before[0];
+        net.grab(left);
+        net.drag_to(Point::new(l.nodes[before[2]].x + 200.0, l.nodes[left].y));
+        for _ in 0..60 {
+            net.step(1.0 / 60.0, &params);
+        }
+        net.release();
+        settle(&mut net, &params);
+        net.reset();
+        settle(&mut net, &params);
+        assert_eq!(order(&net), before);
+        for i in 0..4 {
+            let p = net.node_pos(i);
+            assert!(
+                (p.x - l.nodes[i].x).abs() < 1.0 && (p.y - l.nodes[i].y).abs() < 1.0,
+                "node {i} back home"
+            );
+        }
     }
 
     #[test]

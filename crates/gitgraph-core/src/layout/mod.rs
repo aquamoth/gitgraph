@@ -241,11 +241,11 @@ pub fn layout(input: &LayoutInput, options: &LayoutOptions) -> Layout {
             span_below[item.layer as usize] = span_below[item.layer as usize].max(dx);
         }
     }
+    // max/min rather than clamp: never panic on odd (e.g. NaN) settings.
     let gap_after = |l: usize| {
-        (span_below[l] * options.gap_per_span).clamp(
-            options.layer_gap,
-            options.layer_gap.max(options.max_layer_gap),
-        )
+        (span_below[l] * options.gap_per_span)
+            .min(options.max_layer_gap)
+            .max(options.layer_gap)
     };
     let mut layer_v = Vec::with_capacity(layer_count);
     let mut v = 0.0;
