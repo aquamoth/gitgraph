@@ -42,8 +42,8 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
    - **Blue dots** mark only the nodes you grabbed. Nodes that gave way, or that a subtree
      carried along, get none (but can still be returned to the layout).
    - **Magnets act between nodes.** Edges make way only for nodes in their own row.
-   - **Free and Subtree allow overlaps.** A node dropped on another stays there until
-     something next to it is dragged in Adapt.
+   - **Free and Subtree allow overlaps,** and Adapt leaves them alone: it only keeps nodes
+     from coming closer than they rest.
    - **Defaults:** pull 0.3 (a neighbour moves about half as far as the dragged node, the next
      one a quarter), push 0.5 (nodes start pushing each other 32 px apart), wobble 0.4. *Pull*
      replaces the old *reach* setting and starts at its new default.

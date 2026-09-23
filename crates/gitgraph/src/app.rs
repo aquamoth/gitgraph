@@ -535,8 +535,12 @@ impl GitGraphApp {
         }
     }
 
-    /// Changes the arrangement of the nodes (reset, undo, …) and remembers the result.
+    /// Changes the arrangement of the nodes (reset, undo, …) and remembers the result. Not
+    /// while nodes are being dragged.
     fn rearrange(&mut self, change: impl FnOnce(&mut gitgraph_core::physics::Net)) {
+        if matches!(self.drag, Some(Drag::Node { .. })) {
+            return;
+        }
         if let Some(scene) = &mut self.scene {
             change(&mut scene.net);
         }
@@ -1233,7 +1237,12 @@ impl GitGraphApp {
         let mut preview = vec![false; count];
         match (self.hovered, self.drag, self.settings.net.model) {
             (Some(n), None, DragModel::Subtree) => {
-                let roots = dragged_with(&self.selection, n);
+                // As a drag would: Shift or Ctrl adds the node to the selection.
+                let mut roots = dragged_with(&self.selection, n);
+                if extend && !self.selection.contains(n) {
+                    roots = self.selection.nodes.clone();
+                    roots.push(n);
+                }
                 if self.preview.as_ref().is_none_or(|(r, _)| *r != roots) {
                     let nodes = scene.carried_nodes(&roots, DragModel::Subtree);
                     self.preview = Some((roots, nodes));

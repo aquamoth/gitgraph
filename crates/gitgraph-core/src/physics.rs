@@ -133,8 +133,10 @@ const MAGNET_STIFFNESS: f32 = 1.5;
 const NEAR_SLACK: f32 = 24.0;
 /// A drop changes a particle's rest position only if it moved more than this.
 const REST_EPSILON: f32 = 0.05;
-/// Number of drops kept for undo.
+/// Number of drops kept for undo, and how many particle changes they may hold in all (about
+/// 20 bytes each).
 const UNDO_LIMIT: usize = 200;
+const UNDO_ENTRIES: usize = 1_000_000;
 /// The simulation sleeps once no particle moves faster than this (layout units per second)
 /// and every particle is this close to its target.
 const SLEEP_SPEED: f32 = 1.0;
@@ -526,8 +528,14 @@ impl Net {
     /// Drops the dragged nodes where they are. The shape the net has taken becomes its new
     /// resting shape, and the dragged nodes are marked as moved. Undoable.
     pub fn release(&mut self, params: &NetParams) {
-        if self.grab.is_none() {
-            return;
+        match &self.grab {
+            None => return,
+            // Let go without moving: nothing changes.
+            Some(g) if len(g.delta) <= REST_EPSILON => {
+                self.cancel_grab();
+                return;
+            }
+            Some(_) => {}
         }
         self.shape(params, FINAL_SWEEPS);
         let grab = self.grab.take().expect("grab exists");
@@ -544,12 +552,10 @@ impl Net {
         for &(p, _) in &grab.held {
             self.held[p as usize] = false;
         }
-        if len(grab.delta) > REST_EPSILON {
-            for &node in &grab.marked {
-                if !self.moved[node as usize] {
-                    self.moved[node as usize] = true;
-                    change.marks.push((node, false, true));
-                }
+        for &node in &grab.marked {
+            if !self.moved[node as usize] {
+                self.moved[node as usize] = true;
+                change.marks.push((node, false, true));
             }
         }
         self.record(change);
@@ -571,10 +577,18 @@ impl Net {
             return;
         }
         self.undo.push(change);
-        if self.undo.len() > UNDO_LIMIT {
-            self.undo.remove(0);
-        }
         self.redo.clear();
+        // Forget the oldest steps beyond the limits (but always keep the last one).
+        let size = |c: &Change| c.homes.len() + c.marks.len();
+        let mut total: usize = self.undo.iter().map(size).sum();
+        let mut drop = 0;
+        while self.undo.len() - drop > 1
+            && (self.undo.len() - drop > UNDO_LIMIT || total > UNDO_ENTRIES)
+        {
+            total -= size(&self.undo[drop]);
+            drop += 1;
+        }
+        self.undo.drain(..drop);
     }
 
     /// Applies a change (or reverts it); the particles concerned move there smoothly.
@@ -590,23 +604,24 @@ impl Net {
         self.awake = true;
     }
 
-    /// Reverts the last drop, reset or return to the layout. Returns false if there is none.
+    /// Reverts the last drop, reset or return to the layout (ending any drag). Returns false if
+    /// there is none.
     pub fn undo(&mut self) -> bool {
-        self.cancel_grab();
         let Some(change) = self.undo.pop() else {
             return false;
         };
+        self.cancel_grab();
         self.apply(&change, false);
         self.redo.push(change);
         true
     }
 
-    /// Repeats the last undone change. Returns false if there is none.
+    /// Repeats the last undone change (ending any drag). Returns false if there is none.
     pub fn redo(&mut self) -> bool {
-        self.cancel_grab();
         let Some(change) = self.redo.pop() else {
             return false;
         };
+        self.cancel_grab();
         self.apply(&change, true);
         self.undo.push(change);
         true
@@ -993,15 +1008,18 @@ impl Net {
         self.magnet_nodes.clear();
     }
 
-    /// Pairs of nodes whose boxes are less than `pad` apart, at least one of them woken, and
-    /// how they sat at the start of the frame.
+    /// Pairs of nodes whose boxes are less than `pad` apart, at least one of them away from
+    /// its rest position (two resting nodes cannot press on each other), and how they sat at
+    /// the start of the frame.
     fn near_pairs(&mut self, pad: f32) -> Vec<Near> {
         let n = self.node_count;
         let place = |i: usize| add(self.origin[i], self.target[i]);
+        let moving =
+            |i: usize| self.held[i] || len(sub(self.target[i], self.home[i])) > REST_EPSILON;
         let mut area: Option<(Point, Point)> = None;
         for &i in &self.active {
             let i = i as usize;
-            if i < n {
+            if i < n && moving(i) {
                 let (lo, hi) = (sub(place(i), self.half[i]), add(place(i), self.half[i]));
                 area = Some(match area {
                     None => (lo, hi),
@@ -1035,7 +1053,7 @@ impl Net {
             .into_iter()
             .filter_map(|(a, b)| {
                 let (a, b) = (a as usize, b as usize);
-                if !self.is_active[a] && !self.is_active[b] {
+                if !moving(a) && !moving(b) {
                     return None;
                 }
                 let d = add(
@@ -1061,10 +1079,15 @@ impl Net {
                     (true, true) => -1.0,
                     (true, false) => 1.0,
                 };
+                let rest = add(
+                    sub(self.origin[b], self.origin[a]),
+                    sub(self.home[b], self.home[a]),
+                );
                 Some(Near {
                     a: a as u32,
                     b: b as u32,
                     side,
+                    rest_gap: box_gap(rest, ext).0,
                 })
             })
             .collect()
@@ -1095,32 +1118,23 @@ impl Net {
         }
     }
 
-    /// Sets up this frame's magnets between the nearby pairs, and wakes nodes that are about
-    /// to be pushed. A pair keeps the gap it has at rest, or `range` if that is smaller.
+    /// Sets up this frame's magnets between the nearby pairs, and wakes resting nodes that are
+    /// pressed on. A pair keeps the gap it has at rest, or `range` if that is smaller.
     fn collect_magnets(&mut self, near: &[Near], range: f32, magnets: bool) {
         for (k, pair) in near.iter().enumerate() {
             let (a, b) = (pair.a as usize, pair.b as usize);
             if self.held[a] && self.held[b] {
                 continue;
             }
-            let ext = add(self.half[a], self.half[b]);
-            let rest = add(
-                sub(self.origin[b], self.origin[a]),
-                sub(self.home[b], self.home[a]),
-            );
-            let at_rest = box_gap(rest, ext).0;
-            let keep = if magnets {
-                at_rest.min(range)
-            } else {
-                at_rest.min(0.0)
-            };
+            let keep = pair.rest_gap.min(range);
+            // Wake a resting node only once something actually presses on it.
             let now = self.gap(pair, &self.target, 0.0).0;
-            if now >= keep.max(OVERLAP_MARGIN) + NEAR_SLACK / 2.0 {
-                continue;
-            }
-            for p in [a, b] {
-                if !self.is_active[p] {
-                    self.wake_around(&[p as u32], PUSH_WAKE);
+            let pressed = now < pair.margin() || magnets && now < keep - REST_EPSILON;
+            if pressed {
+                for p in [a, b] {
+                    if !self.is_active[p] {
+                        self.wake_around(&[p as u32], PUSH_WAKE);
+                    }
                 }
             }
             if magnets {
@@ -1139,7 +1153,7 @@ impl Net {
     /// others along their axis of least overlap. A resting node that gets hit is woken up.
     fn separate_nodes(&mut self, target: &mut [Point], near: &[Near]) {
         for pair in near {
-            let (gap, away) = self.gap(pair, target, OVERLAP_MARGIN);
+            let (gap, away) = self.gap(pair, target, pair.margin());
             if gap >= 0.0 {
                 continue;
             }
@@ -1166,6 +1180,15 @@ struct Near {
     /// ±1 if they sat side by side in a row at the start of the frame (`b` after `a` along the
     /// row, or before it), 0 otherwise.
     side: f32,
+    /// Gap between their boxes at rest.
+    rest_gap: f32,
+}
+
+impl Near {
+    /// The gap that overlap avoidance keeps: the margin, or less if they rest closer.
+    fn margin(&self) -> f32 {
+        self.rest_gap.min(OVERLAP_MARGIN)
+    }
 }
 
 /// Gap between two boxes whose centres are `d` apart and whose half extents add up to `ext`
@@ -1510,6 +1533,84 @@ mod tests {
         assert!(net.undo());
         settle(&mut net, &params);
         assert!(close(net.node_pos(2), shape[2]));
+    }
+
+    #[test]
+    fn undo_with_nothing_to_undo_keeps_the_drag() {
+        let (l, mut net) = chain_net();
+        net.grab(2, &[2], &[], true);
+        assert!(!net.undo() && !net.redo());
+        assert_eq!(net.grabbed(), Some(2));
+        net.drag_to(add(l.nodes[2], Point::new(50.0, 0.0)));
+        net.step(1.0 / 60.0, &NetParams::default());
+        assert!(net.node_pos(2).x > l.nodes[2].x + 49.0);
+    }
+
+    #[test]
+    fn grabbing_without_moving_changes_nothing() {
+        let input = LayoutInput {
+            sizes: vec![Point::new(60.0, 20.0); 6],
+            times: vec![1, 6, 5, 4, 3, 2],
+            edges: (1..6).map(|t| edge(t, 0)).collect(),
+            priority: Vec::new(),
+        };
+        // Nodes closer together than the overlap margin, as the spacing settings allow.
+        let options = LayoutOptions {
+            node_gap: 3.0,
+            ..LayoutOptions::default()
+        };
+        let l = layout::layout(&input, &options);
+        let mut net = Net::new(&l, &input.sizes);
+        let params = NetParams::default();
+        let hold = |net: &mut Net, node: usize| {
+            net.grab(node, &[node], &[], true);
+            for _ in 0..20 {
+                net.step(1.0 / 60.0, &params);
+            }
+            net.release(&params);
+        };
+        // While everything rests.
+        hold(&mut net, 3);
+        settle(&mut net, &params);
+        assert_eq!(net.rest_offsets().count(), 0);
+        assert!(!net.can_undo());
+        // While a drop is still settling.
+        drag(&mut net, &[3], Point::new(0.0, 40.0), &params);
+        net.step(1.0 / 60.0, &params);
+        let rest: Vec<(usize, Point, bool)> = net.rest_offsets().collect();
+        for node in [3, 1, 4] {
+            hold(&mut net, node);
+        }
+        settle(&mut net, &params);
+        assert_eq!(net.rest_offsets().collect::<Vec<_>>(), rest);
+        assert!(
+            net.undo() && !net.can_undo(),
+            "only the real drag was recorded"
+        );
+    }
+
+    #[test]
+    fn a_grab_wakes_only_what_it_presses_on() {
+        // Many short chains side by side, rows closer than the magnet range.
+        let chains = 3_000u32;
+        let input = LayoutInput {
+            sizes: vec![Point::new(40.0, 20.0); chains as usize * 3],
+            times: (0..chains as i64 * 3).map(|i| 3 - i % 3).collect(),
+            edges: (0..chains)
+                .flat_map(|c| [edge(3 * c, 3 * c + 1), edge(3 * c + 1, 3 * c + 2)])
+                .collect(),
+            priority: Vec::new(),
+        };
+        let (_, mut net) = net_for(&input);
+        net.grab(1, &[1], &[], true);
+        for _ in 0..100 {
+            net.step(1.0 / 60.0, &NetParams::default());
+        }
+        assert!(
+            net.active_count() <= ACTIVE_BUDGET + 1,
+            "{} particles awake",
+            net.active_count()
+        );
     }
 
     #[test]
