@@ -14,7 +14,7 @@ use gitgraph_core::{CommitIx, Repo};
 use crate::automation::Automation;
 use crate::render::{self, Marks};
 use crate::scene::{FONT_SIZE, Scene, to_point};
-use crate::settings::{Arrows, EdgeStyle, Look, STORAGE_KEY, Settings};
+use crate::settings::{Arrows, EdgeStyle, Look, MOVES_KEY, RememberedMoves, STORAGE_KEY, Settings};
 use crate::theme::{Palette, ThemeChoice};
 use crate::view::View;
 
@@ -116,6 +116,8 @@ pub struct GitGraphApp {
     /// Path being edited in the "Export as SVG" dialog, when open.
     export_path: Option<String>,
     messages: Messages,
+    /// Dragged nodes of every repository, kept when `remember_moves` is on.
+    moves: RememberedMoves,
     automation: Automation,
 }
 
@@ -142,6 +144,11 @@ impl GitGraphApp {
             .and_then(|s| eframe::get_value(s, STORAGE_KEY))
             .unwrap_or_default();
         overrides(&mut settings);
+        let moves: RememberedMoves = cc
+            .storage
+            .filter(|_| persist)
+            .and_then(|s| eframe::get_value(s, MOVES_KEY))
+            .unwrap_or_default();
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         GitGraphApp {
             repo_path,
@@ -166,6 +173,7 @@ impl GitGraphApp {
             show_legend: false,
             export_path: None,
             messages: Messages::default(),
+            moves,
             automation,
         }
     }
@@ -221,6 +229,7 @@ impl GitGraphApp {
                 .map(|n| n as usize)
         });
         self.update_search();
+        self.restore_moves();
         if let (Some((commit, screen)), Some(scene)) = (job.anchor, &self.scene)
             && let Some(node) = scene.graph.represented_by(commit)
             && self.canvas.is_positive()
@@ -228,6 +237,58 @@ impl GitGraphApp {
             let world = scene.node_center(node as usize);
             let fraction = (screen - self.canvas.min) / self.canvas.size();
             self.view.show_at(self.canvas, world, fraction);
+        }
+    }
+
+    fn repo_key(&self) -> String {
+        self.repo.path.display().to_string()
+    }
+
+    /// Re-pins remembered nodes in a freshly laid-out scene.
+    fn restore_moves(&mut self) {
+        if !self.settings.remember_moves {
+            return;
+        }
+        let Some(moves) = self.moves.get(&self.repo_key()) else {
+            return;
+        };
+        let Some(scene) = &mut self.scene else { return };
+        for (hex, &(dx, dy)) in moves {
+            let node = gitgraph_core::Oid::from_hex(hex)
+                .and_then(|oid| self.repo.lookup(&oid))
+                .and_then(|c| scene.graph.node_of(c));
+            if let Some(node) = node {
+                scene
+                    .net
+                    .pin(node as usize, gitgraph_core::layout::Point::new(dx, dy));
+            }
+        }
+    }
+
+    /// Records the current scene's pinned nodes for this repository.
+    fn record_moves(&mut self) {
+        if !self.settings.remember_moves {
+            return;
+        }
+        let Some(scene) = &self.scene else { return };
+        let pins: std::collections::HashMap<String, (f32, f32)> = scene
+            .net
+            .pins()
+            .map(|(node, d)| {
+                (
+                    self.repo
+                        .commit(scene.graph.nodes[node].commit)
+                        .oid
+                        .to_hex(),
+                    (d.x, d.y),
+                )
+            })
+            .collect();
+        let key = self.repo_key();
+        if pins.is_empty() {
+            self.moves.remove(&key);
+        } else {
+            self.moves.insert(key, pins);
         }
     }
 
@@ -353,6 +414,7 @@ impl GitGraphApp {
         if let Some(scene) = &mut self.scene {
             scene.net.reset();
         }
+        self.record_moves();
     }
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
@@ -616,6 +678,14 @@ impl GitGraphApp {
             egui::Slider::new(&mut n.wobble, 0.0..=1.0).text("wobble"),
         );
         ui.checkbox(&mut n.avoid_overlap, "Push overlapping nodes apart");
+        let before = self.settings.remember_moves;
+        ui.checkbox(&mut self.settings.remember_moves, "Remember moved nodes")
+            .on_hover_text(
+                "Keep dropped nodes where they are, per repository, across runs and relayouts.",
+            );
+        if self.settings.remember_moves && !before {
+            self.record_moves();
+        }
         ui.separator();
         if ui
             .add(egui::Button::new("Return all nodes to layout").shortcut_text("R"))
@@ -809,9 +879,11 @@ impl GitGraphApp {
                 Some(Drag::Pan) | None => self.view.pan_screen(response.drag_delta()),
             }
         }
+        let mut moved = false;
         if response.drag_stopped() {
             if matches!(self.drag, Some(Drag::Node { .. })) {
                 scene.net.release();
+                moved = true;
             }
             self.drag = None;
         }
@@ -1030,11 +1102,15 @@ impl GitGraphApp {
                 if let Some(scene) = &mut self.scene {
                     scene.net.unpin(node);
                 }
+                self.record_moves();
             }
             Some(MenuAction::Center(node)) => self.center_on(node),
             None => {}
         }
 
+        if moved {
+            self.record_moves();
+        }
         if self.settings.show_overview {
             self.overview(ui, canvas);
         }
@@ -1239,6 +1315,7 @@ impl eframe::App for GitGraphApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         if self.persist {
             eframe::set_value(storage, STORAGE_KEY, &self.settings);
+            eframe::set_value(storage, MOVES_KEY, &self.moves);
         }
     }
 }

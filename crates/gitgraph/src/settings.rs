@@ -8,6 +8,11 @@ use serde::{Deserialize, Serialize};
 use crate::theme::ThemeChoice;
 
 pub const STORAGE_KEY: &str = "gitgraph-settings";
+/// Storage key for remembered node positions: repository path -> commit hash -> offset.
+pub const MOVES_KEY: &str = "gitgraph-moved-nodes";
+
+pub type RememberedMoves =
+    std::collections::HashMap<String, std::collections::HashMap<String, (f32, f32)>>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EdgeStyle {
@@ -113,6 +118,8 @@ pub struct Settings {
     pub show_hidden_counts: bool,
     /// Highlight the edges of the hovered and selected nodes.
     pub highlight_edges: bool,
+    /// Keep dragged nodes where they were dropped, per repository, across runs and relayouts.
+    pub remember_moves: bool,
 }
 
 impl Default for Settings {
@@ -127,6 +134,7 @@ impl Default for Settings {
             show_overview: false,
             show_hidden_counts: false,
             highlight_edges: true,
+            remember_moves: false,
         };
         Look::Modern.apply(&mut s);
         s

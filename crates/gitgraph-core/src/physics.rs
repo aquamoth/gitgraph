@@ -290,6 +290,22 @@ impl Net {
         }
     }
 
+    /// Pinned nodes and their offsets from the layout.
+    pub fn pins(&self) -> impl Iterator<Item = (usize, Point)> + '_ {
+        self.pinned[..self.node_count]
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| p.map(|d| (i, d)))
+    }
+
+    /// Pins `node` at `offset` from its layout position and lets the net settle around it.
+    pub fn pin(&mut self, node: usize, offset: Point) {
+        self.pinned[node] = Some(offset);
+        self.disp[node] = offset;
+        self.target[node] = offset;
+        self.wake_around(node);
+    }
+
     /// Lets a pinned node spring back to its layout position.
     pub fn unpin(&mut self, node: usize) {
         if self.pinned[node].take().is_some() {
@@ -683,6 +699,22 @@ mod tests {
         net.release();
         settle(&mut net, &NetParams::default());
         assert_eq!(net.active_count(), 0, "everything goes back to sleep");
+    }
+
+    #[test]
+    fn pins_round_trip() {
+        let (l, mut net) = chain_net();
+        net.pin(3, Point::new(40.0, 0.0));
+        settle(&mut net, &NetParams::default());
+        assert_eq!(net.pins().collect::<Vec<_>>(), [(3, Point::new(40.0, 0.0))]);
+        assert_eq!(
+            net.node_pos(3),
+            Point::new(l.nodes[3].x + 40.0, l.nodes[3].y)
+        );
+        assert!(
+            net.node_pos(2).x > l.nodes[2].x,
+            "neighbours follow a restored pin"
+        );
     }
 
     #[test]
