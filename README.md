@@ -7,6 +7,11 @@ that runs on Linux and Windows (and should run on macOS).
 On top of the TortoiseGit look you can grab any node and drag it; the rest of the graph follows
 like a spider web being pulled.
 
+![gitgraph showing a demo repository](docs/images/demo.png)
+
+_(Made with `scripts/make-demo-repo.sh`: local branches green, remote branches orange, tags
+yellow, the current branch red.)_
+
 ## Usage
 
 ```sh
