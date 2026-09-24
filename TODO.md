@@ -14,25 +14,64 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
    On Apps, ~160 remote branches hang off a few commits. In Classic that gives rows many
    thousands of pixels wide with fans of near-horizontal lines. Modern reads like a tree.
    Which do you want by default?
-2. **Dragging feel.** Menu *Drag* has three prototypes:
-   - **Spider web** (default): springs along edges and between neighbours in a row. The rest of
-     the graph follows with some inertia and wobble.
-   - **Strings**: springs along edges only, no wobble.
-   - **Rigid**: only the dragged node moves.
+2. **Rearranging by hand.** Reworked from your notes of 2026-09-24:
+   - A dropped node is no longer pinned. Wherever things come to rest becomes their new
+     resting shape, so moved nodes keep giving way to later drags like any other node.
+   - Three drag modes, in the toolbar, the *Drag* menu and on keys `1` `2` `3`:
+     - **Adapt** (default): neighbours follow along their edges (*pull* slider), and nodes
+       that come near are pushed aside like weak magnets (*push*). Nodes side by side in a row
+       are pushed ahead along it; lifting a node out of the row lets it pass them.
+     - **Free**: only the selected nodes move; the edges to them stretch.
+     - **Subtree**: the selected nodes and everything that grows out of them. Hovering shows
+       what would move.
+   - Switching back to Adapt keeps every node where it is, and from then on the springs hold
+     the new offsets between neighbours.
+   - Selecting: click; Ctrl+click toggles; Shift+click adds; Shift+drag the background selects
+     a rectangle; right-click → *Select subtree*. Dragging a selected node moves the whole
+     selection.
+   - Undo and redo with Ctrl+Z / Ctrl+Shift+Z; `R` (reset) can be undone too.
+   - Edges re-route as you drag (your notes of 2026-09-24, second round): an edge at a node
+     you moved takes a new route through the gaps between the rows it crosses. It bends only
+     where it must, so it loses bends when its nodes come together and goes around the nodes
+     in between when they move apart. Edges a moved node comes to cover make way too.
 
-   The *reach* and *wobble* sliders tune the first two. A dropped node stays where it is
-   (there is no marker for that any more); right-click → "Return node to layout", or `R` for
-   all nodes. Which feels right?
-   - **Remembering moves.** Drag → "Remember moved nodes" (off by default) keeps dropped nodes
-     per repository across runs and relayouts. Should it be on by default?
-   - **Same row.** Dragging a node through its neighbours in the same row pushes them ahead
-     of it, like beads on a string. Lifting it out of the row lets it pass them. This keeps a
-     reset from ever swapping nodes. OK?
-   - **Children above parents.** In the first two models, dragging a node up pushes its
+   Decisions you may want to overrule:
+   - **Subtree follows first parents.** A commit's subtree is everything whose first-parent
+     line leads back to it: its branch, and the branches forking off that. A merge that pulls
+     the branch in belongs to the line it merged into, so it stays put. Taking every descendant
+     instead would include everything merged later, often most of the graph.
+   - **What moved stays moved.** Neighbours that Adapt pulls or pushes keep their new places
+     after the drop. The alternative is for them to spring back, so that only the dragged node
+     keeps its new place.
+   - **No blue dots** any more (your notes of 2026-09-24, third round). Nodes you moved can
+     still be returned to the layout (right-click, or `R` for all).
+   - **Magnets act between nodes.** During a drag, edges make way only for nodes in their own
+     row; once the node is dropped on them they re-route around it.
+   - **Which edges re-route.** Edges at nodes you moved re-route as soon as they change.
+     Edges that only gave way keep the layout's route (bent along) unless pulled more than
+     40 px out of shape. Re-routing those too made whole fans lose their bundled trunks when a
+     shared parent moved a pixel.
+   - **Re-routed edges switch at once,** without animating from the old route to the new.
+     They also leave the trunks that bundled edges share.
+   - **Reversed edges** (third round, which overrules the second): edges always leave the
+     child's bottom and enter the parent's top. An edge whose parent is dragged above its
+     child is routed round both nodes, from just below the child to just above the parent,
+     so the reversal shows as a loop.
+   - **Children above parents** (third round). In Adapt, dragging a node up pushes its
      children up ahead of it, and dragging it down pushes its parents down, with at least
-     16 px between boxes. Only nodes you hold or have dropped can end up past a parent. Their
-     edges then detour round the side, so the reversal shows. Rigid moves only the dragged
-     node, so there the order breaks at once. OK?
+     24 px between boxes. Only the dragged nodes can end up past a parent. Free and Subtree
+     move nothing else, so there the order can break, and a reversal left at rest is kept
+     when the graph later adapts around it. OK?
+   - **Free and Subtree allow overlaps,** and Adapt leaves them alone: it only keeps nodes
+     from coming closer than they rest.
+   - **Defaults:** pull 0.3 (a neighbour moves about half as far as the dragged node, the next
+     one a quarter), push 0.5 (nodes start pushing each other 32 px apart), wobble 0.4. *Pull*
+     replaces the old *reach* setting and starts at its new default.
+   - **The old prototypes are gone.** Spider web and Strings became Adapt; Rigid became Free.
+   - **Mode switching** uses keys and buttons only. Shift and Ctrl already mean selection;
+     another modifier (such as holding Space) could give a one-off Free drag.
+   - **Remembering moves.** Drag → *Remember moved nodes* (off by default) keeps nodes where
+     they rest, per repository, across runs and relayouts. Should it be on by default?
 3. **Fidelity quirks in "Labelled commits" (TortoiseGit's default mode).** TortoiseGit uses
    `git log --simplify-by-decoration` and inherits git's simplifications:
    - A `--no-ff` merge whose first parent is an ancestor of its second is folded away.
@@ -81,14 +120,13 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 ## Planned
 
 - [ ] PNG export: SVG exists; TortoiseGit also offers raster formats.
-- [ ] Remember dragged positions per repository, if wanted (question 2).
 - [ ] Reload automatically when refs change; TortoiseGit only reloads on F5.
 - [ ] Tooltip on edges showing the collapsed commits.
 - [ ] Less memory for all-commits views of huge repositories (compact adjacency).
 - [ ] Windows `.exe` icon resource; try on macOS.
-- [ ] Overlap avoidance can keep a net with a dropped node trembling by a fraction of a pixel,
-      so it never sleeps and keeps repainting. A property test finds this in about 0.5% of
-      random drags, both with and without the child-above-parent ordering.
+- [ ] After some sequences of drags, undo and redo, a reset leaves an edge with a route of
+      its own. `physics_random_drags` finds one with seed 31337 (iteration 247), on main before
+      the child-above-parent ordering was merged too.
 
 ## Done
 
@@ -130,12 +168,17 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 
   Its randomised tests are now permanent property tests.
 - [x] Demo repository script (`scripts/make-demo-repo.sh`) and a README screenshot.
+- [x] Rearranging by hand (question 2):
+  - drops become the new resting shape instead of pins
+  - drag modes Adapt (springs and weak magnets), Free and Subtree
+  - multi-selection with rectangle selection, and "Select subtree"
+  - undo and redo; remembered positions per repository
+  - edges re-route through the gaps between rows as nodes are moved
 - [x] Direction made visible:
-  - edges leave the bottom of a node and enter the top, and a node dropped past its parent
-    gets a detour
+  - edges leave the bottom of a node and enter the top; an edge turned around loops round its
+    nodes
   - bigger arrowheads
-  - the net keeps children above parents while it follows a drag (costs about 0.6 ms more per
-    frame with 8000 particles awake)
+  - Adapt keeps children above parents (about 1 ms more per frame with 8000 particles awake)
   - click an edge to keep it highlighted, also in the overview; the status bar says where it
     leads
-  - the blue "pinned" dot is gone
+  - the blue dot is gone

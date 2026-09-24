@@ -1,6 +1,7 @@
-//! Property tests: random graphs, random drags. Positions stay finite, the net settles, a reset
-//! returns every node to its layout position, and children stay above their parents. (Adapted
-//! from a review's fuzzing.)
+//! Property tests: random graphs, random drags in every model, undo and redo. Positions and
+//! routes stay finite, the net settles and then stays put, a reset returns every node to its
+//! layout position and every edge to its layout route, and when the graph adapts to a drag,
+//! children stay above their parents. (Adapted from a review's fuzzing.)
 
 #![allow(clippy::needless_range_loop)] // index loops read better in these tests
 
@@ -68,15 +69,24 @@ fn physics_random_drags() {
         };
         let l = layout::layout(&inp, &opts);
         let mut net = Net::new(&l, &inp.sizes);
-        let params = NetParams {
-            model: DragModel::ALL[iter % 3],
-            reach: rng.f(),
+        let mut params = NetParams {
+            model: DragModel::Adapt,
+            pull: rng.f(),
+            push: rng.f(),
             wobble: rng.f(),
             avoid_overlap: iter % 5 != 0,
         };
         for _ in 0..5 {
+            params.model = DragModel::ALL[rng.below(3) as usize];
             let node = rng.below(n as u64) as usize;
-            net.grab(node);
+            let mut nodes = vec![node];
+            for _ in 0..rng.below(4) {
+                nodes.push(rng.below(n as u64) as usize);
+            }
+            let carried: Vec<usize> = (0..rng.below(3))
+                .map(|_| rng.below(n as u64) as usize)
+                .collect();
+            net.grab(node, &nodes, &carried, params.model.adapts());
             for s in 0..20 {
                 let t = Point::new(
                     l.nodes[node].x + (s as f32) * 20.0 * (rng.f() - 0.5),
@@ -86,14 +96,39 @@ fn physics_random_drags() {
                 let dt = [1.0 / 60.0, 0.0, 1.0, 1e-6, 1.0 / 240.0][rng.below(5) as usize];
                 net.step(dt, &params);
             }
-            net.release();
-            if rng.below(3) == 0 {
-                net.unpin(node);
+            net.release(&params);
+            match rng.below(6) {
+                0 => net.return_to_layout(&nodes),
+                1 => {
+                    net.undo();
+                }
+                2 => {
+                    net.undo();
+                    net.redo();
+                }
+                _ => {}
             }
             for _ in 0..30 {
                 net.step(1.0 / 60.0, &params);
             }
         }
+        // Once settled, nothing drifts.
+        let mut settled = false;
+        for _ in 0..5000 {
+            if !net.step(1.0 / 60.0, &params) {
+                settled = true;
+                break;
+            }
+        }
+        assert!(settled, "iter {iter}: never settles after dragging");
+        let resting: Vec<Point> = (0..n).map(|i| net.node_pos(i)).collect();
+        for _ in 0..10 {
+            net.step(1.0 / 60.0, &params);
+        }
+        assert!(
+            (0..n).all(|i| net.node_pos(i) == resting[i]),
+            "iter {iter}: drifts after settling"
+        );
         for i in 0..n {
             let p = net.node_pos(i);
             assert!(
@@ -110,7 +145,7 @@ fn physics_random_drags() {
             );
         }
         net.reset();
-        let mut settled = false;
+        settled = false;
         for _ in 0..5000 {
             if !net.step(1.0 / 60.0, &params) {
                 settled = true;
@@ -128,6 +163,10 @@ fn physics_random_drags() {
         assert!(
             residual < 1.0,
             "iter {iter} {params:?}: {residual} px off after reset"
+        );
+        assert!(
+            (0..inp.edges.len()).all(|e| !net.is_rerouted(e)),
+            "iter {iter}: edges keep routes of their own after a reset"
         );
     }
 }
@@ -147,8 +186,9 @@ fn physics_keeps_children_above_parents() {
         let l = layout::layout(&inp, &opts);
         let mut net = Net::new(&l, &inp.sizes);
         let params = NetParams {
-            model: [DragModel::Net, DragModel::Strings][iter % 2],
-            reach: rng.f(),
+            model: DragModel::Adapt,
+            pull: rng.f(),
+            push: rng.f(),
             wobble: rng.f(),
             avoid_overlap: iter % 3 != 0,
         };
@@ -156,7 +196,7 @@ fn physics_keeps_children_above_parents() {
         let node = rng.below(n as u64) as usize;
         let f = opts.direction.flow();
         let (along, side) = (1200.0 * (rng.f() - 0.5), 200.0 * (rng.f() - 0.5));
-        net.grab(node);
+        net.grab(node, &[node], &[], true);
         for s in 1..=20 {
             let t = s as f32 / 20.0;
             net.drag_to(Point::new(
@@ -165,14 +205,15 @@ fn physics_keeps_children_above_parents() {
             ));
             net.step(1.0 / 60.0, &params);
         }
-        net.release();
-        // Not required to settle: overlap avoidance can keep a pinned net trembling by a
-        // fraction of a pixel (see TODO.md).
+        net.release(&params);
+        let mut settled = false;
         for _ in 0..5000 {
             if !net.step(1.0 / 60.0, &params) {
+                settled = true;
                 break;
             }
         }
+        assert!(settled, "iter {iter}: never settles");
         let depth = |i: usize| {
             let s = inp.sizes[i];
             (f.x.abs() * s.x + f.y.abs() * s.y) / 2.0

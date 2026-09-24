@@ -14,7 +14,8 @@ crates/gitgraph-core   GUI-free; everything testable lives here
     order.rs           crossing minimisation (median sweeps, exact crossing count)
     position.rs        coordinates within layers (L1 via isotonic regression)
     mod.rs             pipeline, variable layer spacing, direction/rotation
-  physics.rs           the "spider web": springs + position-based dynamics for dragging
+  physics.rs           rearranging by hand: springs, weak magnets, drag modes, undo
+  route.rs             routing edges afresh around rearranged nodes
 
 crates/gitgraph        the binary (eframe/egui)
   main.rs              CLI (clap), window setup
@@ -47,21 +48,36 @@ crates/gitgraph        the binary (eframe/egui)
 4. **Lay out** (`layout/`): rank → split wide layers → layered graph with dummies (optionally
    bundled per parent) → crossing minimisation → L1 coordinates → variable layer gaps →
    rotate to the chosen direction.
-5. **Simulate** (`physics.rs`): nodes and bend points become particles. Springs run along
-   edges, one-sided springs join neighbours in a layer, and weak anchors hold each particle to
-   the layout.
-   - **Shape:** each frame, the target shape is relaxed with Gauss-Seidel over displacements.
-     Between sweeps, edge segments are put back in history order (children above parents,
-     with a gap) by one pass along the flow and one against it, and overlapping boxes are
-     pushed apart. Only the nodes the user holds can break the order.
+5. **Simulate** (`physics.rs`): nodes and bend points become particles, each with a rest
+   position (at first the layout). Springs along edges keep the offsets between rest
+   positions; nodes near each other push apart like weak magnets, and neighbours in a row keep
+   their order; weak anchors hold each particle to its rest position.
+   - **Drag modes:** *Adapt* lets the rest of the graph give way; *Free* and *Subtree* move
+     only the dragged nodes (Subtree adds their first-parent descendants) and stretch the
+     edges to them.
+   - **Shape:** each frame of an adaptive drag, the target shape is relaxed with Gauss-Seidel
+     over displacements. Between sweeps, edge segments are put back in history order
+     (children above parents, with a gap) by one pass along the flow and one against it, and
+     overlapping boxes are pushed apart. Only the dragged nodes, and edges left reversed at
+     rest, can break the order.
    - **Motion:** particles follow the target through damped springs.
-   - Only the dragged node's neighbourhood (up to 8000 particles) is simulated, and the
+   - **Drop:** whatever moved rests where it is from then on, so moved nodes keep giving way
+     to later drags instead of being pinned. Drops, resets and returns to the layout are
+     undoable.
+   - Only the dragged nodes' neighbourhood (up to 8000 particles) is simulated, and the
      simulation sleeps when still.
+   - **Routing** (`route.rs`): edges whose layout route no longer fits are routed afresh.
+     That means edges at nodes moved by hand, edges pulled far out of shape, and edges a moved
+     node covers. The router groups the boxes in between into rows, picks a gap in each so
+     that sideways moves happen where there is room, and pulls the route taut through them
+     (funnel algorithm). Anything still in the way is walked around corner by corner. An
+     edge whose parent has been moved before its child is routed round both nodes, from just
+     below the child to just above the parent.
 6. **Paint** (`render.rs`): edges then nodes, culled to the viewport; text is skipped below
    4 px. Edges leave a node from the side facing its parents and enter from the side facing
    its children (bottom and top, newest on top), unlike TortoiseGit, which clips them to the
-   box border wherever they hit it. A segment that runs against the flow detours round the
-   side of the boxes, so a node dropped above its child shows as a loop.
+   box border wherever they hit it. An edge turned around therefore shows as a loop: it
+   follows its route round the nodes, or else detours round the side of the boxes.
 
 ## Testing
 
@@ -73,8 +89,8 @@ crates/gitgraph        the binary (eframe/egui)
   - coordinates are finite and inside the bounds
   - network simplex is optimal on tiny graphs (checked by brute force)
   - every edge ends on a node
-  - the net returns home after a reset
-  - after a drag, every child is still above its parents
+  - the net comes to rest and stays there; it returns home after a reset
+  - after an adaptive drag, every child is still above its parents
 - `cargo test --release -p gitgraph-core --test properties_layout -- --ignored --nocapture`
   prints timings for large, awkward inputs.
 

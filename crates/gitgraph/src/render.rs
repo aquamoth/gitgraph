@@ -15,7 +15,10 @@ use crate::view::View;
 pub struct Marks {
     pub hovered: Option<usize>,
     pub hovered_edge: Option<usize>,
-    pub selected: Option<usize>,
+    /// Per node: selected.
+    pub selected: Vec<bool>,
+    /// Per node: would move along if the hovered node were dragged.
+    pub preview: Vec<bool>,
     pub selected_edge: Option<usize>,
     /// Per node: matches the current search.
     pub search_hits: Vec<bool>,
@@ -26,8 +29,16 @@ impl Marks {
         self.search_hits.get(node).copied().unwrap_or(false)
     }
 
+    fn is_selected(&self, node: usize) -> bool {
+        self.selected.get(node).copied().unwrap_or(false)
+    }
+
+    fn is_previewed(&self, node: usize) -> bool {
+        self.preview.get(node).copied().unwrap_or(false)
+    }
+
     fn emphasised(&self, node: usize) -> bool {
-        self.hovered == Some(node) || self.selected == Some(node)
+        self.hovered == Some(node) || self.is_selected(node)
     }
 }
 
@@ -38,7 +49,7 @@ const MIN_TEXT_PX: f32 = 4.0;
 pub const ARROW_LEN: f32 = 13.0;
 /// How far (at 100%) an edge that runs against the flow (a node dragged past its parent)
 /// continues along the flow before it turns round, and how far its detour keeps off the boxes.
-const HOOK_LEN: f32 = 14.0;
+const HOOK_LEN: f32 = gitgraph_core::route::TURN;
 
 pub fn paint_scene(
     painter: &Painter,
@@ -120,12 +131,14 @@ pub fn paint_scene(
                 StrokeKind::Middle,
             );
         };
-        if marks.selected == Some(i) {
+        if marks.is_selected(i) {
             outline((4.0 * zoom).max(2.0), palette.selection);
         } else if marks.is_hit(i) {
             outline((3.0 * zoom).max(2.0), palette.search_hit);
         } else if marks.hovered == Some(i) {
             outline((2.0 * zoom).max(1.0), palette.selection);
+        } else if marks.is_previewed(i) {
+            outline((2.0 * zoom).max(1.0), palette.selection.gamma_multiply(0.5));
         }
     }
 
@@ -201,9 +214,10 @@ pub fn edge_path(
     }
     let f = scene.layout.direction.flow();
     let flow = vec2(f.x, f.y);
+    let turned = scene.net.turns(e) && pts.len() >= 4;
     let path = match style {
-        EdgeStyle::Straight => straight_path(&pts, child, parent, flow, hook),
-        EdgeStyle::Curved => curved_path(&pts, child, parent, flow, hook),
+        EdgeStyle::Straight => straight_path(&pts, child, parent, flow, hook, turned),
+        EdgeStyle::Curved => curved_path(&pts, child, parent, flow, hook, turned),
     };
     (path.len() >= 2).then_some(path)
 }
@@ -315,12 +329,23 @@ impl Detour {
 }
 
 /// Straight segments from the child's port through the bend points to the parent's port. A
-/// segment against the flow takes a [`Detour`], leaving and arriving along the flow.
+/// segment against the flow takes a [`Detour`], leaving and arriving along the flow, unless the
+/// edge is `turned`: routed round its nodes already (see [`gitgraph_core::physics::Net::turns`]).
 ///
 /// Deliberately unlike TortoiseGit, which aims every edge at the box centres and clips it at
 /// the border, so that edges can meet a box on any side and direction is hard to see.
-fn straight_path(pts: &[Pos2], child: Rect, parent: Rect, flow: Vec2, hook: f32) -> Vec<Pos2> {
+fn straight_path(
+    pts: &[Pos2],
+    child: Rect,
+    parent: Rect,
+    flow: Vec2,
+    hook: f32,
+    turned: bool,
+) -> Vec<Pos2> {
     let knots = knots(pts, child, parent, flow);
+    if turned {
+        return knots;
+    }
     let mut path = vec![knots[0]];
     for k in 0..knots.len() - 1 {
         let (a, b) = (knots[k], knots[k + 1]);
@@ -337,13 +362,47 @@ fn straight_path(pts: &[Pos2], child: Rect, parent: Rect, flow: Vec2, hook: f32)
 /// A smooth path that leaves the child's port along the history direction, passes through
 /// every bend point with a tangent along that direction, and enters the parent's port the same
 /// way. A segment against the flow turns round along a [`Detour`].
-fn curved_path(pts: &[Pos2], child: Rect, parent: Rect, flow: Vec2, hook: f32) -> Vec<Pos2> {
-    let knots = knots(pts, child, parent, flow);
+///
+/// A `turned` edge's route starts and ends with its turns round the nodes (see
+/// [`gitgraph_core::physics::Net::turns`]). The curve makes those turns itself, and passes the
+/// bend points in between against the flow.
+fn curved_path(
+    pts: &[Pos2],
+    child: Rect,
+    parent: Rect,
+    flow: Vec2,
+    hook: f32,
+    turned: bool,
+) -> Vec<Pos2> {
+    let n = pts.len();
+    let mut knots = knots(pts, child, parent, flow);
+    if turned {
+        knots.remove(n - 2);
+        knots.remove(1);
+    }
+    let against = turned && knots.len() > 2;
+    let last = knots.len() - 2;
     let mut out = vec![knots[0]];
-    for k in 0..knots.len() - 1 {
+    for k in 0..=last {
         let (a, b) = (knots[k], knots[k + 1]);
         let ahead = (b - a).dot(flow);
-        if ahead < 0.0 {
+        if against {
+            // Which way along the flow the curve passes each end.
+            let ta = if k == 0 { 1.0 } else { -1.0 };
+            let tb = if k == last { 1.0 } else { -1.0 };
+            let reach = if ta == tb {
+                (ahead.abs() / 2.0).max(hook / 2.0)
+            } else {
+                (ahead.abs() / 2.0).max(hook)
+            };
+            cubic(
+                &mut out,
+                a,
+                a + flow * (ta * reach),
+                b - flow * (tb * reach),
+                b,
+            );
+        } else if ahead < 0.0 {
             // Down from `a`, back up along the detour, and down into `b` from above.
             let detour = Detour::new(&knots, k, child, parent, flow, hook);
             let turn = detour.beside(a.lerp(b, 0.5));

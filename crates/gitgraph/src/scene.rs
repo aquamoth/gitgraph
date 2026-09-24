@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 use gitgraph_core::layout::{self, Layout, LayoutEdge, LayoutInput, LayoutOptions, Point};
-use gitgraph_core::physics::Net;
+use gitgraph_core::physics::{DragModel, Net};
 use gitgraph_core::revgraph::{self, RevGraph};
 use gitgraph_core::{RefKind, Repo};
 
@@ -184,6 +184,22 @@ impl Scene {
         (0..self.node_count())
             .rev()
             .find(|&i| self.node_rect(i).contains(world))
+    }
+
+    /// The nodes that move along when `roots` are dragged in `model`: everything growing out
+    /// of them in Subtree mode, nothing otherwise.
+    pub fn carried_nodes(&self, roots: &[usize], model: DragModel) -> Vec<usize> {
+        match model {
+            DragModel::Subtree => self.graph.subtree(roots),
+            DragModel::Adapt | DragModel::Free => Vec::new(),
+        }
+    }
+
+    /// Nodes whose boxes touch `rect` (world coordinates).
+    pub fn nodes_in(&self, rect: Rect) -> Vec<usize> {
+        (0..self.node_count())
+            .filter(|&i| rect.intersects(self.node_rect(i)))
+            .collect()
     }
 
     /// Bounding box of the drawing in world coordinates (including dragged nodes).

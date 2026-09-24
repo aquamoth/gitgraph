@@ -167,6 +167,32 @@ impl RevGraph {
         self.represented_by.get(commit.ix()).copied().flatten()
     }
 
+    /// The nodes that grow out of `roots`: the roots and every node whose first-parent line
+    /// leads back to one of them. This is the subtree of the tree formed by each node's first
+    /// edge (its first-parent edge where it has one), so a branch that forks off a root is
+    /// included, while a merge that merely pulls a branch in is not: it belongs to the line it
+    /// was merged into. Sorted.
+    pub fn subtree(&self, roots: &[usize]) -> Vec<usize> {
+        let n = self.nodes.len();
+        let mut children: Vec<Vec<u32>> = vec![Vec::new(); n];
+        let mut previous = None;
+        for e in &self.edges {
+            // Edges come grouped by child, first-parent edge first.
+            if previous != Some(e.child) {
+                children[e.parent as usize].push(e.child);
+            }
+            previous = Some(e.child);
+        }
+        let mut inside = vec![false; n];
+        let mut stack: Vec<usize> = roots.iter().copied().filter(|&r| r < n).collect();
+        while let Some(node) = stack.pop() {
+            if !std::mem::replace(&mut inside[node], true) {
+                stack.extend(children[node].iter().map(|&c| c as usize));
+            }
+        }
+        (0..n).filter(|&i| inside[i]).collect()
+    }
+
     /// Up to `limit` of the commits collapsed into `edge`, newest first: the run of hidden
     /// commits from the child's matching parent down to the parent node.
     pub fn collapsed_commits(&self, repo: &Repo, edge: RevEdge, limit: usize) -> Vec<CommitIx> {
