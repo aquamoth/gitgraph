@@ -1,0 +1,27 @@
+# cargo-about configuration for THIRD-PARTY-NOTICES.html, which ships next to the release
+# binaries (see .github/workflows/ci.yml). Generate it locally with
+#   cargo about generate -c packaging/about.toml packaging/about.hbs -o THIRD-PARTY-NOTICES.html
+
+# Licenses the dependencies may use, all compatible with GPL-3.0. Where a crate offers a choice,
+# the first one listed here is taken.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "Unicode-3.0",
+    # Fonts embedded by egui.
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+]
+
+# Our own crates (publish = false) are covered by LICENSE and NOTICE.
+private = { ignore = true }
+ignore-dev-dependencies = true
+ignore-build-dependencies = true

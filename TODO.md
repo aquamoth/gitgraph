@@ -88,7 +88,11 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
    detached HEAD gets its own red "HEAD" row, which TortoiseGit doesn't have.
 10. **No git actions.** Per your brief, there's no checkout, log, diff or delete. The context
     menu only copies hashes, ref names or the subject. Should any actions be added?
-11. **License?** None is chosen yet (e.g. MIT OR Apache-2.0).
+11. **License:** GPL-3.0-only with attribution terms and commercial licenses on request
+    (`LICENSE`, `NOTICE`, `CONTRIBUTING.md`). Still to do by you:
+    - No commercial license agreement exists yet; have a lawyer draft the one you sell.
+    - The contributor grant in `CONTRIBUTING.md` is plain language, not a reviewed CLA.
+      Have it checked before accepting outside pull requests.
 12. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
     commits, 2,490 refs and 1,846 merges:
     - Loading takes 0.6 s.
@@ -111,6 +115,8 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 
 ## Done
 
+- [x] License: GPL-3.0-only plus section 7 attribution terms, an About dialog showing them,
+      and `THIRD-PARTY-NOTICES.html` (cargo-about) in the CI artifacts.
 - [x] Workspace scaffold, lints, release profile, docs (`docs/architecture.md`,
       `docs/building.md`).
 - [x] Research into how TortoiseGit's revision graph works (`docs/research/`).
