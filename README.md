@@ -4,8 +4,11 @@ A standalone, fast, native re-creation of TortoiseGit's **Revision Graph**: a co
 tree-like picture of how the branches and tags of a git repository relate, in a resizable window
 that runs on Linux and Windows (and should run on macOS).
 
-On top of the TortoiseGit look you can grab any node and drag it; the rest of the graph follows
-like a spider web being pulled.
+On top of the TortoiseGit look you can rearrange the graph by hand. Drag a node and the rest of
+the graph gives way a little: neighbours follow along their edges and nodes in the way move
+aside, like weak magnets. Other drag modes move only the selected nodes, or a whole subtree.
+Edges at moved nodes are routed afresh through the gaps between nodes, so they lose bends they
+no longer need and go around nodes that are now in the way.
 
 ![gitgraph showing a demo repository](docs/images/demo.png)
 
@@ -27,14 +30,18 @@ In the window:
 
 | Do | To |
 |---|---|
-| Drag a node | Move it. The graph follows like a web, and the node stays pinned (blue dot). |
+| Drag a node | Move it, with the rest of the selection it belongs to. It gets a blue dot. |
+| `1` / `2` / `3` | Drag mode *Adapt* (the graph gives way) / *Free* (nothing else moves) / *Subtree* (take along everything that grows out of it) |
+| Click, `Ctrl`+click, `Shift`+click a node | Select it / toggle it / add it to the selection |
+| `Shift`+drag the background | Select the nodes in a rectangle |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo a move |
 | Drag the background, wheel, Shift+wheel | Pan |
 | Ctrl+wheel, pinch, `+` `-` `0` | Zoom |
 | `F`, double-click the background | Fit the whole graph |
 | `Home` / `H` | Go to HEAD |
 | `Ctrl+F`, then `Enter` / `F3` | Find branches, tags, hashes, subjects or authors |
-| Right-click a node | Copy its hash, ref names or subject, or unpin it |
-| `R` | Return all dragged nodes to the layout |
+| Right-click a node | Copy its hash, ref names or subject; select its subtree; return it to the layout |
+| `R` | Return all nodes to the layout |
 | `F5` | Reload the repository |
 
 The toolbar and the *Graph*, *View* and *Drag* menus hold the options. TortoiseGit's
@@ -50,7 +57,7 @@ gitgraph adds:
 - edge bundling, row splitting and curved edges
 - first-parent-only view, and stash or other refs
 - light and dark themes
-- the drag physics
+- rearranging by hand: drag modes, multi-selection, undo
 
 Colours follow TortoiseGit:
 

@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use eframe::egui::{self, Rect, Vec2};
+use gitgraph_core::physics::NetParams;
 
 use crate::scene::{Scene, to_point};
 use crate::view::View;
@@ -14,10 +15,13 @@ pub struct Automation {
     pub screenshot: Option<PathBuf>,
     /// Start with the whole graph fitted instead of at HEAD.
     pub fit: bool,
-    /// Drag the node nearest the centre sideways before the screenshot.
+    /// Drag the node nearest the centre by this much before the screenshot (in the drag mode
+    /// of the settings).
     pub demo_drag: Option<Vec2>,
     /// Zoom to apply (around the canvas centre) after the initial view is set up.
     pub zoom: Option<f32>,
+    /// Drag this node (a ref name or hash prefix) instead of the one nearest the centre.
+    pub demo_node: Option<String>,
     frame: u32,
     requested: bool,
     frame_times: Vec<std::time::Instant>,
@@ -55,7 +59,14 @@ impl Automation {
         self.is_active().then_some(1.0 / 60.0)
     }
 
-    pub fn drive(&mut self, ctx: &egui::Context, scene: &mut Scene, view: &mut View, canvas: Rect) {
+    pub fn drive(
+        &mut self,
+        ctx: &egui::Context,
+        scene: &mut Scene,
+        view: &mut View,
+        canvas: Rect,
+        params: &NetParams,
+    ) {
         if !self.is_active() {
             return;
         }
@@ -72,14 +83,29 @@ impl Automation {
             let f = self.frame;
             if f == DRAG_START {
                 let centre = view.to_world(canvas, canvas.center());
-                let node = (0..scene.node_count()).min_by(|&a, &b| {
-                    scene
-                        .node_center(a)
-                        .distance_sq(centre)
-                        .total_cmp(&scene.node_center(b).distance_sq(centre))
+                let named = self.demo_node.as_deref().and_then(|name| {
+                    (0..scene.node_count()).find(|&i| {
+                        let node = &scene.graph.nodes[i];
+                        scene
+                            .repo
+                            .commit(node.commit)
+                            .oid
+                            .to_hex()
+                            .starts_with(name)
+                            || node.refs.iter().any(|&r| scene.repo.refs[r].name == name)
+                    })
+                });
+                let node = named.or_else(|| {
+                    (0..scene.node_count()).min_by(|&a, &b| {
+                        scene
+                            .node_center(a)
+                            .distance_sq(centre)
+                            .total_cmp(&scene.node_center(b).distance_sq(centre))
+                    })
                 });
                 if let Some(n) = node {
-                    scene.net.grab(n);
+                    let carried = scene.carried_nodes(&[n], params.model);
+                    scene.net.grab(n, &[n], &carried, params.model.adapts());
                     self.dragging = Some((n, scene.node_center(n)));
                 }
             } else if let Some((_, start)) = self.dragging {
@@ -87,7 +113,7 @@ impl Automation {
                     let t = (f - DRAG_START) as f32 / DRAG_FRAMES as f32;
                     scene.net.drag_to(to_point(start + delta * t));
                 } else if f == DRAG_START + DRAG_FRAMES + 1 {
-                    scene.net.release();
+                    scene.net.release(params);
                 }
             }
         }

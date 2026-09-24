@@ -8,11 +8,32 @@ use serde::{Deserialize, Serialize};
 use crate::theme::ThemeChoice;
 
 pub const STORAGE_KEY: &str = "gitgraph-settings";
-/// Storage key for remembered node positions: repository path -> commit hash -> offset.
-pub const MOVES_KEY: &str = "gitgraph-moved-nodes";
+/// Storage key for remembered node positions: repository path -> commit hash -> rest offset
+/// from the layout, and whether the node was moved by hand.
+pub const MOVES_KEY: &str = "gitgraph-rest-offsets";
+/// The format before nodes gave way to each other: only dropped (pinned) nodes and offsets.
+const OLD_MOVES_KEY: &str = "gitgraph-moved-nodes";
 
 pub type RememberedMoves =
-    std::collections::HashMap<String, std::collections::HashMap<String, (f32, f32)>>;
+    std::collections::HashMap<String, std::collections::HashMap<String, (f32, f32, bool)>>;
+
+/// Loads remembered node positions, converting the older format.
+pub fn load_moves(storage: &dyn eframe::Storage) -> RememberedMoves {
+    if let Some(moves) = eframe::get_value(storage, MOVES_KEY) {
+        return moves;
+    }
+    let old: std::collections::HashMap<String, std::collections::HashMap<String, (f32, f32)>> =
+        eframe::get_value(storage, OLD_MOVES_KEY).unwrap_or_default();
+    old.into_iter()
+        .map(|(repo, nodes)| {
+            let nodes = nodes
+                .into_iter()
+                .map(|(hex, (dx, dy))| (hex, (dx, dy, true)))
+                .collect();
+            (repo, nodes)
+        })
+        .collect()
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EdgeStyle {
@@ -118,7 +139,7 @@ pub struct Settings {
     pub show_hidden_counts: bool,
     /// Highlight the edges of the hovered and selected nodes.
     pub highlight_edges: bool,
-    /// Keep dragged nodes where they were dropped, per repository, across runs and relayouts.
+    /// Keep moved nodes where they are, per repository, across runs and relayouts.
     pub remember_moves: bool,
 }
 
