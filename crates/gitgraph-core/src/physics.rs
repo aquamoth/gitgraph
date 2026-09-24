@@ -4,7 +4,9 @@
 //! that remember their offset in the layout: along every edge, and between neighbours within a
 //! layer (those only resist being pushed together), so the drawing behaves like a woven net.
 //! Each particle is also weakly anchored to its layout position, which limits how far a pull
-//! spreads. A node dropped somewhere stays pinned there and the net settles around it.
+//! spreads. A node dropped somewhere stays pinned there and the net settles around it. However
+//! the net is pulled, edges keep running along the history direction, so children stay above
+//! their parents; only the nodes the user holds or has dropped can break that order.
 //!
 //! The state is kept as *displacements from the layout*, which stay small and therefore exact
 //! even where layout coordinates run into the millions. Each frame has two parts:
@@ -85,6 +87,17 @@ const SUBSTEPS: usize = 4;
 const FOLLOW_HZ: f32 = 3.0;
 /// Minimum gap kept between node boxes when avoiding overlap.
 const OVERLAP_MARGIN: f32 = 6.0;
+/// Minimum distance along the history direction between the boxes at the two ends of an edge
+/// segment, so that an edge always visibly leaves its child towards its parent.
+pub const FLOW_GAP: f32 = 16.0;
+/// Flags set by [`Net::keep_flow_order`]: the particle can't move on along the flow, or back
+/// against it, without moving a held particle.
+const STUCK_ON: u8 = 1;
+const STUCK_BACK: u8 = 2;
+/// Flags set by [`Net::separate_nodes`] for the next flow-order pass: the particle was pushed
+/// on along the flow, or back against it, to clear an overlap.
+const SEPARATED_ON: u8 = 1;
+const SEPARATED_BACK: u8 = 2;
 /// The simulation sleeps once no particle moves faster than this (layout units per second)
 /// and every particle is this close to its target.
 const SLEEP_SPEED: f32 = 1.0;
@@ -115,6 +128,8 @@ pub struct Net {
     /// Layer of every node, and whether layers run horizontally (newest on top or bottom).
     node_layer: Vec<u32>,
     vertical: bool,
+    /// Unit vector from newer to older commits.
+    flow: Point,
     /// Displacement a dropped node is pinned at.
     pinned: Vec<Option<Point>>,
     springs: Vec<Spring>,
@@ -128,6 +143,13 @@ pub struct Net {
     /// Particles being simulated; everything else is at rest.
     active: Vec<u32>,
     is_active: Vec<bool>,
+    /// [`STUCK_ON`] and [`STUCK_BACK`] flags from the latest flow-order pass that looked.
+    flow_stuck: Vec<u8>,
+    /// [`SEPARATED_ON`] and [`SEPARATED_BACK`] flags since the latest flow-order pass.
+    separated: Vec<u8>,
+    /// Counts changes to `active`, to know when `segments` is out of date.
+    active_changes: u64,
+    segments: FlowSegments,
     grid: Grid,
 }
 
@@ -218,6 +240,7 @@ impl Net {
             half,
             node_layer: layout.layers.clone(),
             vertical,
+            flow: layout.direction.flow(),
             pinned: vec![None; count],
             springs,
             adjacent,
@@ -226,6 +249,10 @@ impl Net {
             awake: false,
             active: Vec::new(),
             is_active: vec![false; count],
+            flow_stuck: vec![0; count],
+            separated: vec![0; count],
+            active_changes: 0,
+            segments: FlowSegments::default(),
             grid: Grid::default(),
         }
     }
@@ -333,6 +360,7 @@ impl Net {
         if !self.is_active[p] {
             self.is_active[p] = true;
             self.active.push(p as u32);
+            self.active_changes += 1;
         }
     }
 
@@ -363,8 +391,10 @@ impl Net {
             self.is_active[p] = false;
             self.vel[p] = Point::default();
             self.disp[p] = self.target[p];
+            self.flow_stuck[p] = 0;
         }
         self.active.clear();
+        self.active_changes += 1;
     }
 
     /// Where a particle is held (as a displacement), if it is dragged or pinned.
@@ -390,6 +420,13 @@ impl Net {
         };
 
         // 1. Relax the target shape. Particles that are not woken keep their displacement.
+        // With nothing held, the net is just returning to the (overlap-free, ordered) layout.
+        let holding = self.grabbed.is_some() || self.any_pinned();
+        let keep_order = holding && !rigid;
+        let mut segments = std::mem::take(&mut self.segments);
+        if keep_order && segments.built_at != Some(self.active_changes) {
+            segments = self.flow_segments();
+        }
         let mut target = std::mem::take(&mut self.target);
         for sweep in 0..SWEEPS {
             for &i in &self.active {
@@ -424,10 +461,20 @@ impl Net {
                 }
                 target[i] = scale(num, 1.0 / den);
             }
-            // With nothing held, the net is just returning to the (overlap-free) layout.
-            let holding = self.grabbed.is_some() || self.any_pinned();
-            if params.avoid_overlap && holding && sweep % 4 == 3 {
+            let separate = params.avoid_overlap && holding;
+            if separate && sweep % 4 == 3 {
                 self.separate_nodes(&mut target);
+            }
+            // Every other sweep is enough, as long as it includes the last one and those
+            // right before and after separating (which needs to know what is stuck).
+            if sweep % 2 == 1 {
+                let find_stuck = separate && sweep % 4 == 1;
+                let segments = if keep_order {
+                    &segments
+                } else {
+                    &FlowSegments::default()
+                };
+                self.keep_flow_order(segments, find_stuck, &mut target);
             }
         }
 
@@ -453,11 +500,172 @@ impl Net {
             max_distance = max_distance.max(len(sub(target[i], self.disp[i])));
         }
         self.target = target;
+        self.segments = segments;
         self.awake = max_speed > SLEEP_SPEED || max_distance > SLEEP_DISTANCE;
         if !self.awake && self.grabbed.is_none() {
             self.deactivate_all();
         }
         self.is_awake()
+    }
+
+    /// The edge segments at the woken particles that [`Net::keep_flow_order`] looks after.
+    fn flow_segments(&self) -> FlowSegments {
+        let mut forward = Vec::new();
+        for &i in &self.active {
+            for &si in &self.adjacent[i as usize] {
+                let s = &self.springs[si as usize];
+                // Each segment once: from its newer end, or its older end if the newer rests.
+                let from_here = s.a == i || (s.b == i && !self.is_active[s.a as usize]);
+                if from_here && s.along_edge && s.a != s.b && dot(s.offset, self.flow) > 0.0 {
+                    forward.push(si);
+                }
+            }
+        }
+        let sorted = |end: fn(&Spring) -> u32, sign: f32| {
+            let mut keyed: Vec<(f32, u32)> = forward
+                .iter()
+                .map(|&si| {
+                    let p = end(&self.springs[si as usize]) as usize;
+                    (sign * dot(self.origin[p], self.flow), si)
+                })
+                .collect();
+            keyed.sort_unstable_by(|x, y| x.0.total_cmp(&y.0));
+            keyed.into_iter().map(|(_, si)| si).collect()
+        };
+        FlowSegments {
+            forward: sorted(|s| s.a, 1.0),
+            backward: sorted(|s| s.b, -1.0),
+            built_at: Some(self.active_changes),
+        }
+    }
+
+    /// Keeps every edge segment pointing along the history direction, so children stay above
+    /// their parents: the older end of a segment stays at least [`FLOW_GAP`] beyond the newer
+    /// one (box borders, for nodes), or as far as in the layout if that is less. Held particles
+    /// never give way; a resting particle that is pushed is woken.
+    ///
+    /// One pass pushes older ends on and one pushes newer ends back, each in an order where
+    /// every push is final, so together they resolve whole chains. A particle that
+    /// [`Net::separate_nodes`] just pushed the other way is spared if possible, so that the
+    /// other end gives way instead; where an overlap and the order can't both be cleared, the
+    /// order wins. With `find_stuck`, [`Net::flow_stuck`] then records which particles are
+    /// wedged against a held one.
+    fn keep_flow_order(&mut self, segments: &FlowSegments, find_stuck: bool, target: &mut [Point]) {
+        let mut deferred = false;
+        for spare in [true, false] {
+            if !spare && !deferred {
+                break;
+            }
+            for &si in &segments.forward {
+                let s = self.springs[si as usize];
+                deferred |= self.push_segment(&s, s.b as usize, spare, target);
+            }
+            for &si in &segments.backward {
+                let s = self.springs[si as usize];
+                deferred |= self.push_segment(&s, s.a as usize, spare, target);
+            }
+        }
+        for &i in &self.active {
+            self.separated[i as usize] = 0;
+        }
+        if !find_stuck {
+            return;
+        }
+        // A particle can't move on along the flow if it is held, or if a taut segment ties it
+        // to an older particle that can't either; likewise backwards.
+        let held = |net: &Net, i: usize| {
+            if net.fixed_at(i).is_some() {
+                STUCK_ON | STUCK_BACK
+            } else {
+                0
+            }
+        };
+        for &i in &self.active {
+            self.flow_stuck[i as usize] = held(self, i as usize);
+        }
+        for &si in &segments.forward {
+            let s = self.springs[si as usize];
+            for p in [s.a, s.b] {
+                self.flow_stuck[p as usize] = held(self, p as usize);
+            }
+        }
+        let taut = |net: &Net, s: &Spring| net.slack(s, target).is_some_and(|x| x < 0.5);
+        for &si in &segments.backward {
+            let s = self.springs[si as usize];
+            if self.flow_stuck[s.b as usize] & STUCK_ON != 0 && taut(self, &s) {
+                self.flow_stuck[s.a as usize] |= STUCK_ON;
+            }
+        }
+        for &si in &segments.forward {
+            let s = self.springs[si as usize];
+            if self.flow_stuck[s.a as usize] & STUCK_BACK != 0 && taut(self, &s) {
+                self.flow_stuck[s.b as usize] |= STUCK_BACK;
+            }
+        }
+    }
+
+    /// How much farther along the flow than needed the older end of an edge segment is, or
+    /// `None` if the segment is not kept in order (see [`Net::keep_flow_order`]).
+    fn slack(&self, s: &Spring, target: &[Point]) -> Option<f32> {
+        let (a, b) = (s.a as usize, s.b as usize);
+        let flow = self.flow;
+        let layout_gap = dot(s.offset, flow);
+        if !s.along_edge || a == b || layout_gap <= 0.0 {
+            return None;
+        }
+        let across = Point::new(flow.x.abs(), flow.y.abs());
+        let needed = (dot(add(self.half[a], self.half[b]), across) + FLOW_GAP).min(layout_gap);
+        let have = dot(
+            sub(
+                add(self.origin[b], target[b]),
+                add(self.origin[a], target[a]),
+            ),
+            flow,
+        );
+        Some(have - needed)
+    }
+
+    /// Puts segment `s` back in order by moving its end `moved` (`s.b` on along the flow, or
+    /// `s.a` back), unless that end is held or, with `spare_separated`, was just pushed the
+    /// other way by [`Net::separate_nodes`]. Returns true if the latter left it out of order.
+    fn push_segment(
+        &mut self,
+        s: &Spring,
+        moved: usize,
+        spare_separated: bool,
+        target: &mut [Point],
+    ) -> bool {
+        if self.fixed_at(moved).is_some() {
+            return false;
+        }
+        let Some(slack) = self.slack(s, target).filter(|&x| x < 0.0) else {
+            return false;
+        };
+        let forward = moved == s.b as usize;
+        let against = if forward {
+            SEPARATED_BACK
+        } else {
+            SEPARATED_ON
+        };
+        if spare_separated && self.separated[moved] & against != 0 {
+            return true;
+        }
+        let push = scale(self.flow, if forward { -slack } else { slack });
+        target[moved] = add(target[moved], push);
+        self.activate(moved);
+        false
+    }
+
+    /// 1 if particle `i` may be pushed in direction `dir` to clear an overlap, else 0: held
+    /// particles stay put, and so do those [`Net::keep_flow_order`] wedged against them in
+    /// that direction (or the two would fight and the overlap would remain).
+    fn yields(&self, i: usize, dir: Point) -> f32 {
+        let along = dot(dir, self.flow);
+        let stuck = self.flow_stuck[i];
+        let blocked = self.fixed_at(i).is_some()
+            || (along > 0.0 && stuck & STUCK_ON != 0)
+            || (along < 0.0 && stuck & STUCK_BACK != 0);
+        if blocked { 0.0 } else { 1.0 }
     }
 
     /// Pushes overlapping node boxes apart along their axis of least overlap (in `target`
@@ -514,11 +722,6 @@ impl Net {
             }
             self.activate(a);
             self.activate(b);
-            let wa = if self.fixed_at(a).is_some() { 0.0 } else { 1.0 };
-            let wb = if self.fixed_at(b).is_some() { 0.0 } else { 1.0 };
-            if wa + wb == 0.0 {
-                continue;
-            }
             let push = if self.node_layer[a] == self.node_layer[b] {
                 // Same layer: push apart along the layer, in their layout order, so that
                 // neighbours never get pushed past each other.
@@ -540,10 +743,32 @@ impl Net {
             } else {
                 Point::new(0.0, if d.y < 0.0 { -oy } else { oy })
             };
-            target[a] = sub(target[a], scale(push, wa / (wa + wb)));
-            target[b] = add(target[b], scale(push, wb / (wa + wb)));
+            let (wa, wb) = (self.yields(a, scale(push, -1.0)), self.yields(b, push));
+            if wa + wb == 0.0 {
+                continue;
+            }
+            let (da, db) = (scale(push, -wa / (wa + wb)), scale(push, wb / (wa + wb)));
+            for (i, d) in [(a, da), (b, db)] {
+                target[i] = add(target[i], d);
+                let along = dot(d, self.flow);
+                if along > 0.0 {
+                    self.separated[i] |= SEPARATED_ON;
+                } else if along < 0.0 {
+                    self.separated[i] |= SEPARATED_BACK;
+                }
+            }
         }
     }
+}
+
+/// Edge segments (springs) for [`Net::keep_flow_order`]: sorted by where their newer end lies
+/// along the flow, and by where their older end lies, against the flow.
+#[derive(Clone, Debug, Default)]
+struct FlowSegments {
+    forward: Vec<u32>,
+    backward: Vec<u32>,
+    /// [`Net::active_changes`] when these were collected.
+    built_at: Option<u64>,
 }
 
 /// Uniform grid for finding overlapping node boxes.
@@ -673,6 +898,35 @@ mod tests {
                 "{model:?}: pull decays: {:?}",
                 (0..5).map(moved).collect::<Vec<_>>()
             );
+        }
+    }
+
+    #[test]
+    fn children_stay_above_their_parents() {
+        for model in [DragModel::Net, DragModel::Strings] {
+            let params = NetParams {
+                model,
+                ..NetParams::default()
+            };
+            // Drag the middle node far above the newest node, and far below the oldest.
+            for dy in [-400.0, 400.0] {
+                let (l, mut net) = chain_net();
+                net.grab(2);
+                net.drag_to(Point::new(l.nodes[2].x + 30.0, l.nodes[2].y + dy));
+                for _ in 0..30 {
+                    net.step(1.0 / 60.0, &params);
+                }
+                net.release();
+                settle(&mut net, &params);
+                for child in 0..4 {
+                    // Boxes are 20 high, so the centres must be 20 + FLOW_GAP apart.
+                    let gap = net.node_pos(child + 1).y - net.node_pos(child).y - 20.0;
+                    assert!(
+                        gap >= FLOW_GAP - 1.0,
+                        "{model:?}, dy {dy}: node {child} ends {gap} above its parent"
+                    );
+                }
+            }
         }
     }
 

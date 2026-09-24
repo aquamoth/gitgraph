@@ -51,12 +51,17 @@ crates/gitgraph        the binary (eframe/egui)
    edges, one-sided springs join neighbours in a layer, and weak anchors hold each particle to
    the layout.
    - **Shape:** each frame, the target shape is relaxed with Gauss-Seidel over displacements.
+     Between sweeps, edge segments are put back in history order (children above parents,
+     with a gap) by one pass along the flow and one against it, and overlapping boxes are
+     pushed apart. Only the nodes the user holds can break the order.
    - **Motion:** particles follow the target through damped springs.
    - Only the dragged node's neighbourhood (up to 8000 particles) is simulated, and the
      simulation sleeps when still.
 6. **Paint** (`render.rs`): edges then nodes, culled to the viewport; text is skipped below
-   4 px. Straight edges are clipped to box borders (TortoiseGit); curved edges leave and
-   enter along the history direction.
+   4 px. Edges leave a node from the side facing its parents and enter from the side facing
+   its children (bottom and top, newest on top), unlike TortoiseGit, which clips them to the
+   box border wherever they hit it. A segment that runs against the flow detours round the
+   side of the boxes, so a node dropped above its child shows as a loop.
 
 ## Testing
 
@@ -69,6 +74,7 @@ crates/gitgraph        the binary (eframe/egui)
   - network simplex is optimal on tiny graphs (checked by brute force)
   - every edge ends on a node
   - the net returns home after a reset
+  - after a drag, every child is still above its parents
 - `cargo test --release -p gitgraph-core --test properties_layout -- --ignored --nocapture`
   prints timings for large, awkward inputs.
 

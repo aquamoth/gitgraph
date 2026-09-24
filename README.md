@@ -18,7 +18,7 @@ yellow, the current branch red.)_
 gitgraph [PATH]                    # open the repository containing PATH (default: .)
 gitgraph --mode branches           # also show every fork point and merge
 gitgraph --mode all --no-remotes   # every commit, local branches and tags only
-gitgraph --look classic            # straight, unbundled edges exactly like TortoiseGit
+gitgraph --look classic            # straight, unbundled edges like TortoiseGit
 gitgraph --export graph.svg        # write an SVG without opening a window
 gitgraph --help                    # all options
 ```
@@ -27,7 +27,8 @@ In the window:
 
 | Do | To |
 |---|---|
-| Drag a node | Move it. The graph follows like a web, and the node stays pinned (blue dot). |
+| Drag a node | Move it. The graph follows like a web, children staying above their parents, and the node stays where you drop it. |
+| Hover / click an edge | List the commits collapsed into it / keep it highlighted while you look around |
 | Drag the background, wheel, Shift+wheel | Pan |
 | Ctrl+wheel, pinch, `+` `-` `0` | Zoom |
 | `F`, double-click the background | Fit the whole graph |
@@ -35,6 +36,7 @@ In the window:
 | `Ctrl+F`, then `Enter` / `F3` | Find branches, tags, hashes, subjects or authors |
 | Right-click a node | Copy its hash, ref names or subject, or unpin it |
 | `R` | Return all dragged nodes to the layout |
+| `Esc` | Clear the selection |
 | `F5` | Reload the repository |
 
 The toolbar and the *Graph*, *View* and *Drag* menus hold the options. TortoiseGit's

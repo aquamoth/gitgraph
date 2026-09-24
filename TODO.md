@@ -20,13 +20,19 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
    - **Strings**: springs along edges only, no wobble.
    - **Rigid**: only the dragged node moves.
 
-   The *reach* and *wobble* sliders tune the first two. A dropped node stays pinned (blue dot);
-   right-click → "Return node to layout", or `R` for all nodes. Which feels right?
+   The *reach* and *wobble* sliders tune the first two. A dropped node stays where it is
+   (there is no marker for that any more); right-click → "Return node to layout", or `R` for
+   all nodes. Which feels right?
    - **Remembering moves.** Drag → "Remember moved nodes" (off by default) keeps dropped nodes
      per repository across runs and relayouts. Should it be on by default?
    - **Same row.** Dragging a node through its neighbours in the same row pushes them ahead
      of it, like beads on a string. Lifting it out of the row lets it pass them. This keeps a
      reset from ever swapping nodes. OK?
+   - **Children above parents.** In the first two models, dragging a node up pushes its
+     children up ahead of it, and dragging it down pushes its parents down, with at least
+     16 px between boxes. Only nodes you hold or have dropped can end up past a parent. Their
+     edges then detour round the side, so the reversal shows. Rigid moves only the dragged
+     node, so there the order breaks at once. OK?
 3. **Fidelity quirks in "Labelled commits" (TortoiseGit's default mode).** TortoiseGit uses
    `git log --simplify-by-decoration` and inherits git's simplifications:
    - A `--no-ff` merge whose first parent is an ancestor of its second is folded away.
@@ -66,6 +72,11 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 
     Is 2.8 s and 880 MB for the all-commits view of a 100k repo acceptable, or worth more
     work? (Apps, at 15k commits, needs 0.2 s.)
+14. **Edge ends in Classic.** On your request, edges now always leave a node's bottom centre
+    (towards its parents) and enter the top centre (from its children), in both looks, and
+    arrowheads are 13 px instead of TortoiseGit's 8. TortoiseGit instead clips each edge where
+    it meets the box border, so edges can end on any side. Should Classic keep TortoiseGit's
+    clipping?
 
 ## Planned
 
@@ -75,6 +86,9 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 - [ ] Tooltip on edges showing the collapsed commits.
 - [ ] Less memory for all-commits views of huge repositories (compact adjacency).
 - [ ] Windows `.exe` icon resource; try on macOS.
+- [ ] Overlap avoidance can keep a net with a dropped node trembling by a fraction of a pixel,
+      so it never sleeps and keeps repainting. A property test finds this in about 0.5% of
+      random drags, both with and without the child-above-parent ordering.
 
 ## Done
 
@@ -116,3 +130,12 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 
   Its randomised tests are now permanent property tests.
 - [x] Demo repository script (`scripts/make-demo-repo.sh`) and a README screenshot.
+- [x] Direction made visible:
+  - edges leave the bottom of a node and enter the top, and a node dropped past its parent
+    gets a detour
+  - bigger arrowheads
+  - the net keeps children above parents while it follows a drag (costs about 0.6 ms more per
+    frame with 8000 particles awake)
+  - click an edge to keep it highlighted, also in the overview; the status bar says where it
+    leads
+  - the blue "pinned" dot is gone
