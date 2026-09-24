@@ -784,6 +784,8 @@ impl GitGraphApp {
                     self.show_legend = true;
                     ui.close();
                 }
+                ui.separator();
+                ui.label(RichText::new(format!("gitgraph {}", crate::VERSION)).weak());
             });
         });
     }

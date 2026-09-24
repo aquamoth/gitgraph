@@ -100,6 +100,20 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 
     Is 2.8 s and 880 MB for the all-commits view of a 100k repo acceptable, or worth more
     work? (Apps, at 15k commits, needs 0.2 s.)
+14. **Releases** (`docs/releasing.md`). Decisions you may want to overrule:
+    - **Version in the UI:** besides `--version`, the Help menu ends with a greyed
+      `gitgraph 0.3.0 (a1b2c3d)` line. Windows release builds have no console until the
+      console change (PR #2) lands, so the menu is the only place users there can read it.
+    - **Assets:** one archive per target (`.tar.gz`, `.zip` on Windows) holding the binary and
+      the README, plus `SHA256SUMS`. macOS gets both Apple silicon and Intel builds, the Intel
+      one cross-compiled and therefore not test-run in the workflow.
+    - **Linux baseline:** built on `ubuntu-latest`, so the binary needs that runner's glibc
+      (2.39) or newer. Building on an older runner would reach older distributions.
+    - **Commit detection** is a `build.rs` running `git`, with no dependencies. Without git it
+      falls back to `0.3.0-dev`. Only the release workflow can produce a plain version: a
+      local build of a tagged commit still reads `-dev`.
+    - **Not done: a weekly `schedule:` CI run on `main`** to keep the Actions cache from expiring
+      after 7 days unused. Worth adding if `main` can go quiet for a week.
 
 ## Planned
 
@@ -160,3 +174,7 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
   - multi-selection with rectangle selection, and "Select subtree"
   - undo and redo; remembered positions per repository
   - edges re-route through the gaps between rows as nodes are moved
+- [x] Tag-driven releases (question 14): pushing `vX.Y.Z` builds Linux, Windows and macOS
+      archives and publishes a GitHub Release. The build fails unless the tag matches
+      `Cargo.toml`. `--version` and the Help menu read `0.3.0 (a1b2c3d)` for releases and
+      `0.3.0-dev+a1b2c3d` for every other build.

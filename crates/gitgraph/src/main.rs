@@ -12,6 +12,9 @@ mod render;
 mod scene;
 mod settings;
 mod theme;
+// Runs in build.rs; compiled here only for its tests.
+#[cfg(test)]
+mod version;
 mod view;
 
 use std::path::PathBuf;
@@ -26,9 +29,12 @@ use gitgraph_core::revgraph::Simplification;
 use crate::automation::Automation;
 use crate::theme::ThemeChoice;
 
+/// This build's version: `0.3.0 (a1b2c3d)` for a release, `0.3.0-dev+a1b2c3d` otherwise.
+const VERSION: &str = env!("GITGRAPH_VERSION");
+
 /// Show the revision graph of a git repository: how its branches and tags relate.
 #[derive(Debug, Parser)]
-#[command(version, about)]
+#[command(version = VERSION, about)]
 struct Cli {
     /// Repository to show (any directory inside it).
     #[arg(default_value = ".")]
