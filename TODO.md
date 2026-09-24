@@ -51,11 +51,7 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 10. **No git actions.** Per your brief, there's no checkout, log, diff or delete. The context
     menu only copies hashes, ref names or the subject. Should any actions be added?
 11. **License?** None is chosen yet (e.g. MIT OR Apache-2.0).
-12. **Windows builds.** The code type-checks for Windows. Producing an `.exe` from this
-    machine needs a linker: `sudo apt install mingw-w64`, `cargo-zigbuild`, or `cargo-xwin`
-    (which means accepting Microsoft's CRT license). Alternatively, build natively on Windows,
-    or set up CI once the repo has a remote. Which do you prefer?
-13. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
+12. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
     commits, 2,490 refs and 1,846 merges:
     - Loading takes 0.6 s.
     - "Labelled commits" (3.6k nodes) lays out in 0.15 s, "Branchings and merges" (7.3k nodes)
@@ -97,6 +93,11 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
       spring and anchor energy over displacements; only the dragged node's neighbourhood is
       simulated. Pinning and reset.
 - [x] Windows type-check (`cargo check --target x86_64-pc-windows-gnu`).
+- [x] Native Windows build (MSVC) with a statically linked C runtime; tests, clippy and
+      screenshots pass on Windows.
+- [x] Terminal output from the Windows release build: attach to the parent console, release it
+      before an interactive window opens. `unsafe_code` is `deny` (was `forbid`) so this one
+      call can opt out.
 - [x] Crossing reduction with transposition and 12 restarts, as OGDF does: 16–30% fewer
       crossings.
 - [x] Layout on a background thread, with the view kept anchored on the same commit.

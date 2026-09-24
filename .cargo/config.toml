@@ -1,0 +1,4 @@
+# Link the C runtime statically on Windows (MSVC), so gitgraph.exe runs on machines without the
+# Visual C++ Redistributable (no VCRUNTIME140.dll dependency).
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
