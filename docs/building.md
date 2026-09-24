@@ -12,15 +12,45 @@ Wayland or X11, libxkbcommon, and OpenGL (EGL/GLX), all of which are present on 
 
 ## Windows
 
-Native build on Windows (MSVC toolchain from rustup):
+Native build on Windows with the MSVC toolchain. Prerequisites:
+
+1. The MSVC C++ build tools and a Windows SDK. Either install *Build Tools for Visual Studio*
+   with the "Desktop development with C++" workload, or add the components to an existing
+   Visual Studio (from an elevated prompt):
+
+   ```powershell
+   & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe" modify `
+     --installPath "C:\Program Files\Microsoft Visual Studio\18\Professional" `
+     --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+     --add Microsoft.VisualStudio.Component.Windows11SDK.26100 --passive --norestart
+   ```
+
+2. Rust from [rustup](https://rustup.rs) with the default `x86_64-pc-windows-msvc` host.
+   `rust-toolchain.toml` pulls in rustfmt and clippy.
+
+Then:
 
 ```powershell
 cargo build --release
 .\target\release\gitgraph.exe C:\path\to\repo
 ```
 
+The result is a single self-contained `target\release\gitgraph.exe`. `.cargo/config.toml` links
+the C runtime statically, so it runs without the Visual C++ Redistributable. Only `git` must be
+on `PATH`.
+
 Release builds use the GUI subsystem (no console window), and git is started with
-`CREATE_NO_WINDOW` so no console flashes.
+`CREATE_NO_WINDOW` so no console flashes. To still show `--help`, errors and `--export` output
+in a terminal, the program attaches to its parent's console at startup
+(`crates/gitgraph/src/console.rs`, the workspace's only `unsafe`). It releases the console
+before opening an interactive window, so closing the terminal doesn't close the window.
+Shells don't wait for GUI programs, so the output may appear after the next prompt; press
+Enter to get a fresh prompt. Debug builds are ordinary console programs.
+
+Don't use the `x86_64-pc-windows-gnu` host toolchain as a shortcut around installing the MSVC
+tools. Its bundled `dlltool` needs an assembler (`as.exe`) that the toolchain doesn't ship.
+`windows-link` always uses `raw-dylib`, so the build fails with
+`error calling dlltool` / `CreateProcess` unless a full MinGW-w64 is on `PATH`.
 
 Cross-checking from Linux works without extra tools:
 
