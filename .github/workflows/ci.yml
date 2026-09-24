@@ -1,8 +1,17 @@
 name: CI
 
+# PRs are tested on their merge result, and main's ruleset requires them to be up to date with main
+# before merging. Pushes to main still run: that seeds the Rust cache PR runs restore from (a PR run
+# can read caches saved on main, never another PR's), so new PRs don't start from a cold build.
 on:
   push:
+    branches: [main]
   pull_request:
+
+# A new push to a PR cancels the older run of that PR that is still in progress.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
