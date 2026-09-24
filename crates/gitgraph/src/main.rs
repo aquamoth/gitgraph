@@ -1,10 +1,11 @@
 //! gitgraph: a standalone TortoiseGit-style revision graph viewer.
 
-// Release builds on Windows are GUI-subsystem apps (no console window).
+// Release builds on Windows are GUI-subsystem apps (no console window); see `console`.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
 mod automation;
+mod console;
 mod export;
 mod icon;
 mod render;
@@ -162,6 +163,7 @@ fn parse_vec(s: &str) -> Result<(f32, f32), String> {
 }
 
 fn main() -> ExitCode {
+    console::attach_parent();
     let cli = Cli::parse();
     let repo = match gitgraph_core::git::load_repo(&cli.path) {
         Ok(repo) => repo,
@@ -181,6 +183,12 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         };
+    }
+
+    // A screenshot run exits by itself and reports where it saved; an interactive window must
+    // not be tied to the terminal it was started from.
+    if cli.screenshot.is_none() {
+        console::detach();
     }
 
     let (w, h) = cli.window_size.unwrap_or((1400.0, 900.0));
