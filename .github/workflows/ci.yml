@@ -1,8 +1,8 @@
 name: CI
 
-# PRs are tested on their merge result. Pushes to main run too: they catch main breaking when two
-# PRs pass separately but conflict once merged, and they seed the Rust cache that PR runs restore
-# from (PR runs cannot read each other's caches, only main's).
+# PRs are tested on their merge result, and main's ruleset requires them to be up to date with main
+# before merging. Pushes to main still run: that seeds the Rust cache PR runs restore from (a PR run
+# can read caches saved on main, never another PR's), so new PRs don't start from a cold build.
 on:
   push:
     branches: [main]
