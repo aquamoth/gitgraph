@@ -1,5 +1,5 @@
 # cargo-about configuration for THIRD-PARTY-NOTICES.html, which ships next to the release
-# binaries (see .github/workflows/ci.yml). Generate it locally with
+# binaries (see .github/workflows/ci.yml and release.yml). Generate it locally with
 #   cargo about generate -c packaging/about.toml packaging/about.hbs -o THIRD-PARTY-NOTICES.html
 
 # Licenses the dependencies may use, all compatible with GPL-3.0. Where a crate offers a choice,

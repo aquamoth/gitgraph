@@ -83,7 +83,8 @@ cargo clippy --workspace --all-targets
 ```
 
 On Linux the window uses Wayland or X11 through `winit`; no extra development packages are
-needed to build. See [docs/building.md](docs/building.md) for Windows and macOS notes.
+needed to build. See [docs/building.md](docs/building.md) for Windows and macOS notes, and
+[docs/releasing.md](docs/releasing.md) for how releases and version numbers work.
 
 ## Layout of the repository
 

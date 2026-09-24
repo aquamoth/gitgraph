@@ -791,6 +791,7 @@ impl GitGraphApp {
                     self.show_about = true;
                     ui.close();
                 }
+                ui.label(RichText::new(format!("gitgraph {}", crate::VERSION)).weak());
             });
         });
     }
@@ -1670,7 +1671,7 @@ impl GitGraphApp {
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
-                ui.heading(concat!("gitgraph ", env!("CARGO_PKG_VERSION")));
+                ui.heading(format!("gitgraph {}", crate::VERSION));
                 ui.add_space(4.0);
                 egui::ScrollArea::vertical()
                     .max_height(max_height)
