@@ -97,6 +97,11 @@ struct Cli {
     #[arg(long, value_name = "DX,DY", value_parser = parse_vec, hide = true)]
     demo_drag: Option<(f32, f32)>,
 
+    /// The node to drag with --demo-drag: a ref name or hash prefix (default: the one nearest
+    /// the centre).
+    #[arg(long, value_name = "NAME", hide = true)]
+    demo_node: Option<String>,
+
     /// What moves when dragging (for --demo-drag).
     #[arg(long, value_enum, hide = true)]
     drag_mode: Option<DragModeArg>,
@@ -188,12 +193,13 @@ fn main() -> ExitCode {
             .with_icon(std::sync::Arc::new(icon::icon())),
         ..Default::default()
     };
-    let automation = Automation::new(
+    let mut automation = Automation::new(
         cli.screenshot.clone(),
         cli.fit,
         cli.demo_drag.map(|(x, y)| egui::vec2(x, y)),
         cli.zoom,
     );
+    automation.demo_node = cli.demo_node.clone();
     let path = cli.path.clone();
     let overrides = move |s: &mut settings::Settings| apply_cli(&cli, s);
     let result = eframe::run_native(

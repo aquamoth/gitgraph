@@ -30,6 +30,10 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
      a rectangle; right-click → *Select subtree*. Dragging a selected node moves the whole
      selection.
    - Undo and redo with Ctrl+Z / Ctrl+Shift+Z; `R` (reset) can be undone too.
+   - Edges re-route as you drag (your notes of 2026-09-24, second round): an edge at a node
+     you moved takes a new route through the gaps between the rows it crosses. It bends only
+     where it must, so it loses bends when its nodes come together and goes around the nodes
+     in between when they move apart. Edges a moved node comes to cover make way too.
 
    Decisions you may want to overrule:
    - **Subtree follows first parents.** A commit's subtree is everything whose first-parent
@@ -41,7 +45,16 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
      keeps its new place.
    - **Blue dots** mark only the nodes you grabbed. Nodes that gave way, or that a subtree
      carried along, get none (but can still be returned to the layout).
-   - **Magnets act between nodes.** Edges make way only for nodes in their own row.
+   - **Magnets act between nodes.** During a drag, edges make way only for nodes in their own
+     row; once the node is dropped on them they re-route around it.
+   - **Which edges re-route.** Edges at nodes you moved re-route as soon as they change.
+     Edges that only gave way keep the layout's route (bent along) unless pulled more than
+     40 px out of shape. Re-routing those too made whole fans lose their bundled trunks when a
+     shared parent moved a pixel.
+   - **Re-routed edges switch at once,** without animating from the old route to the new.
+     They also leave the trunks that bundled edges share.
+   - **Reversed edges.** An edge whose parent is dragged above its child now leaves the
+     child's top and enters the parent's bottom, instead of looping round both.
    - **Free and Subtree allow overlaps,** and Adapt leaves them alone: it only keeps nodes
      from coming closer than they rest.
    - **Defaults:** pull 0.3 (a neighbour moves about half as far as the dragged node, the next
@@ -145,3 +158,4 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
   - drag modes Adapt (springs and weak magnets), Free and Subtree
   - multi-selection with rectangle selection, and "Select subtree"
   - undo and redo; remembered positions per repository
+  - edges re-route through the gaps between rows as nodes are moved

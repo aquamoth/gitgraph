@@ -15,6 +15,7 @@ crates/gitgraph-core   GUI-free; everything testable lives here
     position.rs        coordinates within layers (L1 via isotonic regression)
     mod.rs             pipeline, variable layer spacing, direction/rotation
   physics.rs           rearranging by hand: springs, weak magnets, drag modes, undo
+  route.rs             routing edges afresh around rearranged nodes
 
 crates/gitgraph        the binary (eframe/egui)
   main.rs              CLI (clap), window setup
@@ -62,6 +63,11 @@ crates/gitgraph        the binary (eframe/egui)
      undoable.
    - Only the dragged nodes' neighbourhood (up to 8000 particles) is simulated, and the
      simulation sleeps when still.
+   - **Routing** (`route.rs`): edges whose layout route no longer fits are routed afresh.
+     That means edges at nodes moved by hand, edges pulled far out of shape, and edges a moved
+     node covers. The router groups the boxes in between into rows, picks a gap in each so
+     that sideways moves happen where there is room, and pulls the route taut through them
+     (funnel algorithm). Anything still in the way is walked around corner by corner.
 6. **Paint** (`render.rs`): edges then nodes, culled to the viewport; text is skipped below
    4 px. Straight edges are clipped to box borders (TortoiseGit); curved edges leave and
    enter along the history direction.

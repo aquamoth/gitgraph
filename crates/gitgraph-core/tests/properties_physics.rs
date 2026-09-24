@@ -1,6 +1,6 @@
-//! Property test: random graphs, random drags in every model, undo and redo. Positions stay
-//! finite, the net settles and then stays put, and a reset returns every node to its layout
-//! position. (Adapted from a review's fuzzing.)
+//! Property test: random graphs, random drags in every model, undo and redo. Positions and
+//! routes stay finite, the net settles and then stays put, and a reset returns every node to
+//! its layout position and every edge to its layout route. (Adapted from a review's fuzzing.)
 
 #![allow(clippy::needless_range_loop)] // index loops read better in these tests
 
@@ -162,6 +162,10 @@ fn physics_random_drags() {
         assert!(
             residual < 1.0,
             "iter {iter} {params:?}: {residual} px off after reset"
+        );
+        assert!(
+            (0..inp.edges.len()).all(|e| !net.is_rerouted(e)),
+            "iter {iter}: edges keep routes of their own after a reset"
         );
     }
 }

@@ -20,6 +20,8 @@ pub struct Automation {
     pub demo_drag: Option<Vec2>,
     /// Zoom to apply (around the canvas centre) after the initial view is set up.
     pub zoom: Option<f32>,
+    /// Drag this node (a ref name or hash prefix) instead of the one nearest the centre.
+    pub demo_node: Option<String>,
     frame: u32,
     requested: bool,
     frame_times: Vec<std::time::Instant>,
@@ -81,11 +83,25 @@ impl Automation {
             let f = self.frame;
             if f == DRAG_START {
                 let centre = view.to_world(canvas, canvas.center());
-                let node = (0..scene.node_count()).min_by(|&a, &b| {
-                    scene
-                        .node_center(a)
-                        .distance_sq(centre)
-                        .total_cmp(&scene.node_center(b).distance_sq(centre))
+                let named = self.demo_node.as_deref().and_then(|name| {
+                    (0..scene.node_count()).find(|&i| {
+                        let node = &scene.graph.nodes[i];
+                        scene
+                            .repo
+                            .commit(node.commit)
+                            .oid
+                            .to_hex()
+                            .starts_with(name)
+                            || node.refs.iter().any(|&r| scene.repo.refs[r].name == name)
+                    })
+                });
+                let node = named.or_else(|| {
+                    (0..scene.node_count()).min_by(|&a, &b| {
+                        scene
+                            .node_center(a)
+                            .distance_sq(centre)
+                            .total_cmp(&scene.node_center(b).distance_sq(centre))
+                    })
                 });
                 if let Some(n) = node {
                     let carried = scene.carried_nodes(&[n], params.model);

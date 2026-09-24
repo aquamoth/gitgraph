@@ -7,6 +7,8 @@ that runs on Linux and Windows (and should run on macOS).
 On top of the TortoiseGit look you can rearrange the graph by hand. Drag a node and the rest of
 the graph gives way a little: neighbours follow along their edges and nodes in the way move
 aside, like weak magnets. Other drag modes move only the selected nodes, or a whole subtree.
+Edges at moved nodes are routed afresh through the gaps between nodes, so they lose bends they
+no longer need and go around nodes that are now in the way.
 
 ![gitgraph showing a demo repository](docs/images/demo.png)
 

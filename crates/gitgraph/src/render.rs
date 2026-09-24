@@ -4,7 +4,6 @@ use eframe::egui::{
     Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, Vec2,
     vec2,
 };
-use gitgraph_core::layout::Direction;
 
 use crate::scene::{CORNER_RADIUS, FONT_SIZE, MARGIN_X, RowKind, Scene, to_pos};
 use crate::settings::{Arrows, EdgeStyle, Settings};
@@ -211,7 +210,12 @@ pub fn edge_path(
             path[n - 1] = clip_to_rect(parent, pts[n - 2]);
             path
         }
-        EdgeStyle::Curved => curved_path(&pts, child, parent, scene.layout.direction),
+        EdgeStyle::Curved => {
+            // An edge turned around by dragging leaves and enters from the other sides.
+            let f = scene.layout.direction.flow();
+            let sign = if scene.net.is_reversed(e) { -1.0 } else { 1.0 };
+            curved_path(&pts, child, parent, vec2(f.x, f.y) * sign)
+        }
     };
     (path.len() >= 2).then_some(path)
 }
@@ -287,9 +291,9 @@ fn clip_to_rect(rect: Rect, toward: Pos2) -> Pos2 {
 
 /// A smooth path that leaves the child along the history direction, passes through every bend
 /// point with a tangent along that direction, and enters the parent the same way.
-fn curved_path(pts: &[Pos2], child: Rect, parent: Rect, direction: Direction) -> Vec<Pos2> {
-    let f = direction.flow();
-    let flow = vec2(f.x, f.y);
+/// A smooth curve through `pts` that leaves the child and enters the parent along `flow`, and
+/// passes every bend point in that direction too.
+fn curved_path(pts: &[Pos2], child: Rect, parent: Rect, flow: Vec2) -> Vec<Pos2> {
     let n = pts.len();
     let side = |r: Rect, sign: f32| {
         r.center() + flow * (sign * (flow.x.abs() * r.width() + flow.y.abs() * r.height()) / 2.0)
