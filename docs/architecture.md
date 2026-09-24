@@ -18,7 +18,9 @@ crates/gitgraph-core   GUI-free; everything testable lives here
   route.rs             routing edges afresh around rearranged nodes
 
 crates/gitgraph        the binary (eframe/egui)
+  build.rs             asks git for the commit and sets the version string
   main.rs              CLI (clap), window setup
+  version.rs           release/dev version strings (runs in build.rs; see docs/releasing.md)
   app.rs               menus, toolbar, canvas interaction, search, status bar
   scene.rs             node contents and sizes + layout + physics net, hit testing
   render.rs            painting nodes, edges, arrows, overview
