@@ -2,14 +2,15 @@
 //!
 //! `build.rs` includes this file and runs [`describe`] at build time; the app only reads the
 //! result (`GITGRAPH_VERSION`). The app compiles this module just for its tests, so it must not
-//! use anything outside `std`.
+//! use anything outside `std`. It isn't in `gitgraph-core` because the build script would then
+//! have to compile all of core as a build dependency.
 
 /// What `git` says about the checkout being built.
 #[derive(Debug)]
 pub struct GitState {
     /// Abbreviated hash of `HEAD`.
     pub commit: String,
-    /// Tracked files differ from `HEAD`.
+    /// The sources differ from `HEAD` (uncommitted changes).
     pub dirty: bool,
     /// Tags pointing at `HEAD`.
     pub tags: Vec<String>,

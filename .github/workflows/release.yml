@@ -26,7 +26,8 @@ jobs:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
           - { os: macos-latest, target: aarch64-apple-darwin }
-          # Cross-compiled on the Apple silicon runner, so its tests and version check can't run.
+          # Cross-compiled on the Apple silicon runner, so the binary can't run there: no tests
+          # and no --version check. build.rs still checks the tag.
           - { os: macos-latest, target: x86_64-apple-darwin, cross: true }
     runs-on: ${{ matrix.os }}
     env:

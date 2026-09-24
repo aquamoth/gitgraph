@@ -13,36 +13,46 @@ use version::GitState;
 
 const RELEASE_TAG: &str = "GITGRAPH_RELEASE_TAG";
 
+/// What goes into the binary, relative to the workspace root. Only changes here make a build
+/// dirty, and they rerun this script so the flag stays current.
+const SOURCES: [&str; 5] = [
+    "crates",
+    "Cargo.toml",
+    "Cargo.lock",
+    ".cargo",
+    "rust-toolchain.toml",
+];
+
 fn main() {
-    let dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let root = manifest_dir.join("../..");
     let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap();
     println!("cargo:rerun-if-env-changed={RELEASE_TAG}");
     let release_tag = std::env::var(RELEASE_TAG).ok().filter(|t| !t.is_empty());
 
-    let git = git_state(&dir);
+    let git = git_state(&root);
     if git.is_some() {
-        watch_git(&dir);
+        watch(&root);
     }
-    match version::describe(&pkg_version, release_tag.as_deref(), git.as_ref()) {
-        Ok(v) => println!("cargo:rustc-env=GITGRAPH_VERSION={v}"),
-        Err(e) => panic!("{e}"),
-    }
+    let version = version::describe(&pkg_version, release_tag.as_deref(), git.as_ref())
+        .unwrap_or_else(|e| panic!("{e}"));
+    println!("cargo:rustc-env=GITGRAPH_VERSION={version}");
 }
 
 /// `None` if this isn't a git checkout (e.g. a source archive) or git isn't installed.
 fn git_state(dir: &Path) -> Option<GitState> {
     let commit = git(dir, &["rev-parse", "--short=7", "HEAD"])?;
-    // No optional locks: a plain `git status` may rewrite the index, which would look like a
-    // change to the files watched below.
-    let status = git(
-        dir,
-        &[
-            "--no-optional-locks",
-            "status",
-            "--porcelain",
-            "--untracked-files=no",
-        ],
-    )?;
+    // No optional locks: a plain `git status` may refresh the index, and building shouldn't
+    // write to the repository.
+    let mut status = vec![
+        "--no-optional-locks",
+        "status",
+        "--porcelain",
+        "--untracked-files=no",
+        "--",
+    ];
+    status.extend(SOURCES);
+    let status = git(dir, &status)?;
     let tags = git(dir, &["tag", "--points-at", "HEAD"])?;
     Some(GitState {
         commit,
@@ -53,7 +63,7 @@ fn git_state(dir: &Path) -> Option<GitState> {
 
 /// Reruns this script when the commit or the sources change, so the hash and dirty flag stay
 /// current without rerunning on every build.
-fn watch_git(dir: &Path) {
+fn watch(dir: &Path) {
     let mut paths = Vec::new();
     // HEAD's reflog changes on every commit, checkout and reset, including in worktrees.
     for name in ["HEAD", "logs/HEAD", "packed-refs"] {
@@ -64,13 +74,9 @@ fn watch_git(dir: &Path) {
     {
         paths.extend(git(dir, &["rev-parse", "--git-path", &branch]));
     }
-    let mut paths: Vec<PathBuf> = paths.into_iter().map(|p| dir.join(p)).collect();
-    // Edits anywhere in the workspace's crates, or to its manifest and lock file (dirty flag).
-    let crates = dir.join("..");
-    let root = crates.join("..");
-    paths.extend([crates, root.join("Cargo.toml"), root.join("Cargo.lock")]);
+    paths.extend(SOURCES.map(String::from));
     // Cargo reruns every build for a path that doesn't exist, so skip those.
-    for p in paths.iter().filter(|p| p.exists()) {
+    for p in paths.iter().map(|p| dir.join(p)).filter(|p| p.exists()) {
         println!("cargo:rerun-if-changed={}", p.display());
     }
 }
