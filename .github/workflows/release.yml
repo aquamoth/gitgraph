@@ -1,8 +1,8 @@
 name: Release
 
 # Pushing a tag vX.Y.Z publishes a GitHub Release with binaries for Linux, Windows and macOS.
-# Bump `version` in the root Cargo.toml (through a PR) before tagging: GITGRAPH_RELEASE_TAG makes
-# crates/gitgraph/build.rs fail the build unless the tag matches it and points at the commit
+# Bump `version` in the root Cargo.toml (through a PR) before tagging: PARTERRE_RELEASE_TAG makes
+# crates/parterre/build.rs fail the build unless the tag matches it and points at the commit
 # being built. See docs/releasing.md.
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
           - { os: macos-latest, target: x86_64-apple-darwin, cross: true }
     runs-on: ${{ matrix.os }}
     env:
-      GITGRAPH_RELEASE_TAG: ${{ github.ref_name }}
+      PARTERRE_RELEASE_TAG: ${{ github.ref_name }}
     # No rust-cache: caches saved by a tag run are never restored by later runs, and a release
     # should come from a clean build anyway.
     steps:
@@ -48,8 +48,8 @@ jobs:
         if: ${{ !matrix.cross }}
         shell: bash
         run: |
-          expected="gitgraph ${GITHUB_REF_NAME#v} ($(git rev-parse --short=7 HEAD))"
-          actual=$(target/${{ matrix.target }}/release/gitgraph --version)
+          expected="parterre ${GITHUB_REF_NAME#v} ($(git rev-parse --short=7 HEAD))"
+          actual=$(target/${{ matrix.target }}/release/parterre --version)
           echo "$actual"
           if [ "$actual" != "$expected" ]; then
             echo "::error::--version printed '$actual', expected '$expected'"
@@ -63,16 +63,16 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          name="gitgraph-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
+          name="parterre-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
           mkdir -p "$name" dist
           cp README.md LICENSE NOTICE "$name/"
           cargo about generate --locked -c packaging/about.toml packaging/about.hbs \
             -o "$name/THIRD-PARTY-NOTICES.html"
           if [ "$RUNNER_OS" = Windows ]; then
-            cp "target/${{ matrix.target }}/release/gitgraph.exe" "$name/"
+            cp "target/${{ matrix.target }}/release/parterre.exe" "$name/"
             7z a "dist/$name.zip" "$name"
           else
-            cp "target/${{ matrix.target }}/release/gitgraph" "$name/"
+            cp "target/${{ matrix.target }}/release/parterre" "$name/"
             tar czf "dist/$name.tar.gz" "$name"
           fi
       - uses: actions/upload-artifact@v4
@@ -105,6 +105,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
-            --title "gitgraph ${GITHUB_REF_NAME#v}" \
+            --title "parterre ${GITHUB_REF_NAME#v}" \
             --generate-notes \
             $prerelease

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/gitgraph-core", "crates/gitgraph"]
+members = ["crates/parterre-core", "crates/parterre"]
 
 [workspace.package]
 version = "0.2.0"
@@ -11,7 +11,7 @@ license = "GPL-3.0-only"
 publish = false
 
 [workspace.dependencies]
-gitgraph-core = { path = "crates/gitgraph-core" }
+parterre-core = { path = "crates/parterre-core" }
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -27,7 +27,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile = "3"
 
 [workspace.lints.rust]
-# "deny", not "forbid", so the one Windows console call in crates/gitgraph/src/console.rs can
+# "deny", not "forbid", so the one Windows console call in crates/parterre/src/console.rs can
 # opt out locally.
 unsafe_code = "deny"
 missing_debug_implementations = "warn"
@@ -47,5 +47,5 @@ strip = "symbols"
 
 # The layout is heavy numeric code; optimise it even in dev and test builds (debug assertions
 # and overflow checks stay on) so the property tests and the debug app stay fast.
-[profile.dev.package.gitgraph-core]
+[profile.dev.package.parterre-core]
 opt-level = 2

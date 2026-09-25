@@ -4,10 +4,10 @@
 
 #![allow(clippy::needless_range_loop)] // index loops read better in these tests
 
-use gitgraph_core::layout::{
+use parterre_core::layout::{
     self, Direction, LayoutEdge, LayoutInput, LayoutOptions, Point, Ranking,
 };
-use gitgraph_core::physics::{DragModel, Net, NetParams};
+use parterre_core::physics::{DragModel, Net, NetParams};
 
 struct Rng(u64);
 impl Rng {

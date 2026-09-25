@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use eframe::egui::{self, Rect, Vec2};
-use gitgraph_core::physics::NetParams;
+use parterre_core::physics::NetParams;
 
 use crate::scene::{Scene, to_point};
 use crate::view::View;

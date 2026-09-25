@@ -1,4 +1,4 @@
-//! Core of gitgraph: load a repository, reduce it to a TortoiseGit-style revision graph,
+//! Core of parterre: load a repository, reduce it to a TortoiseGit-style revision graph,
 //! and lay that graph out. Nothing in this crate depends on a GUI toolkit.
 
 pub mod git;

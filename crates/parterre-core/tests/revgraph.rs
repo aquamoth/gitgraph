@@ -1,8 +1,8 @@
 mod common;
 
 use common::TestRepo;
-use gitgraph_core::revgraph::{self, GraphOptions, RevGraph, Simplification};
-use gitgraph_core::{Head, RefKind, Repo};
+use parterre_core::revgraph::{self, GraphOptions, RevGraph, Simplification};
+use parterre_core::{Head, RefKind, Repo};
 
 /// Subjects of the graph's nodes, sorted, for order-independent comparison.
 fn node_subjects(repo: &Repo, g: &RevGraph) -> Vec<String> {
@@ -424,7 +424,7 @@ fn reads_full_commit_messages() {
     let repo = r.load();
     let c = repo.head_commit().unwrap();
     assert_eq!(repo.commit(c).subject, "Subject line");
-    let msg = gitgraph_core::git::Git::new(r.path())
+    let msg = parterre_core::git::Git::new(r.path())
         .message(&repo.commit(c).oid)
         .unwrap();
     assert_eq!(msg, "Subject line\n\nBody paragraph\nsecond line");
@@ -435,7 +435,7 @@ fn lists_commits_collapsed_into_an_edge() {
     let r = feature_merge();
     let repo = r.load();
     let g = revgraph::build(&repo, &with_mode(Simplification::BranchesAndMerges));
-    let subject = |c: gitgraph_core::CommitIx| repo.commit(c).subject.clone();
+    let subject = |c: parterre_core::CommitIx| repo.commit(c).subject.clone();
     // E -> B collapses D.
     let e_to_b = g
         .edges
@@ -516,7 +516,7 @@ fn empty_repository_loads_without_commits() {
 fn loads_from_inside_the_git_directory() {
     let mut r = TestRepo::new();
     r.commit("A");
-    let repo = gitgraph_core::git::load_repo(&r.path().join(".git")).expect("load from .git");
+    let repo = parterre_core::git::load_repo(&r.path().join(".git")).expect("load from .git");
     assert_eq!(repo.commits.len(), 1);
 }
 

@@ -1,17 +1,17 @@
 //! Loads a repository and reports graph sizes and timings for every simplification mode.
 //!
-//! Usage: `cargo run --release -p gitgraph-core --example stats -- <repo> [--dump-nodes <mode>]`
+//! Usage: `cargo run --release -p parterre-core --example stats -- <repo> [--dump-nodes <mode>]`
 
 use std::time::Instant;
 
-use gitgraph_core::layout::{self, LayoutEdge, LayoutInput, LayoutOptions, Point, Ranking};
-use gitgraph_core::revgraph::{self, GraphOptions, Simplification};
+use parterre_core::layout::{self, LayoutEdge, LayoutInput, LayoutOptions, Point, Ranking};
+use parterre_core::revgraph::{self, GraphOptions, Simplification};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let path = args.get(1).map(String::as_str).unwrap_or(".");
     let t = Instant::now();
-    let repo = gitgraph_core::git::load_repo(path.as_ref()).expect("load");
+    let repo = parterre_core::git::load_repo(path.as_ref()).expect("load");
     eprintln!(
         "loaded {} commits, {} refs in {:?}",
         repo.commits.len(),

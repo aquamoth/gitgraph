@@ -1,9 +1,9 @@
 # Architecture
 
-gitgraph is a Cargo workspace with two crates:
+parterre is a Cargo workspace with two crates:
 
 ```
-crates/gitgraph-core   GUI-free; everything testable lives here
+crates/parterre-core   GUI-free; everything testable lives here
   git.rs               run `git log` / `git for-each-ref`, parse into a Repo
   repo.rs              Repo snapshot: commits (with parent indices), refs, HEAD
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
@@ -18,7 +18,7 @@ crates/gitgraph-core   GUI-free; everything testable lives here
   physics.rs           rearranging by hand: springs, weak magnets, drag modes, undo
   route.rs             routing edges afresh around rearranged nodes
 
-crates/gitgraph        the binary (eframe/egui)
+crates/parterre        the binary (eframe/egui)
   build.rs             asks git for the commit and sets the version string
   main.rs              CLI (clap), window setup
   version.rs           release/dev version strings (runs in build.rs; see docs/releasing.md)
@@ -47,7 +47,7 @@ crates/gitgraph        the binary (eframe/egui)
      The node sets are identical on the 15k-commit Apps repository and on 400 random
      repositories, and the edges match on 300 of them.
      - One deliberate exception: git hides an empty-tree root even when it carries a label;
-       gitgraph shows it.
+       parterre shows it.
    - *Branchings and merges* reproduces TortoiseGit's chain collapse.
 3. **Measure** (`scene.rs`): node boxes use TortoiseGit's geometry: one row per ref, or an
    8-digit hash; 20 px side margins and 5 px top and bottom margins; monospace 12 px.
@@ -80,7 +80,7 @@ crates/gitgraph        the binary (eframe/egui)
 
 ## Testing
 
-- Unit tests next to the code, plus integration tests (`crates/gitgraph-core/tests/`) that
+- Unit tests next to the code, plus integration tests (`crates/parterre-core/tests/`) that
   build throwaway repositories with the git CLI.
 - Property tests (`properties_*.rs`) run random DAGs, repositories and drags against the
   invariants:
@@ -89,7 +89,7 @@ crates/gitgraph        the binary (eframe/egui)
   - network simplex is optimal on tiny graphs (checked by brute force)
   - every edge ends on a node
   - the net comes to rest and stays there; it returns home after a reset
-- `cargo test --release -p gitgraph-core --test properties_layout -- --ignored --nocapture`
+- `cargo test --release -p parterre-core --test properties_layout -- --ignored --nocapture`
   prints timings for large, awkward inputs.
 
 ## Why these choices
@@ -97,7 +97,7 @@ crates/gitgraph        the binary (eframe/egui)
 - **Rust + egui/eframe**: native speed, one codebase for Linux, Windows and macOS, and an
   immediate-mode canvas that makes custom drawing and dragging simple. No system development
   packages are needed to build on Linux (winit/glutin load Wayland/X11/GL at runtime).
-- **git CLI instead of a git library**: always available where gitgraph is useful, honours
+- **git CLI instead of a git library**: always available where parterre is useful, honours
   every repo configuration, fast enough (see above), and keeps the build free of C
   dependencies.
 - **Own layout instead of a graph-layout crate**: git-specific needs (first-parent weighting,

@@ -2,7 +2,7 @@
 
 ## Open questions (HITL)
 
-_Decisions I made on my own that you may want to overrule. Try them with `gitgraph` on
+_Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
 1. **Default look: "Modern" or "Classic"?** The toolbar has a Look selector.
@@ -71,7 +71,7 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
    - A merge that brings in a history whose root has an *empty tree* (svn imports,
      `--allow-empty` first commits) is folded away.
 
-   gitgraph copies this exactly; its node set for Apps is identical to git's (266 nodes).
+   parterre copies this exactly; its node set for Apps is identical to git's (266 nodes).
    "Branchings and merges" and "All commits" show the real topology. Keep the fidelity?
 4. **Initial view.** As in TortoiseGit, the window opens at 100% with HEAD near the top. On
    big graphs that shows only a small area. Would fit-to-window, or a fixed zoom such as 60%,
@@ -101,7 +101,7 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
     work? (Apps, at 15k commits, needs 0.2 s.)
 12. **Releases** (`docs/releasing.md`). Decisions you may want to overrule:
     - **Version in the UI:** besides `--version`, the Help menu ends with a greyed
-      `gitgraph 0.3.0 (a1b2c3d)` line, for users who start gitgraph from a file manager or
+      `parterre 0.3.0 (a1b2c3d)` line, for users who start parterre from a file manager or
       Start menu and never see a terminal.
     - **Assets:** one archive per target (`.tar.gz`, `.zip` on Windows) holding the binary,
       the README, `LICENSE`, `NOTICE` and `THIRD-PARTY-NOTICES.html`, plus `SHA256SUMS`. macOS

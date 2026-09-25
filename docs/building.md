@@ -4,7 +4,7 @@
 
 ```sh
 cargo build --release
-./target/release/gitgraph ~/some/repo
+./target/release/parterre ~/some/repo
 ```
 
 Only a Rust toolchain is required. At runtime the window needs the usual desktop libraries:
@@ -32,17 +32,17 @@ Then:
 
 ```powershell
 cargo build --release
-.\target\release\gitgraph.exe C:\path\to\repo
+.\target\release\parterre.exe C:\path\to\repo
 ```
 
-The result is a single self-contained `target\release\gitgraph.exe`. `.cargo/config.toml` links
+The result is a single self-contained `target\release\parterre.exe`. `.cargo/config.toml` links
 the C runtime statically, so it runs without the Visual C++ Redistributable. Only `git` must be
 on `PATH`.
 
 Release builds use the GUI subsystem (no console window), and git is started with
 `CREATE_NO_WINDOW` so no console flashes. To still show `--help`, errors and `--export` output
 in a terminal, the program attaches to its parent's console at startup
-(`crates/gitgraph/src/console.rs`, the workspace's only `unsafe`). It releases the console
+(`crates/parterre/src/console.rs`, the workspace's only `unsafe`). It releases the console
 before opening an interactive window, so closing the terminal doesn't close the window.
 Shells don't wait for GUI programs, so the output may appear after the next prompt; press
 Enter to get a fresh prompt. Debug builds are ordinary console programs.

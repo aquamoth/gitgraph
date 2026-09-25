@@ -1,7 +1,7 @@
 //! Loading a [`Repo`] snapshot by running the `git` command-line tool.
 //!
 //! We shell out to `git` rather than linking a git library: it is always present where
-//! gitgraph is useful, honours every repository configuration (worktrees, alternates,
+//! parterre is useful, honours every repository configuration (worktrees, alternates,
 //! packed refs, sha256, ...), and `git log` streams tens of thousands of commits in
 //! milliseconds.
 
@@ -65,7 +65,7 @@ impl Git {
             .stderr(Stdio::piped());
         #[cfg(windows)]
         {
-            // gitgraph is a GUI-subsystem app on Windows; without this every git invocation
+            // parterre is a GUI-subsystem app on Windows; without this every git invocation
             // would flash a console window.
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;

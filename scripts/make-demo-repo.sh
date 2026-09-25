@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Creates a small but realistic demo repository (releases, features, hotfixes, a remote) for
-# screenshots and manual testing: scripts/make-demo-repo.sh /tmp/gitgraph-demo
+# screenshots and manual testing: scripts/make-demo-repo.sh /tmp/parterre-demo
 set -euo pipefail
-dir=${1:-/tmp/gitgraph-demo}
+dir=${1:-/tmp/parterre-demo}
 rm -rf "$dir" "$dir-origin.git"
 git init -q -b main "$dir"
 cd "$dir"

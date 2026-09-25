@@ -1,4 +1,4 @@
-//! gitgraph: a standalone TortoiseGit-style revision graph viewer.
+//! parterre: a standalone TortoiseGit-style revision graph viewer.
 
 // Release builds on Windows are GUI-subsystem apps (no console window); see `console`.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -22,15 +22,15 @@ use std::process::ExitCode;
 
 use clap::{Parser, ValueEnum};
 use eframe::egui;
-use gitgraph_core::layout::Direction;
-use gitgraph_core::physics::DragModel;
-use gitgraph_core::revgraph::Simplification;
+use parterre_core::layout::Direction;
+use parterre_core::physics::DragModel;
+use parterre_core::revgraph::Simplification;
 
 use crate::automation::Automation;
 use crate::theme::ThemeChoice;
 
 /// This build's version: `0.3.0 (a1b2c3d)` for a release, `0.3.0-dev+a1b2c3d` otherwise.
-const VERSION: &str = env!("GITGRAPH_VERSION");
+const VERSION: &str = env!("PARTERRE_VERSION");
 
 /// Show the revision graph of a git repository: how its branches and tags relate.
 #[derive(Debug, Parser)]
@@ -181,10 +181,10 @@ fn parse_vec(s: &str) -> Result<(f32, f32), String> {
 fn main() -> ExitCode {
     console::attach_parent();
     let cli = Cli::parse();
-    let repo = match gitgraph_core::git::load_repo(&cli.path) {
+    let repo = match parterre_core::git::load_repo(&cli.path) {
         Ok(repo) => repo,
         Err(e) => {
-            eprintln!("gitgraph: {e}");
+            eprintln!("parterre: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -195,7 +195,7 @@ fn main() -> ExitCode {
         return match export_headless(&std::sync::Arc::new(repo), &settings, &path) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
-                eprintln!("gitgraph: could not write {}: {e}", path.display());
+                eprintln!("parterre: could not write {}: {e}", path.display());
                 ExitCode::FAILURE
             }
         };
@@ -210,8 +210,8 @@ fn main() -> ExitCode {
     let (w, h) = cli.window_size.unwrap_or((1400.0, 900.0));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(format!("{} – gitgraph", repo.display_name()))
-            .with_app_id("gitgraph")
+            .with_title(format!("{} – parterre", repo.display_name()))
+            .with_app_id(settings::APP_ID)
             .with_inner_size([w, h])
             .with_min_inner_size([400.0, 300.0])
             .with_icon(std::sync::Arc::new(icon::icon())),
@@ -226,11 +226,12 @@ fn main() -> ExitCode {
     automation.demo_node = cli.demo_node.clone();
     let path = cli.path.clone();
     let overrides = move |s: &mut settings::Settings| apply_cli(&cli, s);
+    settings::adopt_old_storage();
     let result = eframe::run_native(
-        "gitgraph",
+        settings::APP_ID,
         options,
         Box::new(move |cc| {
-            Ok(Box::new(app::GitGraphApp::new(
+            Ok(Box::new(app::ParterreApp::new(
                 cc, path, repo, overrides, automation,
             )))
         }),
@@ -238,7 +239,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("gitgraph: {e}");
+            eprintln!("parterre: {e}");
             ExitCode::FAILURE
         }
     }
@@ -308,7 +309,7 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
 
 /// Lays the graph out without a window and writes it as SVG.
 fn export_headless(
-    repo: &std::sync::Arc<gitgraph_core::Repo>,
+    repo: &std::sync::Arc<parterre_core::Repo>,
     settings: &settings::Settings,
     path: &std::path::Path,
 ) -> std::io::Result<()> {

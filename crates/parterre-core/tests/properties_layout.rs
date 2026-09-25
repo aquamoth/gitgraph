@@ -2,8 +2,8 @@
 
 #![allow(clippy::needless_range_loop)] // index loops read better in these tests
 
-use gitgraph_core::layout::rank::{limit_width, rank};
-use gitgraph_core::layout::{
+use parterre_core::layout::rank::{limit_width, rank};
+use parterre_core::layout::{
     self, Direction, LayoutEdge, LayoutInput, LayoutOptions, Point, Ranking,
 };
 use std::collections::HashMap;
@@ -471,7 +471,7 @@ fn cycle_does_not_hang() {
 }
 
 /// Timings on large and awkward inputs; slow, so run on demand:
-/// `cargo test --release -p gitgraph-core --test properties_layout -- --ignored --nocapture`
+/// `cargo test --release -p parterre-core --test properties_layout -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn perf_many_components_and_big_random() {

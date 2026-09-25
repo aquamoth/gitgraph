@@ -8,13 +8,13 @@ in the root `Cargo.toml`, and both crates inherit it.
 
    ```sh
    git switch main && git pull
-   git tag -a v0.3.0 -m "gitgraph 0.3.0"
+   git tag -a v0.3.0 -m "parterre 0.3.0"
    git push origin v0.3.0
    ```
 
 3. `.github/workflows/release.yml` tests and builds on Linux, Windows and macOS (Apple silicon
    and Intel), then publishes a GitHub Release. The release has one archive per target
-   (`gitgraph-0.3.0-<target>.tar.gz`, or `.zip` for Windows) and a `SHA256SUMS` file. Each
+   (`parterre-0.3.0-<target>.tar.gz`, or `.zip` for Windows) and a `SHA256SUMS` file. Each
    archive holds the binary, the README, `LICENSE`, `NOTICE` and `THIRD-PARTY-NOTICES.html`.
    A tag with a pre-release part, such as `v0.3.0-rc.1`, publishes a pre-release.
 
@@ -24,16 +24,16 @@ being built, or the sources have local changes. In that case delete the tag
 
 ## Version strings
 
-`gitgraph --version` and the Help menu show which build is running:
+`parterre --version` and the Help menu show which build is running:
 
 | Build | Version |
 |---|---|
-| Release workflow | `gitgraph 0.3.0 (a1b2c3d)` |
-| Anything else from a git checkout | `gitgraph 0.3.0-dev+a1b2c3d` |
-| … with uncommitted changes to the sources (`crates/`, Cargo files) | `gitgraph 0.3.0-dev+a1b2c3d.dirty` |
-| Without git (e.g. from a source archive) | `gitgraph 0.3.0-dev` |
+| Release workflow | `parterre 0.3.0 (a1b2c3d)` |
+| Anything else from a git checkout | `parterre 0.3.0-dev+a1b2c3d` |
+| … with uncommitted changes to the sources (`crates/`, Cargo files) | `parterre 0.3.0-dev+a1b2c3d.dirty` |
+| Without git (e.g. from a source archive) | `parterre 0.3.0-dev` |
 
 Dev builds carry a `dev` pre-release and the commit as semver build metadata. A local build of
 a tagged commit is a dev build too, so only the release workflow's binaries show a plain
-version. The workflow gets them by setting `GITGRAPH_RELEASE_TAG` to the tag. The logic is in
-`crates/gitgraph/src/version.rs`, which `crates/gitgraph/build.rs` runs.
+version. The workflow gets them by setting `PARTERRE_RELEASE_TAG` to the tag. The logic is in
+`crates/parterre/src/version.rs`, which `crates/parterre/build.rs` runs.

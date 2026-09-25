@@ -6,12 +6,12 @@ use eframe::egui::{
     self, Color32, FontId, Key, Modifiers, PointerButton, Pos2, Rect, RichText, Sense, Ui, Vec2,
     vec2,
 };
-use gitgraph_core::layout::{Direction, LayoutOptions, Ranking};
-use gitgraph_core::physics::DragModel;
-use gitgraph_core::revgraph::{GraphOptions, Simplification};
+use parterre_core::layout::{Direction, LayoutOptions, Ranking};
+use parterre_core::physics::DragModel;
+use parterre_core::revgraph::{GraphOptions, Simplification};
 use std::sync::Arc;
 
-use gitgraph_core::{CommitIx, Oid, Repo};
+use parterre_core::{CommitIx, Oid, Repo};
 
 use crate::automation::Automation;
 use crate::render::{self, Marks};
@@ -118,9 +118,9 @@ fn dragged_with(selection: &Selection, anchor: usize) -> Vec<usize> {
 #[derive(Debug, Default)]
 struct Messages {
     /// `None` while loading.
-    cache: std::collections::HashMap<gitgraph_core::Oid, Option<String>>,
-    rx: Option<std::sync::mpsc::Receiver<(gitgraph_core::Oid, String)>>,
-    tx: Option<std::sync::mpsc::Sender<gitgraph_core::Oid>>,
+    cache: std::collections::HashMap<parterre_core::Oid, Option<String>>,
+    rx: Option<std::sync::mpsc::Receiver<(parterre_core::Oid, String)>>,
+    tx: Option<std::sync::mpsc::Sender<parterre_core::Oid>>,
 }
 
 impl Messages {
@@ -128,7 +128,7 @@ impl Messages {
     fn get(
         &mut self,
         repo_path: &std::path::Path,
-        oid: gitgraph_core::Oid,
+        oid: parterre_core::Oid,
         ctx: &egui::Context,
     ) -> Option<&str> {
         while let Some(Ok((oid, msg))) = self.rx.as_ref().map(|rx| rx.try_recv()) {
@@ -137,9 +137,9 @@ impl Messages {
         if let std::collections::hash_map::Entry::Vacant(slot) = self.cache.entry(oid) {
             slot.insert(None);
             let tx = self.tx.get_or_insert_with(|| {
-                let (req_tx, req_rx) = std::sync::mpsc::channel::<gitgraph_core::Oid>();
+                let (req_tx, req_rx) = std::sync::mpsc::channel::<parterre_core::Oid>();
                 let (res_tx, res_rx) = std::sync::mpsc::channel();
-                let git = gitgraph_core::git::Git::new(repo_path);
+                let git = parterre_core::git::Git::new(repo_path);
                 let ctx = ctx.clone();
                 std::thread::spawn(move || {
                     for oid in req_rx {
@@ -176,7 +176,7 @@ struct Search {
     request_focus: bool,
 }
 
-pub struct GitGraphApp {
+pub struct ParterreApp {
     repo_path: PathBuf,
     /// The most recently loaded snapshot, used for new layouts. The scene on screen keeps its
     /// own snapshot until a new layout replaces it.
@@ -215,22 +215,22 @@ pub struct GitGraphApp {
     automation: Automation,
 }
 
-impl std::fmt::Debug for GitGraphApp {
+impl std::fmt::Debug for ParterreApp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GitGraphApp")
+        f.debug_struct("ParterreApp")
             .field("repo_path", &self.repo_path)
             .finish_non_exhaustive()
     }
 }
 
-impl GitGraphApp {
+impl ParterreApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         repo_path: PathBuf,
         repo: Repo,
         overrides: impl FnOnce(&mut Settings),
         automation: Automation,
-    ) -> GitGraphApp {
+    ) -> ParterreApp {
         let persist = !automation.is_active();
         let mut settings: Settings = cc
             .storage
@@ -244,7 +244,7 @@ impl GitGraphApp {
             .map(load_moves)
             .unwrap_or_default();
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
-        GitGraphApp {
+        ParterreApp {
             repo_path,
             repo: Arc::new(repo),
             settings,
@@ -369,7 +369,7 @@ impl GitGraphApp {
                     .and_then(|c| scene.graph.node_of(c))?;
                 Some((
                     node as usize,
-                    gitgraph_core::layout::Point::new(dx, dy),
+                    parterre_core::layout::Point::new(dx, dy),
                     by_hand,
                 ))
             })
@@ -454,7 +454,7 @@ impl GitGraphApp {
     }
 
     fn reload(&mut self) {
-        match gitgraph_core::git::load_repo(&self.repo_path) {
+        match parterre_core::git::load_repo(&self.repo_path) {
             Ok(repo) => {
                 // The scene on screen keeps its own snapshot until the new layout replaces it;
                 // the selection is carried over by commit id.
@@ -541,7 +541,7 @@ impl GitGraphApp {
 
     /// Changes the arrangement of the nodes (reset, undo, …) and remembers the result. Not
     /// while nodes are being dragged.
-    fn rearrange(&mut self, change: impl FnOnce(&mut gitgraph_core::physics::Net)) {
+    fn rearrange(&mut self, change: impl FnOnce(&mut parterre_core::physics::Net)) {
         if matches!(self.drag, Some(Drag::Node { .. })) {
             return;
         }
@@ -695,7 +695,7 @@ impl GitGraphApp {
                 if ui.button("Export as SVG…").clicked() {
                     let default = std::env::current_dir()
                         .unwrap_or_default()
-                        .join(format!("{}-gitgraph.svg", self.repo.display_name()));
+                        .join(format!("{}-parterre.svg", self.repo.display_name()));
                     self.export_path = Some(default.display().to_string());
                     ui.close();
                 }
@@ -801,11 +801,11 @@ impl GitGraphApp {
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("About gitgraph").clicked() {
+                if ui.button("About parterre").clicked() {
                     self.show_about = true;
                     ui.close();
                 }
-                ui.label(RichText::new(format!("gitgraph {}", crate::VERSION)).weak());
+                ui.label(RichText::new(format!("parterre {}", crate::VERSION)).weak());
             });
         });
     }
@@ -1759,18 +1759,18 @@ impl GitGraphApp {
     }
 
     /// The "Appropriate Legal Notices" of GPL-3.0 section 5(d). NOTICE requires works based on
-    /// gitgraph to keep showing them.
+    /// parterre to keep showing them.
     fn about_window(&mut self, ctx: &egui::Context) {
         const NOTICE: &str = include_str!("../../../NOTICE");
         const LICENSE: &str = include_str!("../../../LICENSE");
         // Room for the title bar and the heading; the texts scroll within the rest.
         let max_height = ctx.content_rect().height() - 140.0;
-        egui::Window::new("About gitgraph")
+        egui::Window::new("About parterre")
             .open(&mut self.show_about)
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
-                ui.heading(format!("gitgraph {}", crate::VERSION));
+                ui.heading(format!("parterre {}", crate::VERSION));
                 ui.add_space(4.0);
                 egui::ScrollArea::vertical()
                     .max_height(max_height)
@@ -1808,7 +1808,7 @@ enum MenuAction {
     Center(usize),
 }
 
-impl eframe::App for GitGraphApp {
+impl eframe::App for ParterreApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         ctx.set_theme(match self.settings.theme {

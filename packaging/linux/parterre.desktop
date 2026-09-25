@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=gitgraph
+Name=parterre
 Comment=Revision graph of a git repository (TortoiseGit style)
-Exec=gitgraph %f
+Exec=parterre %f
 Terminal=false
 Categories=Development;RevisionControl;
-StartupWMClass=gitgraph
+StartupWMClass=parterre

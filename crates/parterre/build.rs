@@ -1,6 +1,6 @@
-//! Sets `GITGRAPH_VERSION`, the version string `--version` and Help show (see `src/version.rs`).
+//! Sets `PARTERRE_VERSION`, the version string `--version` and Help show (see `src/version.rs`).
 //!
-//! The release workflow sets `GITGRAPH_RELEASE_TAG` to the pushed tag; the build then fails
+//! The release workflow sets `PARTERRE_RELEASE_TAG` to the pushed tag; the build then fails
 //! unless that tag matches `Cargo.toml` and the commit being built.
 
 #[path = "src/version.rs"]
@@ -11,7 +11,7 @@ use std::process::Command;
 
 use version::GitState;
 
-const RELEASE_TAG: &str = "GITGRAPH_RELEASE_TAG";
+const RELEASE_TAG: &str = "PARTERRE_RELEASE_TAG";
 
 /// What goes into the binary, relative to the workspace root. Only changes here make a build
 /// dirty, and they rerun this script so the flag stays current.
@@ -36,7 +36,7 @@ fn main() {
     }
     let version = version::describe(&pkg_version, release_tag.as_deref(), git.as_ref())
         .unwrap_or_else(|e| panic!("{e}"));
-    println!("cargo:rustc-env=GITGRAPH_VERSION={version}");
+    println!("cargo:rustc-env=PARTERRE_VERSION={version}");
 }
 
 /// `None` if this isn't a git checkout (e.g. a source archive) or git isn't installed.
