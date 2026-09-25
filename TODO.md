@@ -88,12 +88,7 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
    detached HEAD gets its own red "HEAD" row, which TortoiseGit doesn't have.
 10. **No git actions.** Per your brief, there's no checkout, log, diff or delete. The context
     menu only copies hashes, ref names or the subject. Should any actions be added?
-11. **License:** GPL-3.0-only with attribution terms and commercial licenses on request
-    (`LICENSE`, `NOTICE`, `CONTRIBUTING.md`). Still to do by you:
-    - No commercial license agreement exists yet; have a lawyer draft the one you sell.
-    - The contributor grant in `CONTRIBUTING.md` is plain language, not a reviewed CLA.
-      Have it checked before accepting outside pull requests.
-12. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
+11. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
     commits, 2,490 refs and 1,846 merges:
     - Loading takes 0.6 s.
     - "Labelled commits" (3.6k nodes) lays out in 0.15 s, "Branchings and merges" (7.3k nodes)
@@ -104,7 +99,7 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 
     Is 2.8 s and 880 MB for the all-commits view of a 100k repo acceptable, or worth more
     work? (Apps, at 15k commits, needs 0.2 s.)
-13. **Releases** (`docs/releasing.md`). Decisions you may want to overrule:
+12. **Releases** (`docs/releasing.md`). Decisions you may want to overrule:
     - **Version in the UI:** besides `--version`, the Help menu ends with a greyed
       `gitgraph 0.3.0 (a1b2c3d)` line, for users who start gitgraph from a file manager or
       Start menu and never see a terminal.
@@ -181,7 +176,7 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
   - multi-selection with rectangle selection, and "Select subtree"
   - undo and redo; remembered positions per repository
   - edges re-route through the gaps between rows as nodes are moved
-- [x] Tag-driven releases (question 13): pushing `vX.Y.Z` builds Linux, Windows and macOS
+- [x] Tag-driven releases (question 12): pushing `vX.Y.Z` builds Linux, Windows and macOS
       archives and publishes a GitHub Release. The build fails unless the tag matches
       `Cargo.toml`. `--version` and the Help menu read `0.3.0 (a1b2c3d)` for releases and
       `0.3.0-dev+a1b2c3d` for every other build.

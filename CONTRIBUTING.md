@@ -1,16 +1,24 @@
-# Contributing to gitgraph
+# Contributing
 
-Bug reports, ideas and pull requests are welcome.
+Bug reports and ideas are welcome: open an issue for either.
 
-gitgraph is released under the GPL-3.0 (see [LICENSE](LICENSE) and [NOTICE](NOTICE)), and
-Mattias Åslund also sells commercial licenses to it. To keep that possible, contributions are
-accepted on these terms:
+Code is another matter. gitgraph is a small personal project, and pull requests are unlikely to
+be merged unless the change was discussed in an issue first.
 
-By submitting a contribution (a pull request, patch or any other code or text meant for
-inclusion in gitgraph), you confirm that you wrote it or otherwise have the right to submit it,
-and you grant Mattias Åslund a perpetual, worldwide, non-exclusive, royalty-free, irrevocable
-license to use, copy, modify and distribute your contribution under any license terms, including
-the GPL-3.0 and commercial licenses. You keep the copyright to your contribution.
+## If you still want to open a pull request
 
-Before you submit, run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`
-and `cargo test --workspace`.
+- Open an issue about it first, and wait for an answer.
+- Keep it small: one change, no unrelated fixes or reformatting.
+- Explain what changed and why.
+- For anything visible in the window, include before and after screenshots.
+- Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` and
+  `cargo test --workspace`.
+
+Opening a pull request creates no obligation to review or merge it. It may be closed, left
+alone, or the idea done differently later.
+
+## License of contributions
+
+gitgraph is released under the GNU General Public License, version 3 only, with the additional
+terms in [NOTICE](NOTICE). By submitting a contribution you release it under the same terms, and
+confirm that you have the right to do so. You keep the copyright to your contribution.
