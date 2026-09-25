@@ -2,8 +2,8 @@
 //! chosen per branch name.
 
 use eframe::egui::Color32;
-use gitgraph_core::RefKind;
-use gitgraph_core::pattern::BranchPatterns;
+use parterre_core::RefKind;
+use parterre_core::pattern::BranchPatterns;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

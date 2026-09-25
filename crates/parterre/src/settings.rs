@@ -1,12 +1,19 @@
 //! User-adjustable settings, persisted between runs by eframe.
 
-use gitgraph_core::layout::LayoutOptions;
-use gitgraph_core::physics::NetParams;
-use gitgraph_core::revgraph::GraphOptions;
+use parterre_core::layout::LayoutOptions;
+use parterre_core::physics::NetParams;
+use parterre_core::revgraph::GraphOptions;
 use serde::{Deserialize, Serialize};
 
 use crate::theme::{BranchColor, ThemeChoice};
 
+/// The app id: names eframe's storage directory and, on Wayland, the window (matching
+/// `packaging/linux/parterre.desktop`).
+pub const APP_ID: &str = "parterre";
+/// What the app was called up to 0.2, and its app id then.
+const OLD_APP_ID: &str = "gitgraph";
+
+// The storage keys still carry the old name, so settings saved before the rename keep loading.
 pub const STORAGE_KEY: &str = "gitgraph-settings";
 /// Storage key for remembered node positions: repository path -> commit hash -> rest offset
 /// from the layout, and whether the node was moved by hand.
@@ -16,6 +23,23 @@ const OLD_MOVES_KEY: &str = "gitgraph-moved-nodes";
 
 pub type RememberedMoves =
     std::collections::HashMap<String, std::collections::HashMap<String, (f32, f32, bool)>>;
+
+/// Carries over what the app saved while it was called gitgraph: the first time it runs as
+/// parterre, it copies the old storage directory's `app.ron`, the one file eframe keeps there.
+pub fn adopt_old_storage() {
+    if let (Some(from), Some(to)) = (eframe::storage_dir(OLD_APP_ID), eframe::storage_dir(APP_ID)) {
+        copy_storage(&from, &to);
+    }
+}
+
+/// Copies `app.ron` from one storage directory into another that has none yet. Best effort:
+/// when it fails, the app starts with default settings.
+fn copy_storage(from: &std::path::Path, to: &std::path::Path) {
+    let (old, new) = (from.join("app.ron"), to.join("app.ron"));
+    if old.exists() && !new.exists() {
+        let _ = std::fs::create_dir_all(to).and_then(|()| std::fs::copy(&old, &new));
+    }
+}
 
 /// Loads remembered node positions, converting the older format.
 pub fn load_moves(storage: &dyn eframe::Storage) -> RememberedMoves {
@@ -83,7 +107,7 @@ pub enum Look {
     /// As close to TortoiseGit as possible: straight edges, every edge separate, rows as wide
     /// as they need to be.
     Classic,
-    /// gitgraph's default: curved edges bundled into trunks, and very wide rows split so that
+    /// parterre's default: curved edges bundled into trunks, and very wide rows split so that
     /// sibling branches stack up.
     Modern,
 }
@@ -162,5 +186,31 @@ impl Default for Settings {
         };
         Look::Modern.apply(&mut s);
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copies_old_storage_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (from, to) = (tmp.path().join("old"), tmp.path().join("new"));
+        std::fs::create_dir(&from).unwrap();
+        std::fs::write(from.join("app.ron"), "saved").unwrap();
+        copy_storage(&from, &to);
+        assert_eq!(
+            std::fs::read_to_string(to.join("app.ron")).unwrap(),
+            "saved"
+        );
+
+        // Once the new directory has its own file, the old one is left alone.
+        std::fs::write(from.join("app.ron"), "saved later").unwrap();
+        copy_storage(&from, &to);
+        assert_eq!(
+            std::fs::read_to_string(to.join("app.ron")).unwrap(),
+            "saved"
+        );
     }
 }

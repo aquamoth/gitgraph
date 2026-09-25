@@ -892,27 +892,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gitgraph"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "clap",
- "eframe",
- "gitgraph-core",
- "image",
- "serde",
-]
-
-[[package]]
-name = "gitgraph-core"
-version = "0.2.0"
-dependencies = [
- "serde",
- "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1757,6 +1736,28 @@ dependencies = [
  "redox_syscall 0.5.18",
  "smallvec",
  "windows-link",
+]
+
+[[package]]
+name = "parterre"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "eframe",
+ "image",
+ "parterre-core",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
+name = "parterre-core"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

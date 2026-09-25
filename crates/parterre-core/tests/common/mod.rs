@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use gitgraph_core::Repo;
+use parterre_core::Repo;
 use tempfile::TempDir;
 
 pub struct TestRepo {
@@ -71,6 +71,6 @@ impl TestRepo {
     }
 
     pub fn load(&self) -> Repo {
-        gitgraph_core::git::load_repo(self.path()).expect("load repo")
+        parterre_core::git::load_repo(self.path()).expect("load repo")
     }
 }

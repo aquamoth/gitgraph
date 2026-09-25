@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
-use gitgraph_core::layout::{self, Layout, LayoutEdge, LayoutInput, LayoutOptions, Point};
-use gitgraph_core::physics::{DragModel, Net};
-use gitgraph_core::revgraph::{self, RevGraph};
-use gitgraph_core::{RefKind, Repo};
+use parterre_core::layout::{self, Layout, LayoutEdge, LayoutInput, LayoutOptions, Point};
+use parterre_core::physics::{DragModel, Net};
+use parterre_core::revgraph::{self, RevGraph};
+use parterre_core::{RefKind, Repo};
 
 use crate::settings::Settings;
 

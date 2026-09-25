@@ -14,7 +14,7 @@
 //! In the decorated mode, an undecorated root commit with an empty tree counts as unchanged
 //! ("TREESAME") to git: it only appears as the end point of an edge, and merge parents leading
 //! to it are dropped, so merges that join otherwise empty histories disappear. One deliberate
-//! difference: git also hides such a root when it carries a tag or branch; gitgraph shows it,
+//! difference: git also hides such a root when it carries a tag or branch; parterre shows it,
 //! rather than silently dropping a label.
 //!
 //! All modes share one pass over the commits in parents-first order that decides whether each

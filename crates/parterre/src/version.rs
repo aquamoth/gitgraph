@@ -1,8 +1,8 @@
-//! The version string gitgraph reports, e.g. `0.3.0 (a1b2c3d)` for a release.
+//! The version string parterre reports, e.g. `0.3.0 (a1b2c3d)` for a release.
 //!
 //! `build.rs` includes this file and runs [`describe`] at build time; the app only reads the
-//! result (`GITGRAPH_VERSION`). The app compiles this module just for its tests, so it must not
-//! use anything outside `std`. It isn't in `gitgraph-core` because the build script would then
+//! result (`PARTERRE_VERSION`). The app compiles this module just for its tests, so it must not
+//! use anything outside `std`. It isn't in `parterre-core` because the build script would then
 //! have to compile all of core as a build dependency.
 
 /// What `git` says about the checkout being built.

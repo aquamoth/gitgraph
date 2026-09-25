@@ -1,6 +1,6 @@
 [package]
-name = "gitgraph-core"
-description = "Repository loading, revision-graph construction and layout for gitgraph (no GUI dependencies)."
+name = "parterre-core"
+description = "Repository loading, revision-graph construction and layout for parterre (no GUI dependencies)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

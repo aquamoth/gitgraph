@@ -1,8 +1,12 @@
-# gitgraph
+# parterre
 
 A standalone, fast, native re-creation of TortoiseGit's **Revision Graph**: a compact,
 tree-like picture of how the branches and tags of a git repository relate, in a resizable window
 that runs on Linux and Windows (and should run on macOS).
+
+A parterre is a formal garden laid out in patterns, designed above all to be seen from the upper
+floors of the house. This parterre gives you that view of a repository: every branch at once,
+from above. (Up to version 0.2 it was called gitgraph.)
 
 On top of the TortoiseGit look you can rearrange the graph by hand. Drag a node and the rest of
 the graph gives way a little: neighbours follow along their edges and nodes in the way move
@@ -10,7 +14,7 @@ aside, like weak magnets. Other drag modes move only the selected nodes, or a wh
 Edges at moved nodes are routed afresh through the gaps between nodes, so they lose bends they
 no longer need and go around nodes that are now in the way.
 
-![gitgraph showing a demo repository](docs/images/demo.png)
+![parterre showing a demo repository](docs/images/demo.png)
 
 _(Made with `scripts/make-demo-repo.sh`: local branches green, remote branches orange, tags
 yellow, the current branch red.)_
@@ -18,14 +22,14 @@ yellow, the current branch red.)_
 ## Usage
 
 ```sh
-gitgraph [PATH]                    # open the repository containing PATH (default: .)
-gitgraph --mode branches           # also show every fork point and merge
-gitgraph --mode all --no-remotes   # every commit, local branches and tags only
-gitgraph --look classic            # straight, unbundled edges exactly like TortoiseGit
-gitgraph --hide 'pipeline/*,release/*'        # leave out build and release branches
-gitgraph --branch-color 'feature/*=#9b59b6'   # colour branches by name (repeatable)
-gitgraph --export graph.svg        # write an SVG without opening a window
-gitgraph --help                    # all options
+parterre [PATH]                    # open the repository containing PATH (default: .)
+parterre --mode branches           # also show every fork point and merge
+parterre --mode all --no-remotes   # every commit, local branches and tags only
+parterre --look classic            # straight, unbundled edges exactly like TortoiseGit
+parterre --hide 'pipeline/*,release/*'        # leave out build and release branches
+parterre --branch-color 'feature/*=#9b59b6'   # colour branches by name (repeatable)
+parterre --export graph.svg        # write an SVG without opening a window
+parterre --help                    # all options
 ```
 
 In the window:
@@ -54,7 +58,7 @@ options are all there:
 - arrows pointing towards merges
 - zoom, the overview map and export
 
-gitgraph adds:
+parterre adds:
 - four directions and three vertical placements
 - edge bundling, row splitting and curved edges
 - first-parent-only view, and stash or other refs
@@ -76,7 +80,7 @@ Colours follow TortoiseGit:
 
 Colours chosen per branch name replace these, except for the current branch.
 
-gitgraph needs `git` on `PATH` at runtime; it reads the repository with `git log` and
+parterre needs `git` on `PATH` at runtime; it reads the repository with `git log` and
 `git for-each-ref` and never writes to it.
 
 ## Building
@@ -84,7 +88,7 @@ gitgraph needs `git` on `PATH` at runtime; it reads the repository with `git log
 Requires a stable Rust toolchain (install with [rustup](https://rustup.rs)).
 
 ```sh
-cargo build --release          # binary: target/release/gitgraph
+cargo build --release          # binary: target/release/parterre
 cargo test --workspace         # unit + integration tests (need git on PATH)
 cargo clippy --workspace --all-targets
 ```
@@ -97,18 +101,18 @@ needed to build. See [docs/building.md](docs/building.md) for Windows and macOS 
 
 | Path | What |
 |---|---|
-| `crates/gitgraph-core` | GUI-free core: git loading, revision-graph reduction, layered layout, drag physics |
-| `crates/gitgraph` | The `gitgraph` binary: egui/eframe window, rendering, interaction |
+| `crates/parterre-core` | GUI-free core: git loading, revision-graph reduction, layered layout, drag physics |
+| `crates/parterre` | The `parterre` binary: egui/eframe window, rendering, interaction |
 | `docs/research/` | Notes on how TortoiseGit's revision graph works, with source links |
 | `docs/architecture.md` | How the pieces fit together |
 | `TODO.md` | Open questions and planned work |
 
 ## License
 
-gitgraph is free software under the [GNU General Public License, version 3](LICENSE) only, with
-two additional terms in [NOTICE](NOTICE): works based on gitgraph keep its copyright notice and
+parterre is free software under the [GNU General Public License, version 3](LICENSE) only, with
+two additional terms in [NOTICE](NOTICE): works based on parterre keep its copyright notice and
 say that they are based on it, and modified versions are marked as modified. You may use, share
-and modify gitgraph at home and at work.
+and modify parterre at home and at work.
 
 Release builds come with `THIRD-PARTY-NOTICES.html`, the licenses of the Rust crates they
 contain. To generate it yourself, install [cargo-about](https://github.com/EmbarkStudios/cargo-about)

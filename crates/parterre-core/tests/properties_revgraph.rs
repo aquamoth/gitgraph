@@ -2,10 +2,10 @@
 
 #![allow(clippy::needless_range_loop)] // index loops read better in these tests
 
-use gitgraph_core::layout::{self, LayoutEdge, LayoutInput, LayoutOptions, Point, Ranking};
-use gitgraph_core::pattern::BranchPatterns;
-use gitgraph_core::revgraph::{self, GraphOptions, Simplification};
-use gitgraph_core::{Commit, CommitIx, GitRef, Head, Oid, RefKind, Repo};
+use parterre_core::layout::{self, LayoutEdge, LayoutInput, LayoutOptions, Point, Ranking};
+use parterre_core::pattern::BranchPatterns;
+use parterre_core::revgraph::{self, GraphOptions, Simplification};
+use parterre_core::{Commit, CommitIx, GitRef, Head, Oid, RefKind, Repo};
 use std::collections::HashSet;
 
 struct Rng(u64);
