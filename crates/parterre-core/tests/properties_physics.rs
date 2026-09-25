@@ -1,13 +1,14 @@
-//! Property test: random graphs, random drags in every model, undo and redo. Positions and
-//! routes stay finite, the net settles and then stays put, and a reset returns every node to
-//! its layout position and every edge to its layout route. (Adapted from a review's fuzzing.)
+//! Property tests: random graphs, random drags in every model, undo and redo. Positions and
+//! routes stay finite, the net settles and then stays put, a reset returns every node to its
+//! layout position and every edge to its layout route, and when the graph adapts to a drag,
+//! children stay above their parents. (Adapted from a review's fuzzing.)
 
 #![allow(clippy::needless_range_loop)] // index loops read better in these tests
 
 use parterre_core::layout::{
     self, Direction, LayoutEdge, LayoutInput, LayoutOptions, Point, Ranking,
 };
-use parterre_core::physics::{DragModel, Net, NetParams};
+use parterre_core::physics::{DragModel, FLOW_GAP, Net, NetParams};
 
 struct Rng(u64);
 impl Rng {
@@ -167,5 +168,70 @@ fn physics_random_drags() {
             (0..inp.edges.len()).all(|e| !net.is_rerouted(e)),
             "iter {iter}: edges keep routes of their own after a reset"
         );
+    }
+}
+
+#[test]
+fn physics_keeps_children_above_parents() {
+    let mut rng = Rng(777);
+    for iter in 0..120 {
+        let n = 2 + rng.below(50) as usize;
+        let inp = input(&mut rng, n);
+        let opts = LayoutOptions {
+            concentrate_edges: iter % 2 == 0,
+            ranking: Ranking::ALL[iter % 3],
+            direction: Direction::ALL[iter % 4],
+            ..LayoutOptions::default()
+        };
+        let l = layout::layout(&inp, &opts);
+        let mut net = Net::new(&l, &inp.sizes);
+        let params = NetParams {
+            model: DragModel::Adapt,
+            pull: rng.f(),
+            push: rng.f(),
+            wobble: rng.f(),
+            avoid_overlap: iter % 3 != 0,
+        };
+        // Drag one node far along or against the flow (and a bit sideways), and drop it.
+        let node = rng.below(n as u64) as usize;
+        let f = opts.direction.flow();
+        let (along, side) = (1200.0 * (rng.f() - 0.5), 200.0 * (rng.f() - 0.5));
+        net.grab(node, &[node], &[], true);
+        for s in 1..=20 {
+            let t = s as f32 / 20.0;
+            net.drag_to(Point::new(
+                l.nodes[node].x + t * (along * f.x + side * f.y),
+                l.nodes[node].y + t * (along * f.y + side * f.x),
+            ));
+            net.step(1.0 / 60.0, &params);
+        }
+        net.release(&params);
+        let mut settled = false;
+        for _ in 0..5000 {
+            if !net.step(1.0 / 60.0, &params) {
+                settled = true;
+                break;
+            }
+        }
+        assert!(settled, "iter {iter}: never settles");
+        let depth = |i: usize| {
+            let s = inp.sizes[i];
+            (f.x.abs() * s.x + f.y.abs() * s.y) / 2.0
+        };
+        let along_flow = |p: Point| p.x * f.x + p.y * f.y;
+        for e in &inp.edges {
+            let (c, p) = (e.child as usize, e.parent as usize);
+            if c == p {
+                continue;
+            }
+            let needed = (depth(c) + depth(p) + FLOW_GAP)
+                .min(along_flow(l.nodes[p]) - along_flow(l.nodes[c]));
+            let have = along_flow(net.node_pos(p)) - along_flow(net.node_pos(c));
+            assert!(
+                have >= needed - 1.0,
+                "iter {iter} {params:?}, dragged {node} by {along}: edge {c} -> {p} \
+                 has {have} along the flow, needs {needed}"
+            );
+        }
     }
 }

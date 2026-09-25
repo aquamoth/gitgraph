@@ -19,6 +19,12 @@ use crate::layout::Point;
 
 /// Clearance kept between a routed edge and the node boxes it passes.
 pub const CLEARANCE: f32 = 8.0;
+/// How far an edge whose parent has been moved before its child runs on along the history
+/// direction before it turns round, and how far before its parent it turns back. More than
+/// [`CLEARANCE`], so that the turns lie outside the end boxes.
+pub const TURN: f32 = 14.0;
+/// For [`route`]: no node at this end.
+pub const NO_END: u32 = u32::MAX;
 /// At most this many detours around boxes per edge; past that the rest is left straight.
 const MAX_DETOURS: usize = 48;
 /// How far to each side of the straight line boxes are looked at to find the rows.

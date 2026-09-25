@@ -43,8 +43,8 @@ _Decisions I made on my own that you may want to overrule. Try them with `parter
    - **What moved stays moved.** Neighbours that Adapt pulls or pushes keep their new places
      after the drop. The alternative is for them to spring back, so that only the dragged node
      keeps its new place.
-   - **Blue dots** mark only the nodes you grabbed. Nodes that gave way, or that a subtree
-     carried along, get none (but can still be returned to the layout).
+   - **No blue dots** any more (your notes of 2026-09-24, third round). Nodes you moved can
+     still be returned to the layout (right-click, or `R` for all).
    - **Magnets act between nodes.** During a drag, edges make way only for nodes in their own
      row; once the node is dropped on them they re-route around it.
    - **Which edges re-route.** Edges at nodes you moved re-route as soon as they change.
@@ -53,8 +53,15 @@ _Decisions I made on my own that you may want to overrule. Try them with `parter
      shared parent moved a pixel.
    - **Re-routed edges switch at once,** without animating from the old route to the new.
      They also leave the trunks that bundled edges share.
-   - **Reversed edges.** An edge whose parent is dragged above its child now leaves the
-     child's top and enters the parent's bottom, instead of looping round both.
+   - **Reversed edges** (third round, which overrules the second): edges always leave the
+     child's bottom and enter the parent's top. An edge whose parent is dragged above its
+     child is routed round both nodes, from just below the child to just above the parent,
+     so the reversal shows as a loop.
+   - **Children above parents** (third round). In Adapt, dragging a node up pushes its
+     children up ahead of it, and dragging it down pushes its parents down, with at least
+     24 px between boxes. Only the dragged nodes can end up past a parent. Free and Subtree
+     move nothing else, so there the order can break, and a reversal left at rest is kept
+     when the graph later adapts around it. OK?
    - **Free and Subtree allow overlaps,** and Adapt leaves them alone: it only keeps nodes
      from coming closer than they rest.
    - **Defaults:** pull 0.3 (a neighbour moves about half as far as the dragged node, the next
@@ -137,6 +144,11 @@ _Decisions I made on my own that you may want to overrule. Try them with `parter
       it or Esc closes it. Other menus still close on any click.
     - **`--hide` and `--branch-color`** replace the saved list or rules, like `--filter`.
       Like every command-line option, the change is saved when the window closes.
+14. **Edge ends in Classic.** On your request, edges now always leave a node's bottom centre
+    (towards its parents) and enter the top centre (from its children), in both looks, and
+    arrowheads are 13 px instead of TortoiseGit's 8. TortoiseGit instead clips each edge where
+    it meets the box border, so edges can end on any side. Should Classic keep TortoiseGit's
+    clipping?
 
 ## Planned
 
@@ -145,6 +157,9 @@ _Decisions I made on my own that you may want to overrule. Try them with `parter
 - [ ] Tooltip on edges showing the collapsed commits.
 - [ ] Less memory for all-commits views of huge repositories (compact adjacency).
 - [ ] Windows `.exe` icon resource; try on macOS.
+- [ ] After some sequences of drags, undo and redo, a reset leaves an edge with a route of
+      its own. `physics_random_drags` finds one with seed 31337 (iteration 247), on main before
+      the child-above-parent ordering was merged too.
 
 ## Done
 
@@ -206,3 +221,11 @@ _Decisions I made on my own that you may want to overrule. Try them with `parter
 - [x] Hiding branches by wildcard, leaves only, and colours by branch name (question 13).
       Available in the menus and as `--hide` and `--branch-color`. The status bar counts the
       hidden branches, and the Legend lists the colour rules.
+- [x] Direction made visible:
+  - edges leave the bottom of a node and enter the top; an edge turned around loops round its
+    nodes
+  - bigger arrowheads
+  - Adapt keeps children above parents (about 1 ms more per frame with 8000 particles awake)
+  - click an edge to keep it highlighted, also in the overview; the status bar says where it
+    leads
+  - the blue dot is gone
