@@ -71,7 +71,7 @@ pub fn to_svg(scene: &Scene, settings: &Settings, palette: &Palette) -> String {
         for ((row_rect, corners), row) in
             node_rows(rect, visual.rows.len(), scene.row_height, radius).zip(&visual.rows)
         {
-            let (fill, border, text) = row_colors(&row.kind, palette);
+            let (fill, border, text) = row_colors(row, palette);
             let _ = writeln!(
                 svg,
                 r#"<path d="{}" fill="{}" stroke="{}"/>"#,

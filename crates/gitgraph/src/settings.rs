@@ -5,7 +5,7 @@ use gitgraph_core::physics::NetParams;
 use gitgraph_core::revgraph::GraphOptions;
 use serde::{Deserialize, Serialize};
 
-use crate::theme::ThemeChoice;
+use crate::theme::{BranchColor, ThemeChoice};
 
 pub const STORAGE_KEY: &str = "gitgraph-settings";
 /// Storage key for remembered node positions: repository path -> commit hash -> rest offset
@@ -141,6 +141,8 @@ pub struct Settings {
     pub highlight_edges: bool,
     /// Keep moved nodes where they are, per repository, across runs and relayouts.
     pub remember_moves: bool,
+    /// Colours for branches by name; the first matching rule wins.
+    pub branch_colors: Vec<BranchColor>,
 }
 
 impl Default for Settings {
@@ -156,6 +158,7 @@ impl Default for Settings {
             show_hidden_counts: false,
             highlight_edges: true,
             remember_moves: false,
+            branch_colors: Vec::new(),
         };
         Look::Modern.apply(&mut s);
         s

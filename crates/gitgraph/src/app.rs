@@ -19,7 +19,7 @@ use crate::scene::{FONT_SIZE, Scene, to_point};
 use crate::settings::{
     Arrows, EdgeStyle, Look, MOVES_KEY, RememberedMoves, STORAGE_KEY, Settings, load_moves,
 };
-use crate::theme::{Palette, ThemeChoice};
+use crate::theme::{BranchColor, Palette, ThemeChoice};
 use crate::view::View;
 
 #[derive(Clone, Copy, Debug)]
@@ -205,6 +205,7 @@ pub struct GitGraphApp {
     status: Option<(String, bool)>,
     show_shortcuts: bool,
     show_legend: bool,
+    show_branch_colors: bool,
     show_about: bool,
     /// Path being edited in the "Export as SVG" dialog, when open.
     export_path: Option<String>,
@@ -265,6 +266,7 @@ impl GitGraphApp {
             status: None,
             show_shortcuts: false,
             show_legend: false,
+            show_branch_colors: false,
             show_about: false,
             export_path: None,
             messages: Messages::default(),
@@ -774,8 +776,20 @@ impl GitGraphApp {
                         ui.radio_value(&mut self.settings.theme, t, t.label());
                     }
                 });
+                if ui.button("Branch colours…").clicked() {
+                    self.show_branch_colors = true;
+                    ui.close();
+                }
             });
-            ui.menu_button("Graph", |ui| self.graph_menu(ui));
+            // egui closes menus on any click inside them, which would close this one when you
+            // click into its text fields. It closes on clicks outside instead, so its options
+            // can also be changed several at a time.
+            egui::containers::menu::MenuButton::new("Graph")
+                .config(
+                    egui::containers::menu::MenuConfig::new()
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                )
+                .ui(ui, |ui| self.graph_menu(ui));
             ui.menu_button("Drag", |ui| self.drag_menu(ui));
             ui.menu_button("Help", |ui| {
                 if ui.button("Keyboard and mouse").clicked() {
@@ -820,6 +834,11 @@ impl GitGraphApp {
             ui.label("Branch filter");
             ui.add(egui::TextEdit::singleline(&mut g.ref_filter).hint_text("e.g. main, release").desired_width(160.0))
                 .on_hover_text("Only branches and tags whose names contain one of these comma-separated words start history.");
+        });
+        ui.horizontal(|ui| {
+            ui.label("Hide branches");
+            ui.add(egui::TextEdit::singleline(&mut g.hide_branches).hint_text("e.g. pipeline/*, release/*").desired_width(160.0))
+                .on_hover_text("Leave out branches matching these comma-separated wildcards (* is any text, ? one character; origin/release/1 matches release/*), with the history only they lead to. Branches that a shown branch's history contains stay, and so does the current branch.");
         });
         ui.checkbox(&mut g.first_parent_only, "First parent only")
             .on_hover_text(
@@ -1070,8 +1089,13 @@ impl GitGraphApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(format!("{:.0}%", self.view.zoom * 100.0));
                     ui.separator();
+                    let hidden = match scene.graph.hidden_branches {
+                        0 => String::new(),
+                        1 => " · 1 branch hidden".to_owned(),
+                        n => format!(" · {n} branches hidden"),
+                    };
                     ui.label(format!(
-                        "{} nodes · {} commits · layout {} ms",
+                        "{} nodes · {} commits{hidden} · layout {} ms",
                         scene.node_count(),
                         scene.graph.visible_commits,
                         (scene.build_time + scene.layout_time).as_millis()
@@ -1229,7 +1253,7 @@ impl GitGraphApp {
             ui.ctx().request_repaint();
         }
 
-        let palette = palette_for(ui);
+        let palette = palette_for(ui, &self.settings);
         let count = scene.node_count();
         let mut hits = vec![false; count];
         for &h in &self.search.hits {
@@ -1493,7 +1517,7 @@ impl GitGraphApp {
             (canvas.height() / 4.0).max(200.0),
         );
         let rect = Rect::from_min_size(canvas.max - size - vec2(12.0, 12.0), size);
-        let palette = palette_for(ui);
+        let palette = palette_for(ui, &self.settings);
         let painter = ui.painter_at(rect.expand(2.0));
         let (world, scale) =
             render::paint_overview(&painter, rect, canvas, &self.view, scene, &palette);
@@ -1524,11 +1548,10 @@ impl GitGraphApp {
             });
         if save {
             let path = PathBuf::from(path.trim());
-            let palette = if ctx.global_style().visuals.dark_mode {
-                Palette::dark()
-            } else {
-                Palette::light()
-            };
+            let palette = Palette::new(
+                ctx.global_style().visuals.dark_mode,
+                &self.settings.branch_colors,
+            );
             self.status = Some(match &self.scene {
                 Some(scene) => match std::fs::write(
                     &path,
@@ -1547,11 +1570,10 @@ impl GitGraphApp {
     }
 
     fn legend_window(&mut self, ctx: &egui::Context) {
-        let palette = if ctx.global_style().visuals.dark_mode {
-            Palette::dark()
-        } else {
-            Palette::light()
-        };
+        let palette = Palette::new(
+            ctx.global_style().visuals.dark_mode,
+            &self.settings.branch_colors,
+        );
         egui::Window::new("Legend")
             .open(&mut self.show_legend)
             .resizable(false)
@@ -1599,11 +1621,88 @@ impl GitGraphApp {
                     );
                     ui.label("Commit without refs (branch point or merge)");
                 });
+                for rule in &self.settings.branch_colors {
+                    swatch(ui, rule.color, &rule.patterns, "Branches matching");
+                }
+                if ui.link("Branch colours…").clicked() {
+                    self.show_branch_colors = true;
+                }
                 ui.add_space(6.0);
                 ui.label(
                     "Arrows point from a commit to its parents. Edges may stand for many hidden",
                 );
                 ui.label("commits; hover an edge to list them. A blue dot marks a node you moved.");
+            });
+    }
+
+    fn branch_colors_window(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Branch colours")
+            .open(&mut self.show_branch_colors)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                // A fixed width, so the text wraps there instead of squeezing the fields.
+                ui.set_width(380.0);
+                ui.label(
+                    "Branches whose names match a rule get its colour. The first matching rule \
+                     wins, and the current branch stays red.",
+                );
+                ui.label(
+                    RichText::new(
+                        "* is any text, ? one character; commas separate wildcards. \
+                         origin/feature/x matches feature/*.",
+                    )
+                    .weak(),
+                );
+                ui.add_space(4.0);
+                let rules = &mut self.settings.branch_colors;
+                let (mut swap, mut remove) = (None, None);
+                // Rows rather than a Grid: a Grid keeps text fields at their first-frame width.
+                let count = rules.len();
+                for (i, rule) in rules.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        egui::color_picker::color_edit_button_srgba(
+                            ui,
+                            &mut rule.color,
+                            egui::color_picker::Alpha::Opaque,
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut rule.patterns)
+                                .hint_text("e.g. feature/*")
+                                .desired_width(240.0),
+                        );
+                        if ui
+                            .add_enabled(i > 0, egui::Button::new("⏶"))
+                            .on_hover_text("Move up")
+                            .clicked()
+                        {
+                            swap = Some(i - 1);
+                        }
+                        if ui
+                            .add_enabled(i + 1 < count, egui::Button::new("⏷"))
+                            .on_hover_text("Move down")
+                            .clicked()
+                        {
+                            swap = Some(i);
+                        }
+                        if ui.button("🗑").on_hover_text("Remove").clicked() {
+                            remove = Some(i);
+                        }
+                    });
+                }
+                if let Some(i) = swap {
+                    rules.swap(i, i + 1);
+                }
+                if let Some(i) = remove {
+                    rules.remove(i);
+                }
+                if ui.button("Add rule").clicked() {
+                    let suggested = BranchColor::SUGGESTED;
+                    rules.push(BranchColor {
+                        patterns: String::new(),
+                        color: suggested[rules.len() % suggested.len()],
+                    });
+                }
             });
     }
 
@@ -1697,12 +1796,8 @@ fn group_break(ui: &mut Ui, width: f32) {
     }
 }
 
-fn palette_for(ui: &Ui) -> Palette {
-    if ui.visuals().dark_mode {
-        Palette::dark()
-    } else {
-        Palette::light()
-    }
+fn palette_for(ui: &Ui, settings: &Settings) -> Palette {
+    Palette::new(ui.visuals().dark_mode, &settings.branch_colors)
 }
 
 enum MenuAction {
@@ -1730,6 +1825,7 @@ impl eframe::App for GitGraphApp {
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
         self.shortcuts_window(&ctx);
         self.legend_window(&ctx);
+        self.branch_colors_window(&ctx);
         self.about_window(&ctx);
         self.export_window(&ctx);
 

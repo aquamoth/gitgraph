@@ -114,6 +114,29 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
       a local build of a tagged commit still reads `-dev`.
     - **Dirty** means uncommitted changes under `crates/`, `.cargo/`, the Cargo files or
       `rust-toolchain.toml`, the files that go into the binary. Edits to docs don't count.
+13. **Hiding and colouring branches by name** (your request of 2026-09-25). Neither is in
+    TortoiseGit. *Graph → Hide branches* takes wildcards such as `pipeline/*, release/*`;
+    *View → Branch colours…* holds rules such as `feature/*` → purple (first match wins). On
+    Apps, hiding `pipeline/*, release/*` takes the graph from 167 to 97 nodes. Only one of the
+    64 branches stays: `origin/pipeline/8/15749`, which three prototype and spike branches grow
+    out of. Decisions you may want to overrule:
+    - **Leaves only, as you asked.** A hidden branch that a shown branch's history contains
+      keeps its node and its label. That includes a branch sitting on a commit of `main` that
+      never got commits of its own. The alternative would drop such labels too.
+    - **Branches only.** Tags, stash and other refs never match (tags have their own toggle).
+    - **Matching:** `origin/release/1` matches both `release/*` and `origin/release/*`.
+      `*` crosses slashes, `?` is one character, and case doesn't matter.
+    - **The current branch** is never hidden, and stays red when a colour rule matches it.
+    - **Remote branches get the same colour** as local ones. A paler shade for remotes would
+      keep TortoiseGit's local/remote distinction (paler orange against green).
+    - **Colours stay as picked in the dark theme.** The built-in colours are
+      lightness-inverted there instead.
+    - **Global, not per repository**, like the other settings. Both lists start empty.
+    - **The Graph menu stays open** when you click inside it, so its text fields can be
+      clicked into. Its checkboxes and radio buttons now leave it open too. A click outside
+      it or Esc closes it. Other menus still close on any click.
+    - **`--hide` and `--branch-color`** replace the saved list or rules, like `--filter`.
+      Like every command-line option, the change is saved when the window closes.
 
 ## Planned
 
@@ -180,3 +203,6 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
       archives and publishes a GitHub Release. The build fails unless the tag matches
       `Cargo.toml`. `--version` and the Help menu read `0.3.0 (a1b2c3d)` for releases and
       `0.3.0-dev+a1b2c3d` for every other build.
+- [x] Hiding branches by wildcard, leaves only, and colours by branch name (question 13).
+      Available in the menus and as `--hide` and `--branch-color`. The status bar counts the
+      hidden branches, and the Legend lists the colour rules.

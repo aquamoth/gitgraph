@@ -321,6 +321,102 @@ fn filters_limit_history_to_matching_refs() {
     );
 }
 
+/// Labels of the graph's nodes, by node subject.
+fn labels(repo: &Repo, g: &RevGraph) -> Vec<(String, Vec<String>)> {
+    let mut v: Vec<(String, Vec<String>)> = g
+        .nodes
+        .iter()
+        .map(|n| {
+            let mut names: Vec<String> =
+                n.refs.iter().map(|&i| repo.refs[i].name.clone()).collect();
+            names.sort();
+            (repo.commit(n.commit).subject.clone(), names)
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+/// A - B ------ M       main
+/// |   |\      /
+/// |   | R1 --'         release/1: merged, so it stays
+/// |   Q - F            pipeline/q, feature/f: F grows out of Q, so Q stays
+/// R2 - P               release/2, pipeline/p: leaves, so both go
+#[test]
+fn hidden_branches_vanish_only_as_leaves() {
+    let mut r = TestRepo::new();
+    r.commit("A");
+    r.branch("release/2");
+    let r2 = r.commit("R2");
+    r.branch("pipeline/p");
+    r.commit("P");
+    r.checkout("main");
+    r.commit("B");
+    r.branch("release/1");
+    r.commit("R1");
+    r.checkout("main");
+    r.branch("pipeline/q");
+    let q = r.commit("Q");
+    r.branch("feature/f");
+    r.commit("F");
+    r.checkout("main");
+    r.merge("release/1", "M");
+    r.git(&["update-ref", "refs/remotes/origin/release/2", &r2]);
+    r.git(&["update-ref", "refs/remotes/origin/pipeline/q", &q]);
+    let repo = r.load();
+
+    let mut opts = with_mode(Simplification::AllCommits);
+    assert_eq!(
+        node_subjects(&repo, &revgraph::build(&repo, &opts)),
+        ["A", "B", "F", "M", "P", "Q", "R1", "R2"]
+    );
+
+    opts.hide_branches = "pipeline/*, release/*".into();
+    let g = revgraph::build(&repo, &opts);
+    assert_eq!(node_subjects(&repo, &g), ["A", "B", "F", "M", "Q", "R1"]);
+    assert_eq!(
+        g.hidden_branches, 3,
+        "release/2, origin/release/2, pipeline/p"
+    );
+    opts.ref_filter = "main, feature, pipeline".into();
+    assert_eq!(
+        revgraph::build(&repo, &opts).hidden_branches,
+        1,
+        "only pipeline/p; the filter takes out the release branches anyway"
+    );
+    opts.ref_filter.clear();
+    let l = labels(&repo, &g);
+    assert!(l.contains(&("R1".into(), vec!["release/1".into()])));
+    assert!(l.contains(&(
+        "Q".into(),
+        vec!["origin/pipeline/q".into(), "pipeline/q".into()]
+    )));
+
+    // The current branch is never hidden; what grows out of it still is.
+    r.checkout("release/2");
+    let repo = r.load();
+    let g = revgraph::build(&repo, &opts);
+    assert_eq!(
+        node_subjects(&repo, &g),
+        ["A", "B", "F", "M", "Q", "R1", "R2"]
+    );
+    assert!(labels(&repo, &g).contains(&(
+        "R2".into(),
+        vec!["origin/release/2".into(), "release/2".into()]
+    )));
+
+    // Hidden branches stay out of Labelled commits too: the decorated R1 and Q remain nodes.
+    let g = revgraph::build(
+        &repo,
+        &GraphOptions {
+            hide_branches: "pipeline/* release/*".into(),
+            current_branch_only: false,
+            ..with_mode(Simplification::Decorated)
+        },
+    );
+    assert_eq!(node_subjects(&repo, &g), ["A", "F", "M", "Q", "R1", "R2"]);
+}
+
 #[test]
 fn reads_full_commit_messages() {
     let mut r = TestRepo::new();

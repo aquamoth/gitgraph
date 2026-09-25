@@ -1,7 +1,9 @@
-//! Colours, following TortoiseGit's defaults (`src/TortoiseProc/Colors.cpp`).
+//! Colours, following TortoiseGit's defaults (`src/TortoiseProc/Colors.cpp`), plus colours
+//! chosen per branch name.
 
 use eframe::egui::Color32;
 use gitgraph_core::RefKind;
+use gitgraph_core::pattern::BranchPatterns;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +27,47 @@ impl ThemeChoice {
     }
 }
 
+/// A colour for branches whose names match `patterns` (e.g. `feature/*`). Not in TortoiseGit,
+/// which colours by ref kind only.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BranchColor {
+    /// Wildcards separated by commas or spaces; see [`BranchPatterns`].
+    pub patterns: String,
+    pub color: Color32,
+}
+
+impl BranchColor {
+    /// Colours offered for new rules, in turn: distinct from the ref-kind colours and legible
+    /// with either black or white text.
+    pub const SUGGESTED: [Color32; 6] = [
+        Color32::from_rgb(0x9B, 0x59, 0xB6),
+        Color32::from_rgb(0x29, 0x80, 0xB9),
+        Color32::from_rgb(0x1A, 0xBC, 0x9C),
+        Color32::from_rgb(0xE6, 0x7E, 0x22),
+        Color32::from_rgb(0xE8, 0x43, 0x93),
+        Color32::from_rgb(0x7F, 0x8C, 0x8D),
+    ];
+
+    /// Parses `PATTERNS=COLOR`, e.g. `feature/*,bugfix/*=#8e44ad` (the `#` is optional).
+    pub fn parse(s: &str) -> Result<BranchColor, String> {
+        let (patterns, color) = s
+            .rsplit_once('=')
+            .ok_or_else(|| format!("expected PATTERNS=COLOR, got `{s}`"))?;
+        let hex = color.trim();
+        let hex = if hex.starts_with('#') {
+            hex.to_owned()
+        } else {
+            format!("#{hex}")
+        };
+        let color = Color32::from_hex(&hex)
+            .map_err(|_| format!("`{color}` is not a colour like #8e44ad"))?;
+        Ok(BranchColor {
+            patterns: patterns.trim().to_owned(),
+            color: color.to_opaque(),
+        })
+    }
+}
+
 /// Resolved colours for drawing the graph.
 #[derive(Clone, Debug)]
 pub struct Palette {
@@ -42,9 +85,27 @@ pub struct Palette {
     pub selection: Color32,
     pub search_hit: Color32,
     pub moved_marker: Color32,
+    /// Colours by branch name, first match first; they override the ref-kind colours.
+    pub branch_colors: Vec<(BranchPatterns, Color32)>,
 }
 
 impl Palette {
+    /// The light or dark palette with `branch_colors` applied.
+    pub fn new(dark: bool, branch_colors: &[BranchColor]) -> Palette {
+        let mut p = if dark {
+            Palette::dark()
+        } else {
+            Palette::light()
+        };
+        // Taken as chosen in both themes (not lightness-inverted like the ref-kind colours),
+        // so the graph shows what the colour button shows.
+        p.branch_colors = branch_colors
+            .iter()
+            .map(|b| (BranchPatterns::parse(&b.patterns), b.color))
+            .collect();
+        p
+    }
+
     pub fn light() -> Palette {
         Palette {
             background: Color32::WHITE,
@@ -62,6 +123,7 @@ impl Palette {
             selection: Color32::from_rgb(0, 120, 215),
             search_hit: Color32::from_rgb(255, 140, 0),
             moved_marker: Color32::from_rgb(0, 120, 215),
+            branch_colors: Vec::new(),
         }
     }
 
@@ -83,10 +145,20 @@ impl Palette {
             selection: Color32::from_rgb(80, 170, 255),
             search_hit: Color32::from_rgb(255, 160, 40),
             moved_marker: Color32::from_rgb(80, 170, 255),
+            branch_colors: Vec::new(),
         }
     }
 
-    pub fn ref_fill(&self, kind: RefKind, is_head: bool) -> Color32 {
+    /// Fill of a row for the ref `name`. The current branch stays red whatever its name.
+    pub fn ref_fill(&self, kind: RefKind, is_head: bool, name: &str) -> Color32 {
+        if !is_head
+            && let Some(&(_, color)) = self
+                .branch_colors
+                .iter()
+                .find(|(patterns, _)| patterns.matches(kind, name))
+        {
+            return color;
+        }
         match kind {
             RefKind::LocalBranch if is_head => self.current_branch,
             RefKind::LocalBranch => self.local_branch,
@@ -193,6 +265,49 @@ mod tests {
         assert_eq!(text_on(p.remote_branch), Color32::BLACK);
         assert_eq!(text_on(p.tag), Color32::BLACK);
         assert_eq!(text_on(p.other_ref), Color32::BLACK);
+    }
+
+    #[test]
+    fn branch_colours_override_kind_colours_but_not_head() {
+        let purple = Color32::from_rgb(0x9B, 0x59, 0xB6);
+        let rules = [
+            BranchColor {
+                patterns: "feature/*".into(),
+                color: purple,
+            },
+            BranchColor {
+                patterns: "*".into(),
+                color: Color32::GRAY,
+            },
+        ];
+        let p = Palette::new(true, &rules);
+        assert_eq!(p.ref_fill(RefKind::LocalBranch, false, "feature/x"), purple);
+        assert_eq!(
+            p.ref_fill(RefKind::RemoteBranch, false, "origin/feature/x"),
+            purple
+        );
+        assert_eq!(
+            p.ref_fill(RefKind::LocalBranch, false, "dev/x"),
+            Color32::GRAY
+        );
+        assert_eq!(
+            p.ref_fill(RefKind::LocalBranch, true, "feature/x"),
+            p.current_branch
+        );
+        assert_eq!(p.ref_fill(RefKind::Tag, false, "feature/x"), p.tag);
+    }
+
+    #[test]
+    fn parses_branch_colours() {
+        let b = BranchColor::parse("feature/*, bugfix/*=#8e44ad").unwrap();
+        assert_eq!(b.patterns, "feature/*, bugfix/*");
+        assert_eq!(b.color, Color32::from_rgb(0x8E, 0x44, 0xAD));
+        assert_eq!(
+            BranchColor::parse("dev/*=0af").unwrap().color,
+            Color32::from_rgb(0, 0xAA, 0xFF)
+        );
+        assert!(BranchColor::parse("dev/*").is_err());
+        assert!(BranchColor::parse("dev/*=purple").is_err());
     }
 
     #[test]

@@ -22,6 +22,8 @@ gitgraph [PATH]                    # open the repository containing PATH (defaul
 gitgraph --mode branches           # also show every fork point and merge
 gitgraph --mode all --no-remotes   # every commit, local branches and tags only
 gitgraph --look classic            # straight, unbundled edges exactly like TortoiseGit
+gitgraph --hide 'pipeline/*,release/*'        # leave out build and release branches
+gitgraph --branch-color 'feature/*=#9b59b6'   # colour branches by name (repeatable)
 gitgraph --export graph.svg        # write an SVG without opening a window
 gitgraph --help                    # all options
 ```
@@ -56,6 +58,9 @@ gitgraph adds:
 - four directions and three vertical placements
 - edge bundling, row splitting and curved edges
 - first-parent-only view, and stash or other refs
+- hiding branches by wildcard, e.g. `pipeline/*` (*Graph → Hide branches*). A hidden branch
+  still shows where the history of a shown branch contains it, so only leaves vanish.
+- colours by branch name, e.g. `feature/*` purple (*View → Branch colours…*)
 - light and dark themes
 - rearranging by hand: drag modes, multi-selection, undo
 
@@ -68,6 +73,8 @@ Colours follow TortoiseGit:
 | Remote branches | light orange |
 | Tags | yellow |
 | Commits without refs | pale lavender, showing an 8-digit hash |
+
+Colours chosen per branch name replace these, except for the current branch.
 
 gitgraph needs `git` on `PATH` at runtime; it reads the repository with `git log` and
 `git for-each-ref` and never writes to it.
