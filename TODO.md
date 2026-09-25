@@ -5,6 +5,8 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
+_Numbers are never changed or reused, even after an item is deleted. Next number: 15._
+
 1. **Default look: "Modern" or "Classic"?** The toolbar has a Look selector.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
      needed.

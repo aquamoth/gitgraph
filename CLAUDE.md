@@ -7,6 +7,10 @@ Standalone TortoiseGit-style revision graph viewer. Rust workspace, egui/eframe 
 - Behavioural reference for what TortoiseGit does: `docs/research/tortoisegit-revision-graph.md`.
   When deviating from TortoiseGit on purpose, say so in a comment and in `TODO.md`.
 - Open questions for the human go in `TODO.md` under "Open questions (HITL)".
+- A `TODO.md` item keeps its number for good, so that "question 12" never comes to mean
+  something else: never renumber an item, and never reuse a number, even one whose item was
+  deleted. A new item takes the next number noted in `TODO.md`; bump that note in the same
+  change. If two branches took the same number, the item merged later takes the next free one.
 
 Commands (Rust from `~/.cargo/bin`):
 
