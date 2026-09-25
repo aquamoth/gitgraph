@@ -75,3 +75,30 @@ cargo run --release -- ~/repo --screenshot out.png --window-size 1400x900 [--fit
 
 This renders a few frames, saves the window to `out.png`, and exits. `--demo-drag DX,DY` drags
 the centre node first, to show the physics.
+
+## Icon
+
+`crates/parterre-core/src/icon.rs` draws the app icon in code. The window icon is rasterised
+from it at startup, and
+
+```sh
+cargo run --release -p parterre-core --example icon_assets
+```
+
+writes `packaging/icon/`: the SVG, PNGs from 16 to 512 px, `parterre.ico` and `parterre.icns`.
+Rerun it after changing the drawing and commit the results.
+
+`crates/parterre/build.rs` embeds `parterre.ico` in the Windows executable through
+`crates/parterre/parterre.rc`. That needs `rc.exe` from the Windows SDK (installed with the
+build tools above), or `x86_64-w64-mingw32-windres` for the GNU target; without one the build
+only warns and the `.exe` has no icon. The `.icns` waits for a macOS `.app` bundle.
+
+On Linux, the launcher finds the icon through the desktop entry once both are installed:
+
+```sh
+install -Dm644 packaging/linux/parterre.desktop ~/.local/share/applications/parterre.desktop
+install -Dm644 packaging/icon/parterre.svg ~/.local/share/icons/hicolor/scalable/apps/parterre.svg
+for s in 16 24 32 48 64 128 256 512; do
+  install -Dm644 packaging/icon/parterre-$s.png ~/.local/share/icons/hicolor/${s}x${s}/apps/parterre.png
+done
+```
