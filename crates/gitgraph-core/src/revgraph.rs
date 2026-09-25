@@ -22,7 +22,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::repo::{CommitIx, RefKind, Repo};
+use crate::pattern::BranchPatterns;
+use crate::repo::{CommitIx, GitRef, RefKind, Repo};
 
 /// How aggressively history is collapsed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -74,6 +75,10 @@ pub struct GraphOptions {
     /// Only refs whose name contains one of these comma-separated words (case-insensitive)
     /// start history; empty = all. Refs on commits shown anyway are always labelled.
     pub ref_filter: String,
+    /// Branches matching these wildcards (see [`BranchPatterns`]) do not start history, so
+    /// they vanish unless a shown ref's history contains them; there they keep their labels.
+    /// Not in TortoiseGit.
+    pub hide_branches: String,
 }
 
 impl Default for GraphOptions {
@@ -89,6 +94,7 @@ impl Default for GraphOptions {
             first_parent_only: false,
             current_branch_only: false,
             ref_filter: String::new(),
+            hide_branches: String::new(),
         }
     }
 }
@@ -104,6 +110,15 @@ impl GraphOptions {
             .collect();
         let name = name.to_lowercase();
         words.is_empty() || words.iter().any(|w| name.contains(w.as_str()))
+    }
+
+    /// True if the shown ref `r` starts history: it is HEAD's branch, or passes the filters
+    /// and is not among `hidden`, the parsed [`GraphOptions::hide_branches`].
+    pub fn starts_history(&self, r: &GitRef, hidden: &BranchPatterns) -> bool {
+        r.is_head
+            || (!self.current_branch_only
+                && self.filter_matches(&r.name)
+                && !hidden.matches(r.kind, &r.name))
     }
 
     pub fn shows(&self, kind: RefKind) -> bool {
@@ -153,6 +168,8 @@ pub struct RevGraph {
     represented_by: Vec<Option<u32>>,
     /// Number of commits reachable from the visible refs.
     pub visible_commits: usize,
+    /// Number of branches left out because they match [`GraphOptions::hide_branches`].
+    pub hidden_branches: usize,
 }
 
 impl RevGraph {
@@ -251,11 +268,10 @@ pub fn build(repo: &Repo, options: &GraphOptions) -> RevGraph {
         }
     };
 
-    // Commits reachable from the refs that start history (visible and passing the filters).
-    let starts_history = |i: usize| {
-        let r = &repo.refs[i];
-        r.is_head || (!options.current_branch_only && options.filter_matches(&r.name))
-    };
+    // Commits reachable from the refs that start history (visible, passing the filters and
+    // not hidden).
+    let hidden = BranchPatterns::parse(&options.hide_branches);
+    let starts_history = |i: usize| options.starts_history(&repo.refs[i], &hidden);
     let mut visible = vec![false; n];
     let mut stack: Vec<usize> = (0..n)
         .filter(|&c| refs_on[c].iter().any(|&i| starts_history(i)))
@@ -269,6 +285,18 @@ pub fn build(repo: &Repo, options: &GraphOptions) -> RevGraph {
             stack.extend(parents_of(c).iter().map(|p| p.ix()));
         }
     }
+
+    // Branches that would start history but for the hide list, and that no shown ref reaches.
+    let hidden_branches = repo
+        .refs
+        .iter()
+        .filter(|r| {
+            options.shows(r.kind)
+                && !visible[r.target.ix()]
+                && hidden.matches(r.kind, &r.name)
+                && options.starts_history(r, &BranchPatterns::default())
+        })
+        .count();
 
     // Child counts, merge children, and a parents-first order (reverse Kahn from the tips).
     let mut children = vec![0u32; n];
@@ -396,6 +424,7 @@ pub fn build(repo: &Repo, options: &GraphOptions) -> RevGraph {
         node_of,
         represented_by,
         visible_commits,
+        hidden_branches,
     }
 }
 

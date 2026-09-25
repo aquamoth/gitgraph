@@ -7,6 +7,7 @@ crates/gitgraph-core   GUI-free; everything testable lives here
   git.rs               run `git log` / `git for-each-ref`, parse into a Repo
   repo.rs              Repo snapshot: commits (with parent indices), refs, HEAD
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
+  pattern.rs           branch-name wildcards, for hiding and colouring branches
   layout/              layered (Sugiyama) layout
     rank.rs            layer assignment (network simplex / longest path / chronological),
                        plus splitting of over-wide layers
@@ -38,6 +39,9 @@ crates/gitgraph        the binary (eframe/egui)
 2. **Reduce** (`revgraph.rs`): pick visible refs → reachable commits → decide which commits
    are nodes in one parents-first pass, recording for each hidden commit the node that
    represents it. Edges go from each node to the representatives of its parents.
+   - Only refs that pass the filters start history. Branches matching the *Hide branches*
+     wildcards don't, but they still label commits that other refs reach. So a hidden branch
+     vanishes only if no shown branch contains it.
    - *Labelled commits* reproduces `git log --simplify-by-decoration`, including
      `simplify_merges` (redundant parents dropped) and empty-tree roots (TREESAME).
      The node sets are identical on the 15k-commit Apps repository and on 400 random

@@ -5,7 +5,7 @@ use eframe::egui::{
     vec2,
 };
 
-use crate::scene::{CORNER_RADIUS, FONT_SIZE, MARGIN_X, RowKind, Scene, to_pos};
+use crate::scene::{CORNER_RADIUS, FONT_SIZE, MARGIN_X, Row, RowKind, Scene, to_pos};
 use crate::settings::{Arrows, EdgeStyle, Settings};
 use crate::theme::{Palette, text_on};
 use crate::view::View;
@@ -96,7 +96,7 @@ pub fn paint_scene(
         for ((row_rect, corners), row) in
             node_rows(rect, visual.rows.len(), row_h, radius).zip(&visual.rows)
         {
-            let (fill, border, text) = row_colors(&row.kind, palette);
+            let (fill, border, text) = row_colors(row, palette);
             painter.rect(
                 row_rect,
                 corners,
@@ -361,11 +361,11 @@ pub fn node_rows(
 }
 
 /// Fill, border and text colour of a row.
-pub fn row_colors(kind: &RowKind, palette: &Palette) -> (Color32, Color32, Color32) {
-    match kind {
+pub fn row_colors(row: &Row, palette: &Palette) -> (Color32, Color32, Color32) {
+    match &row.kind {
         RowKind::Hash => (palette.plain_fill, palette.plain_border, palette.plain_text),
         RowKind::Ref { kind, head } => {
-            let fill = palette.ref_fill(*kind, *head);
+            let fill = palette.ref_fill(*kind, *head, &row.label);
             (fill, fill, text_on(fill))
         }
     }
@@ -444,9 +444,10 @@ pub fn paint_overview(
             to_mini(scene.node_center(i)),
             (v.size * scale).max(Vec2::splat(2.0)),
         );
-        let fill = match &v.rows[0].kind {
+        let row = &v.rows[0];
+        let fill = match &row.kind {
             RowKind::Hash => palette.plain_border,
-            RowKind::Ref { kind, head } => palette.ref_fill(*kind, *head),
+            RowKind::Ref { kind, head } => palette.ref_fill(*kind, *head, &row.label),
         };
         painter.rect_filled(r, 0.0, fill);
     }

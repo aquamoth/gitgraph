@@ -64,6 +64,16 @@ struct Cli {
     #[arg(long, value_name = "WORDS")]
     filter: Option<String>,
 
+    /// Hide branches matching these comma-separated wildcards, e.g. 'pipeline/*,release/*',
+    /// unless a shown branch's history contains them.
+    #[arg(long, value_name = "PATTERNS")]
+    hide: Option<String>,
+
+    /// Colour branches matching PATTERNS, e.g. 'feature/*=#9b59b6'. Repeat for more rules;
+    /// the first match wins. Replaces the saved colour rules.
+    #[arg(long, value_name = "PATTERNS=COLOR", value_parser = theme::BranchColor::parse)]
+    branch_color: Vec<theme::BranchColor>,
+
     /// Hide remote-tracking branches.
     #[arg(long)]
     no_remotes: bool,
@@ -268,6 +278,12 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
     if let Some(filter) = &cli.filter {
         s.graph.ref_filter = filter.clone();
     }
+    if let Some(hide) = &cli.hide {
+        s.graph.hide_branches = hide.clone();
+    }
+    if !cli.branch_color.is_empty() {
+        s.branch_colors = cli.branch_color.clone();
+    }
     if cli.no_remotes {
         s.graph.show_remote_branches = false;
     }
@@ -313,10 +329,10 @@ fn export_headless(
         scene::Scene::prepare(repo, settings, &mut width, text_height)
     });
     let scene = input.lay_out();
-    let palette = match settings.theme {
-        theme::ThemeChoice::Dark => theme::Palette::dark(),
-        _ => theme::Palette::light(),
-    };
+    let palette = theme::Palette::new(
+        settings.theme == theme::ThemeChoice::Dark,
+        &settings.branch_colors,
+    );
     std::fs::write(path, export::to_svg(&scene, settings, &palette))?;
     eprintln!("wrote {} ({} nodes)", path.display(), scene.node_count());
     Ok(())

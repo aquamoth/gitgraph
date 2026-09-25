@@ -3,6 +3,7 @@
 #![allow(clippy::needless_range_loop)] // index loops read better in these tests
 
 use gitgraph_core::layout::{self, LayoutEdge, LayoutInput, LayoutOptions, Point, Ranking};
+use gitgraph_core::pattern::BranchPatterns;
 use gitgraph_core::revgraph::{self, GraphOptions, Simplification};
 use gitgraph_core::{Commit, CommitIx, GitRef, Head, Oid, RefKind, Repo};
 use std::collections::HashSet;
@@ -170,6 +171,11 @@ fn all_options() -> Vec<GraphOptions> {
                     2 => " , ".into(),
                     _ => String::new(),
                 },
+                hide_branches: match bits % 3 {
+                    0 => "r1*".into(),
+                    1 => "R? x/*".into(),
+                    _ => String::new(),
+                },
             });
         }
     }
@@ -254,6 +260,7 @@ fn revgraph_invariants_random() {
                 }
             }
             // visible commits all represented
+            let hidden = BranchPatterns::parse(&opts.hide_branches);
             let mut visible = vec![false; n];
             let mut stack: Vec<usize> = repo
                 .refs
@@ -261,7 +268,9 @@ fn revgraph_invariants_random() {
                 .filter(|r| {
                     (opts.shows(r.kind) || r.is_head)
                         && (r.is_head
-                            || (!opts.current_branch_only && opts.filter_matches(&r.name)))
+                            || (!opts.current_branch_only
+                                && opts.filter_matches(&r.name)
+                                && !hidden.matches(r.kind, &r.name)))
                 })
                 .map(|r| r.target.ix())
                 .collect();
