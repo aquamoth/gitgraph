@@ -206,6 +206,7 @@ pub struct GitGraphApp {
     show_shortcuts: bool,
     show_legend: bool,
     show_branch_colors: bool,
+    show_about: bool,
     /// Path being edited in the "Export as SVG" dialog, when open.
     export_path: Option<String>,
     messages: Messages,
@@ -266,6 +267,7 @@ impl GitGraphApp {
             show_shortcuts: false,
             show_legend: false,
             show_branch_colors: false,
+            show_about: false,
             export_path: None,
             messages: Messages::default(),
             moves,
@@ -799,6 +801,10 @@ impl GitGraphApp {
                     ui.close();
                 }
                 ui.separator();
+                if ui.button("About gitgraph").clicked() {
+                    self.show_about = true;
+                    ui.close();
+                }
                 ui.label(RichText::new(format!("gitgraph {}", crate::VERSION)).weak());
             });
         });
@@ -1751,6 +1757,32 @@ impl GitGraphApp {
                 });
             });
     }
+
+    /// The "Appropriate Legal Notices" of GPL-3.0 section 5(d). NOTICE requires works based on
+    /// gitgraph to keep showing them.
+    fn about_window(&mut self, ctx: &egui::Context) {
+        const NOTICE: &str = include_str!("../../../NOTICE");
+        const LICENSE: &str = include_str!("../../../LICENSE");
+        // Room for the title bar and the heading; the texts scroll within the rest.
+        let max_height = ctx.content_rect().height() - 140.0;
+        egui::Window::new("About gitgraph")
+            .open(&mut self.show_about)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.heading(format!("gitgraph {}", crate::VERSION));
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical()
+                    .max_height(max_height)
+                    .show(ui, |ui| {
+                        // Both texts are wrapped at 80 columns already.
+                        ui.add(egui::Label::new(RichText::new(NOTICE).monospace()).extend());
+                        ui.collapsing("GNU General Public License, version 3", |ui| {
+                            ui.add(egui::Label::new(RichText::new(LICENSE).monospace()).extend());
+                        });
+                    });
+            });
+    }
 }
 
 /// Separates groups in the (wrapping) toolbar: a separator, or a new line if the next group,
@@ -1794,6 +1826,7 @@ impl eframe::App for GitGraphApp {
         self.shortcuts_window(&ctx);
         self.legend_window(&ctx);
         self.branch_colors_window(&ctx);
+        self.about_window(&ctx);
         self.export_window(&ctx);
 
         if let Some(scene) = &mut self.scene {

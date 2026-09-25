@@ -88,8 +88,7 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
    detached HEAD gets its own red "HEAD" row, which TortoiseGit doesn't have.
 10. **No git actions.** Per your brief, there's no checkout, log, diff or delete. The context
     menu only copies hashes, ref names or the subject. Should any actions be added?
-11. **License?** None is chosen yet (e.g. MIT OR Apache-2.0).
-12. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
+11. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
     commits, 2,490 refs and 1,846 merges:
     - Loading takes 0.6 s.
     - "Labelled commits" (3.6k nodes) lays out in 0.15 s, "Branchings and merges" (7.3k nodes)
@@ -100,13 +99,14 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 
     Is 2.8 s and 880 MB for the all-commits view of a 100k repo acceptable, or worth more
     work? (Apps, at 15k commits, needs 0.2 s.)
-13. **Releases** (`docs/releasing.md`). Decisions you may want to overrule:
+12. **Releases** (`docs/releasing.md`). Decisions you may want to overrule:
     - **Version in the UI:** besides `--version`, the Help menu ends with a greyed
       `gitgraph 0.3.0 (a1b2c3d)` line, for users who start gitgraph from a file manager or
       Start menu and never see a terminal.
-    - **Assets:** one archive per target (`.tar.gz`, `.zip` on Windows) holding the binary and
-      the README, plus `SHA256SUMS`. macOS gets both Apple silicon and Intel builds, the Intel
-      one cross-compiled and therefore not test-run in the workflow.
+    - **Assets:** one archive per target (`.tar.gz`, `.zip` on Windows) holding the binary,
+      the README, `LICENSE`, `NOTICE` and `THIRD-PARTY-NOTICES.html`, plus `SHA256SUMS`. macOS
+      gets both Apple silicon and Intel builds, the Intel one cross-compiled and therefore not
+      test-run in the workflow.
     - **Linux baseline:** built on `ubuntu-latest`, so the binary needs that runner's glibc
       (2.39) or newer. Building on an older runner would reach older distributions.
     - **Commit detection** is a `build.rs` running `git`, with no dependencies. Without git it
@@ -114,7 +114,7 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
       a local build of a tagged commit still reads `-dev`.
     - **Dirty** means uncommitted changes under `crates/`, `.cargo/`, the Cargo files or
       `rust-toolchain.toml`, the files that go into the binary. Edits to docs don't count.
-14. **Hiding and colouring branches by name** (your request of 2026-09-25). Neither is in
+13. **Hiding and colouring branches by name** (your request of 2026-09-25). Neither is in
     TortoiseGit. *Graph → Hide branches* takes wildcards such as `pipeline/*, release/*`;
     *View → Branch colours…* holds rules such as `feature/*` → purple (first match wins). On
     Apps, hiding `pipeline/*, release/*` takes the graph from 167 to 97 nodes. Only one of the
@@ -148,6 +148,8 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
 
 ## Done
 
+- [x] License: GPL-3.0-only plus section 7 attribution terms, an About dialog showing them,
+      and `THIRD-PARTY-NOTICES.html` (cargo-about) in the CI artifacts.
 - [x] Workspace scaffold, lints, release profile, docs (`docs/architecture.md`,
       `docs/building.md`).
 - [x] Research into how TortoiseGit's revision graph works (`docs/research/`).
@@ -197,10 +199,10 @@ _Decisions I made on my own that you may want to overrule. Try them with `gitgra
   - multi-selection with rectangle selection, and "Select subtree"
   - undo and redo; remembered positions per repository
   - edges re-route through the gaps between rows as nodes are moved
-- [x] Tag-driven releases (question 13): pushing `vX.Y.Z` builds Linux, Windows and macOS
+- [x] Tag-driven releases (question 12): pushing `vX.Y.Z` builds Linux, Windows and macOS
       archives and publishes a GitHub Release. The build fails unless the tag matches
       `Cargo.toml`. `--version` and the Help menu read `0.3.0 (a1b2c3d)` for releases and
       `0.3.0-dev+a1b2c3d` for every other build.
-- [x] Hiding branches by wildcard, leaves only, and colours by branch name (question 14).
+- [x] Hiding branches by wildcard, leaves only, and colours by branch name (question 13).
       Available in the menus and as `--hide` and `--branch-color`. The status bar counts the
       hidden branches, and the Legend lists the colour rules.

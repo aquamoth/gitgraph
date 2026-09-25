@@ -102,3 +102,19 @@ needed to build. See [docs/building.md](docs/building.md) for Windows and macOS 
 | `docs/research/` | Notes on how TortoiseGit's revision graph works, with source links |
 | `docs/architecture.md` | How the pieces fit together |
 | `TODO.md` | Open questions and planned work |
+
+## License
+
+gitgraph is free software under the [GNU General Public License, version 3](LICENSE) only, with
+two additional terms in [NOTICE](NOTICE): works based on gitgraph keep its copyright notice and
+say that they are based on it, and modified versions are marked as modified. You may use, share
+and modify gitgraph at home and at work.
+
+Release builds come with `THIRD-PARTY-NOTICES.html`, the licenses of the Rust crates they
+contain. To generate it yourself, install [cargo-about](https://github.com/EmbarkStudios/cargo-about)
+and run `cargo about generate -c packaging/about.toml packaging/about.hbs -o THIRD-PARTY-NOTICES.html`.
+
+## Contributing
+
+Bug reports and ideas are welcome as issues. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
+writing code for a pull request.

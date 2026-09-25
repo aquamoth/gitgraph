@@ -38,10 +38,18 @@ jobs:
         run: cargo test --workspace
       - name: Build release
         run: cargo build --release
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      # The binary with its license, NOTICE and the licenses of the crates built into it.
+      - name: Package
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/release/gitgraph${{ runner.os == 'Windows' && '.exe' || '' }} LICENSE NOTICE dist/
+          cargo about generate --locked -c packaging/about.toml packaging/about.hbs \
+            -o dist/THIRD-PARTY-NOTICES.html
       - uses: actions/upload-artifact@v4
         with:
           name: gitgraph-${{ matrix.os }}
-          path: |
-            target/release/gitgraph
-            target/release/gitgraph.exe
-          if-no-files-found: ignore
+          path: dist/

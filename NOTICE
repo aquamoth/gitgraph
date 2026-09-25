@@ -1,0 +1,25 @@
+gitgraph, a TortoiseGit-style revision graph viewer
+Copyright (C) 2026 Mattias Åslund <mattias@trustfall.se>
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of version 3 of the GNU General Public License as published by the
+Free Software Foundation (that version only; see LICENSE), with the additional
+terms below.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+Additional terms under section 7 of the GNU General Public License:
+
+1. Attribution (section 7(b)). Any work that contains this program, or a
+   substantial part of it, must preserve the copyright notice above, and state
+   that it is based on gitgraph, in the Appropriate Legal Notices it displays,
+   such as its About dialog.
+
+2. Modified versions (section 7(c)). Modified versions must be marked as
+   modified in their Appropriate Legal Notices, and must not be presented as
+   the original gitgraph or as made or endorsed by its authors.
+
+Release builds of gitgraph also contain third-party components under their own
+licenses, listed in the THIRD-PARTY-NOTICES.html that comes with them.
