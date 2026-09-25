@@ -8,10 +8,10 @@ use eframe::egui::{
 };
 use parterre_core::layout::{Direction, LayoutOptions, Ranking};
 use parterre_core::physics::DragModel;
-use parterre_core::revgraph::{GraphOptions, Simplification};
+use parterre_core::revgraph::{GraphOptions, RevEdge, Simplification};
 use std::sync::Arc;
 
-use parterre_core::{CommitIx, Oid, Repo};
+use parterre_core::{Oid, Repo};
 
 use crate::automation::Automation;
 use crate::render::{self, Marks};
@@ -166,6 +166,8 @@ struct LayoutJob {
     /// Commit near the view centre and its screen position, to keep the view steady.
     anchor: Option<(Oid, Pos2)>,
     selected_commits: Vec<Oid>,
+    /// Child and parent commit of the selected edge.
+    selected_edge: Option<(Oid, Oid)>,
 }
 
 #[derive(Debug, Default)]
@@ -194,6 +196,8 @@ pub struct ParterreApp {
     hovered: Option<usize>,
     hovered_edge: Option<usize>,
     selection: Selection,
+    /// Edge kept highlighted after a click, independent of the selected nodes.
+    selected_edge: Option<usize>,
     /// Nodes that would move if the hovered node were dragged in Subtree mode, cached for
     /// the roots they were computed from.
     preview: Option<(Vec<usize>, Vec<usize>)>,
@@ -258,6 +262,7 @@ impl ParterreApp {
             hovered: None,
             hovered_edge: None,
             selection: Selection::default(),
+            selected_edge: None,
             preview: None,
             context_node: None,
             pending_select: Vec::new(),
@@ -307,6 +312,7 @@ impl ParterreApp {
                 } else {
                     pending
                 },
+                selected_edge: self.selected_edge_commits(),
             });
         }
 
@@ -328,6 +334,7 @@ impl ParterreApp {
             .collect();
         self.selection.set(None);
         self.selection.extend(selected);
+        self.selected_edge = job.selected_edge.and_then(|(c, p)| self.edge_for(&c, &p));
         self.update_search();
         self.restore_moves();
         if let (Some((oid, screen)), Some(scene)) = (job.anchor, &self.scene)
@@ -338,6 +345,15 @@ impl ParterreApp {
             let fraction = (screen - self.canvas.min) / self.canvas.size();
             self.view.show_at(self.canvas, world, fraction);
         }
+    }
+
+    /// The edge between the nodes shown for these commits, if there is one.
+    fn edge_for(&self, child: &Oid, parent: &Oid) -> Option<usize> {
+        let (child, parent) = (self.node_for(child)?, self.node_for(parent)?);
+        let edges = &self.scene.as_ref()?.graph.edges;
+        edges
+            .iter()
+            .position(|e| e.child as usize == child && e.parent as usize == parent)
     }
 
     /// The node that shows commit `oid` in the current scene: the commit itself, or the node
@@ -451,6 +467,19 @@ impl ParterreApp {
             .iter()
             .map(|&n| scene.repo.commit(scene.graph.nodes[n].commit).oid)
             .collect()
+    }
+
+    /// Child and parent commit of the selected edge.
+    fn selected_edge_commits(&self) -> Option<(Oid, Oid)> {
+        let scene = self.scene.as_ref()?;
+        let edge = scene.graph.edges[self.selected_edge?];
+        let oid = |node: u32| {
+            scene
+                .repo
+                .commit(scene.graph.nodes[node as usize].commit)
+                .oid
+        };
+        Some((oid(edge.child), oid(edge.parent)))
     }
 
     fn reload(&mut self) {
@@ -654,6 +683,7 @@ impl ParterreApp {
         }
         if pressed(Key::Escape) {
             self.selection.set(None);
+            self.selected_edge = None;
         }
         if pressed(Key::F3) || pressed(Key::N) {
             let back = ctx.input(|i| i.modifiers.shift);
@@ -1083,6 +1113,13 @@ impl ParterreApp {
                         "{} — {}, {}",
                         commit.subject, commit.author_name, commit.author_date
                     ));
+                } else if let Some(e) = self.selected_edge {
+                    let edge = scene.graph.edges[e];
+                    let hidden = match edge.hidden {
+                        0 => String::new(),
+                        n => format!(", {n} commits collapsed"),
+                    };
+                    ui.label(format!("{}{hidden}", edge_summary(scene, edge)));
                 } else {
                     ui.label(scene.repo.path.display().to_string());
                 }
@@ -1220,6 +1257,12 @@ impl ParterreApp {
                 None if extend => {}
                 None => self.selection.set(None),
             }
+            // Clicking an edge keeps it highlighted; clicking it again, or anything else, lets
+            // go of it.
+            self.selected_edge = match (self.hovered, self.hovered_edge) {
+                (None, Some(e)) if self.selected_edge != Some(e) => Some(e),
+                _ => None,
+            };
         }
         if response.secondary_clicked() {
             self.context_node = self.hovered;
@@ -1292,6 +1335,7 @@ impl ParterreApp {
             hovered_edge: self.hovered_edge,
             selected,
             preview,
+            selected_edge: self.selected_edge,
             search_hits: hits,
         };
         let painter = ui.painter_at(canvas);
@@ -1378,21 +1422,9 @@ impl ParterreApp {
         // Tooltip for the hovered edge: the commits collapsed into it.
         if let (Some(e), None) = (self.hovered_edge, self.drag) {
             let edge = scene.graph.edges[e];
-            let child = &scene.graph.nodes[edge.child as usize];
-            let parent = &scene.graph.nodes[edge.parent as usize];
             let hidden = scene.graph.collapsed_commits(&scene.repo, edge, 12);
             response.clone().on_hover_ui_at_pointer(|ui| {
-                let short = |c: CommitIx| scene.repo.commit(c).oid.short(8);
-                ui.label(format!(
-                    "{} → {}{}",
-                    short(child.commit),
-                    short(parent.commit),
-                    if edge.first_parent {
-                        ""
-                    } else {
-                        "  (merged branch)"
-                    }
-                ));
+                ui.label(edge_summary(scene, edge));
                 if edge.hidden == 0 {
                     ui.label(RichText::new("direct parent").weak());
                     return;
@@ -1519,8 +1551,15 @@ impl ParterreApp {
         let rect = Rect::from_min_size(canvas.max - size - vec2(12.0, 12.0), size);
         let palette = palette_for(ui, &self.settings);
         let painter = ui.painter_at(rect.expand(2.0));
-        let (world, scale) =
-            render::paint_overview(&painter, rect, canvas, &self.view, scene, &palette);
+        let (world, scale) = render::paint_overview(
+            &painter,
+            rect,
+            canvas,
+            &self.view,
+            scene,
+            &palette,
+            self.selected_edge,
+        );
         let resp = ui.interact(rect, egui::Id::new("overview"), Sense::click_and_drag());
         if (resp.clicked() || resp.dragged())
             && let Some(p) = resp.interact_pointer_pos()
@@ -1631,7 +1670,7 @@ impl ParterreApp {
                 ui.label(
                     "Arrows point from a commit to its parents. Edges may stand for many hidden",
                 );
-                ui.label("commits; hover an edge to list them. A blue dot marks a node you moved.");
+                ui.label("commits; hover an edge to list them, click it to keep it highlighted.");
             });
     }
 
@@ -1719,6 +1758,10 @@ impl ParterreApp {
                             "Move it, with the rest of the selection it belongs to",
                         ),
                         (
+                            "Click an edge",
+                            "Keep it highlighted; click it again to let go",
+                        ),
+                        (
                             "1 / 2 / 3",
                             "Drag mode Adapt (the graph gives way) / Free (nothing else \
                              moves) / Subtree (take along what grows out of it)",
@@ -1782,6 +1825,26 @@ impl ParterreApp {
                         });
                     });
             });
+    }
+}
+
+/// Which way an edge leads, e.g. "From main to its merged parent feature/x". (The default
+/// fonts have no arrow glyph.)
+fn edge_summary(scene: &Scene, edge: RevEdge) -> String {
+    format!(
+        "From {} to its {}parent {}",
+        node_name(scene, edge.child),
+        if edge.first_parent { "" } else { "merged " },
+        node_name(scene, edge.parent)
+    )
+}
+
+/// A node's first ref, or its short hash if it has none.
+fn node_name(scene: &Scene, node: u32) -> String {
+    let node = &scene.graph.nodes[node as usize];
+    match node.refs.first() {
+        Some(&r) => scene.repo.refs[r].name.clone(),
+        None => scene.repo.commit(node.commit).oid.short(8),
     }
 }
 

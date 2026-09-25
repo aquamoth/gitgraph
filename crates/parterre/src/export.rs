@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use eframe::egui::{Color32, CornerRadius, Pos2, Rect};
 
-use crate::render::{arrowhead_points, edge_path, node_rows, row_colors};
+use crate::render::{ARROW_LEN, arrowhead_points, edge_path, node_rows, row_colors};
 use crate::scene::{CORNER_RADIUS, FONT_SIZE, MARGIN_X, Scene};
 use crate::settings::Settings;
 use crate::theme::Palette;
@@ -45,7 +45,7 @@ pub fn to_svg(scene: &Scene, settings: &Settings, palette: &Palette) -> String {
             .map(|p| format!("{:.1},{:.1}", p.x, p.y))
             .collect();
         let _ = writeln!(svg, r#"<polyline points="{}"/>"#, points.join(" "));
-        if let Some(head) = arrowhead_points(&path, settings.arrows, 8.0) {
+        if let Some(head) = arrowhead_points(&path, settings.arrows, ARROW_LEN) {
             heads.extend(head);
         }
     }

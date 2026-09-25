@@ -25,7 +25,7 @@ yellow, the current branch red.)_
 parterre [PATH]                    # open the repository containing PATH (default: .)
 parterre --mode branches           # also show every fork point and merge
 parterre --mode all --no-remotes   # every commit, local branches and tags only
-parterre --look classic            # straight, unbundled edges exactly like TortoiseGit
+parterre --look classic            # straight, unbundled edges like TortoiseGit
 parterre --hide 'pipeline/*,release/*'        # leave out build and release branches
 parterre --branch-color 'feature/*=#9b59b6'   # colour branches by name (repeatable)
 parterre --export graph.svg        # write an SVG without opening a window
@@ -36,10 +36,11 @@ In the window:
 
 | Do | To |
 |---|---|
-| Drag a node | Move it, with the rest of the selection it belongs to. It gets a blue dot. |
+| Drag a node | Move it, with the rest of the selection it belongs to. In *Adapt*, the graph gives way and keeps children above their parents. |
 | `1` / `2` / `3` | Drag mode *Adapt* (the graph gives way) / *Free* (nothing else moves) / *Subtree* (take along everything that grows out of it) |
 | Click, `Ctrl`+click, `Shift`+click a node | Select it / toggle it / add it to the selection |
 | `Shift`+drag the background | Select the nodes in a rectangle |
+| Hover / click an edge | List the commits collapsed into it / keep it highlighted while you look around |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo a move |
 | Drag the background, wheel, Shift+wheel | Pan |
 | Ctrl+wheel, pinch, `+` `-` `0` | Zoom |
@@ -48,6 +49,7 @@ In the window:
 | `Ctrl+F`, then `Enter` / `F3` | Find branches, tags, hashes, subjects or authors |
 | Right-click a node | Copy its hash, ref names or subject; select its subtree; return it to the layout |
 | `R` | Return all nodes to the layout |
+| `Esc` | Clear the selection |
 | `F5` | Reload the repository |
 
 The toolbar and the *Graph*, *View* and *Drag* menus hold the options. TortoiseGit's
