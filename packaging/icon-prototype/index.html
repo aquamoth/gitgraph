@@ -1,0 +1,359 @@
+<!doctype html>
+<!--
+  PROTOTYPE - throwaway. Not part of the build.
+
+  Question: what should the parterre app icon look like?
+
+  Round 1 (?variant=A|B|C|D): four structurally different starting points. Verdict 2026-09-25:
+  A correct but boring and blob-like, B too cute for a tool, D makes sense but boring,
+  C closest to the graphs the tool draws but a bit unprofessional. Keep C.
+  Round 2 (?variant=C1|C2|C3): C without the hedge frame (it broke under a circle mask), on
+  three different backgrounds, with ringed nodes for contrast against any of them.
+
+  Switch with the floating bar at the bottom or the arrow keys. Each variant is shown in the
+  three platform shapes, at every size an icon set needs, on light and dark, and in a mock
+  dock / taskbar / title bar. ?variant=all is a contact sheet; ?variant=C1vC3 puts two head to head.
+
+  This egui app has no web routes, so this is a standalone file: open it in a browser
+  (double-click, or  python3 -m http.server  from the repo root and visit
+  /packaging/icon-prototype/index.html).
+
+  Nothing here is drawn from the publisher's name. Colours are the easy part to change; the
+  point of comparison is the structure of each mark.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>parterre icon prototype</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; font: 15px/1.45 system-ui, sans-serif; color: #222; background: #f3f3f1; padding: 32px 40px 120px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h1 small { font-weight: normal; color: #666; margin-left: 10px; }
+  .from { color: #555; margin: 0 0 4px; }
+  .note { color: #555; max-width: 70ch; margin: 0 0 28px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #777; margin: 32px 0 12px; }
+  .row { display: flex; align-items: flex-end; gap: 28px; flex-wrap: wrap; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 12px; color: #666; }
+  .cell svg { display: block; }
+  .board { padding: 24px 28px; border-radius: 12px; }
+  .board.light { background: #ffffff; border: 1px solid #e3e3e0; }
+  .board.dark { background: #1e1e22; }
+  .board.dark .cell { color: #aaa; }
+  .board.mid { background: #dcdcd8; }
+  /* mock contexts */
+  .dock { display: inline-flex; gap: 10px; padding: 8px 12px; border-radius: 18px; background: rgba(255,255,255,.55); border: 1px solid rgba(0,0,0,.12); backdrop-filter: blur(8px); }
+  .wallpaper { background: linear-gradient(135deg,#5b7fa8,#a25e8f 60%,#e39f6d); padding: 36px; border-radius: 12px; display: inline-block; }
+  .taskbar { display: inline-flex; align-items: center; gap: 18px; padding: 8px 14px; background: #202020; border-radius: 6px; }
+  .taskbar .win { color: #ddd; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+  .titlebar { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; background: #e8e8e6; border: 1px solid #c9c9c6; border-radius: 8px 8px 0 0; font-size: 13px; color: #333; min-width: 420px; }
+  .generic { border-radius: 22%; }
+  .wallpaper.dark { background: linear-gradient(135deg,#1b2230,#2e2a3f 60%,#4a2f3a); }
+  .dock.dark { background: rgba(0,0,0,.45); border-color: rgba(255,255,255,.12); }
+  .taskbar.light { background: #eff4f9; border: 1px solid #d5dbe2; }
+  .taskbar.light .win { color: #222; }
+  .titlebar.dark { background: #2b2b2f; border-color: #1a1a1c; color: #ddd; }
+  .pair h2 { margin-top: 36px; }
+  .pair .row { align-items: center; }
+  .versus { display: grid; grid-template-columns: max-content max-content; gap: 24px 48px; align-items: center; }
+  /* switcher */
+  #bar { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px;
+         background: #111; color: #fff; padding: 10px 14px; border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.35); font-size: 14px; z-index: 10; user-select: none; }
+  #bar button { background: #333; color: #fff; border: 0; border-radius: 999px; width: 34px; height: 34px; font-size: 16px; cursor: pointer; }
+  #bar button:hover { background: #555; }
+  #bar .label { min-width: 200px; text-align: center; }
+  #bar .label b { color: #ffd24a; }
+  #bar .keys { color: #888; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<!-- Platform shapes, defined once and referenced from every icon instance (user space 0..512). -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <clipPath id="clip-squircle"><rect width="512" height="512" rx="114.5"/></clipPath>
+    <clipPath id="clip-circle"><circle cx="256" cy="256" r="256"/></clipPath>
+    <clipPath id="clip-square"><rect width="512" height="512" rx="40"/></clipPath>
+  </defs>
+</svg>
+
+<div id="page"></div>
+
+<div id="bar">
+  <button id="prev" title="previous (←)">&larr;</button>
+  <span class="label"><b id="key"></b> &mdash; <span id="name"></span></span>
+  <button id="next" title="next (→)">&rarr;</button>
+  <a class="keys" id="all" href="?variant=all" style="color:#888;text-decoration:none">all</a>
+</div>
+
+<script>
+// TortoiseGit label colours, as used by the app.
+const TG = { red: '#c80000', green: '#00c800', orange: '#ffdcaa', yellow: '#ffe600', plain: '#e6e6ff' };
+// Garden palette.
+const G = { hedgeDark: '#245c33', hedge: '#3a7d44', hedgeLight: '#6cbf62', sand: '#efe3c3', cream: '#f6f1e7', slate: '#2b3440' };
+
+// Round 2: the C tree without its frame. Same geometry for all three; only the palette differs.
+// Tips sit in one row like a layer of the layout; edges leave the bottom centre of a node and
+// enter the top centre of the next, as the app draws them. Everything stays inside r=240 of the
+// centre so a circle mask cuts nothing.
+function tree({ tile, edge, ink, plain }) {
+  const tip = (x, c) => `<circle cx="${x}" cy="132" r="40" fill="${c}"/>`;
+  return `
+    <rect width="512" height="512" fill="${tile}"/>
+    <g fill="none" stroke="${edge}" stroke-width="28" stroke-linecap="round">
+      <path d="M256,390 V304"/>
+      <path d="M256,304 C256,268 156,272 156,236"/>
+      <path d="M256,304 C256,268 356,272 356,236"/>
+      <path d="M156,236 C156,190 106,178 106,132"/>
+      <path d="M156,236 C156,190 206,178 206,132"/>
+      <path d="M356,236 C356,190 306,178 306,132"/>
+      <path d="M356,236 C356,190 406,178 406,132"/>
+    </g>
+    <g stroke="${ink}" stroke-width="8">
+      <circle cx="256" cy="390" r="30" fill="${plain}"/>
+      <circle cx="156" cy="236" r="18" fill="${plain}"/>
+      <circle cx="356" cy="236" r="18" fill="${plain}"/>
+      ${tip(106, TG.red)}${tip(206, TG.green)}${tip(306, TG.orange)}${tip(406, TG.yellow)}
+    </g>`;
+}
+
+const VARIANTS = [
+  {
+    key: 'C1', round: 2, name: 'Tree on slate',
+    from: 'Round 2 of C: dark blue-grey tile, hedge-green edges, light rings on the nodes.',
+    note: 'The dark theme\'s slate as the tile. Every label colour is far from it, and the cream ring ' +
+          'separates the green tip from the green edges. Plain commits (root and forks) in the app\'s lavender.',
+    art: tree({ tile: '#243038', edge: '#4c9a4a', ink: G.cream, plain: TG.plain })
+  },
+  {
+    key: 'C2', round: 2, name: 'Paths on lawn',
+    from: 'Round 2 of C: hedge-green tile, gravel edges, cream rings.',
+    note: 'The parterre inverted: the graph as gravel paths through a lawn, seen from above. Green is the ' +
+          'garden; the rings keep red and green tips off the green ground.',
+    art: tree({ tile: '#1e5a30', edge: G.sand, ink: G.cream, plain: TG.plain })
+  },
+  {
+    key: 'C3', round: 2, name: 'Graph on paper',
+    from: 'Round 2 of C: the app\'s own canvas: near-white tile, dark edges, dark node borders.',
+    note: 'Exactly what the window shows: dark edges and bordered label colours on white. The one light ' +
+          'tile of the set; strong on dark docks, quiet on light ones. A natural light-theme partner to C1.',
+    art: tree({ tile: '#f7f6f2', edge: '#2a2f33', ink: '#2a2f33', plain: TG.plain })
+  },
+  {
+    key: 'A', round: 1, name: 'Revision graph',
+    from: 'Draws on the function only.',
+    note: 'The thing the app shows, reduced to its signature: label boxes in TortoiseGit colours joined by curved edges, ' +
+          'a branch that forks and merges back. Evolves the current in-code window icon. Tile is the dark slate of the ' +
+          'dark theme so the coloured pills carry the mark.',
+    art: `
+      <rect width="512" height="512" fill="${G.slate}"/>
+      <g fill="none" stroke="${G.cream}" stroke-width="22" stroke-linecap="round">
+        <path d="M256,154 C256,200 120,166 120,212"/>
+        <path d="M256,154 C256,200 392,166 392,212"/>
+        <path d="M120,300 C120,346 256,312 256,358"/>
+        <path d="M392,300 C392,346 256,312 256,358"/>
+      </g>
+      <g stroke="${G.slate}" stroke-width="8">
+        <rect x="152" y="66"  width="208" height="88" rx="30" fill="${TG.red}"/>
+        <rect x="36"  y="212" width="168" height="88" rx="30" fill="${TG.green}"/>
+        <rect x="308" y="212" width="168" height="88" rx="30" fill="${TG.orange}"/>
+        <rect x="152" y="358" width="208" height="88" rx="30" fill="${TG.yellow}"/>
+      </g>`
+  },
+  {
+    key: 'B', round: 1, name: 'Parterre plan',
+    from: 'Draws on the name only.',
+    note: 'A formal garden seen from the upper floor: four scrolled beds around a central roundel, gravel paths ' +
+          'crossing in the middle, a box hedge around it all. The flowers in the beds are the app\'s four label ' +
+          'colours, the only reference to git.',
+    art: `
+      <rect width="512" height="512" fill="${G.hedgeDark}"/>
+      <rect x="64" y="64" width="384" height="384" rx="32" fill="${G.hedge}"/>
+      <g fill="${G.hedgeLight}">
+        <path d="M256,256 C176,256 104,196 104,104 C196,104 256,176 256,256 Z"/>
+        <path d="M256,256 C336,256 408,196 408,104 C316,104 256,176 256,256 Z"/>
+        <path d="M256,256 C176,256 104,316 104,408 C196,408 256,336 256,256 Z"/>
+        <path d="M256,256 C336,256 408,316 408,408 C316,408 256,336 256,256 Z"/>
+      </g>
+      <circle cx="176" cy="176" r="22" fill="${TG.red}"/>
+      <circle cx="336" cy="176" r="22" fill="${TG.orange}"/>
+      <circle cx="176" cy="336" r="22" fill="${TG.yellow}"/>
+      <circle cx="336" cy="336" r="22" fill="${TG.plain}"/>
+      <g fill="none" stroke="${G.sand}" stroke-width="18" stroke-linecap="round">
+        <rect x="64" y="64" width="384" height="384" rx="32"/>
+        <path d="M256,64 V448 M64,256 H448"/>
+      </g>
+      <circle cx="256" cy="256" r="60" fill="${G.sand}"/>
+      <circle cx="256" cy="256" r="30" fill="${G.hedgeDark}"/>`
+  },
+  {
+    key: 'C', round: 1, name: 'Graph as garden',
+    from: 'Draws on both: the graph laid out as a parterre.',
+    note: 'The revision graph planted as a garden: hedges are the edges, growing from a root at the bottom and forking ' +
+          'up to four round beds in the label colours, all inside a clipped hedge border on gravel. Symmetric like a ' +
+          'parterre, tree-like like the graph.',
+    art: `
+      <rect width="512" height="512" fill="${G.sand}"/>
+      <rect x="40" y="40" width="432" height="432" rx="44" fill="none" stroke="${G.hedge}" stroke-width="28"/>
+      <g fill="none" stroke="${G.hedge}" stroke-width="30" stroke-linecap="round">
+        <path d="M256,428 V330"/>
+        <path d="M256,330 C256,290 156,300 156,250"/>
+        <path d="M256,330 C256,290 356,300 356,250"/>
+        <path d="M156,250 C156,205 104,215 104,168"/>
+        <path d="M156,250 C156,205 206,215 206,168"/>
+        <path d="M356,250 C356,205 306,215 306,168"/>
+        <path d="M356,250 C356,205 408,215 408,168"/>
+      </g>
+      <circle cx="256" cy="428" r="34" fill="${G.hedgeDark}"/>
+      <circle cx="156" cy="250" r="20" fill="${G.hedgeDark}"/>
+      <circle cx="356" cy="250" r="20" fill="${G.hedgeDark}"/>
+      <g stroke="${G.hedgeDark}" stroke-width="6">
+        <circle cx="104" cy="150" r="42" fill="${TG.red}"/>
+        <circle cx="206" cy="150" r="42" fill="${TG.green}"/>
+        <circle cx="306" cy="150" r="42" fill="${TG.orange}"/>
+        <circle cx="408" cy="150" r="42" fill="${TG.yellow}"/>
+      </g>`
+  },
+  {
+    key: 'D', round: 1, name: 'Monogram p',
+    from: 'Draws on the initial, built out of the function.',
+    note: 'A lowercase p whose bowl is a branch that leaves the stem and merges back. Commits sit where a graph would ' +
+          'put them: at the fork, at the branch tip, at the merge and at the root. One colour for the mark, the ' +
+          'label colours for the four commits; hedge green for the tile.',
+    art: `
+      <rect width="512" height="512" fill="#1e5a30"/>
+      <g fill="none" stroke="${G.cream}" stroke-width="46" stroke-linecap="round">
+        <path d="M150,106 V406"/>
+        <path d="M150,106 C282,78 362,132 362,204 C362,276 282,330 150,302"/>
+      </g>
+      <g stroke="#1e5a30" stroke-width="12">
+        <circle cx="150" cy="106" r="38" fill="${TG.red}"/>
+        <circle cx="362" cy="204" r="38" fill="${TG.orange}"/>
+        <circle cx="150" cy="302" r="38" fill="${TG.yellow}"/>
+        <circle cx="150" cy="406" r="38" fill="${TG.plain}"/>
+      </g>`
+  },
+];
+
+function icon(v, size, shape = 'squircle') {
+  return `<svg viewBox="0 0 512 512" width="${size}" height="${size}" role="img" aria-label="${v.name} ${size}px">` +
+         `<g clip-path="url(#clip-${shape})">${v.art}</g></svg>`;
+}
+function generic(size, color) {
+  return `<svg viewBox="0 0 512 512" width="${size}" height="${size}"><g clip-path="url(#clip-squircle)">` +
+         `<rect width="512" height="512" fill="${color}"/><circle cx="256" cy="256" r="120" fill="rgba(255,255,255,.55)"/></g></svg>`;
+}
+function cell(inner, label) { return `<div class="cell">${inner}<span>${label}</span></div>`; }
+
+const SIZES = [256, 128, 64, 48, 32, 24, 16];
+
+function render(v) {
+  const sizes = shape => SIZES.map(s => cell(icon(v, s, shape), s)).join('');
+  document.getElementById('page').innerHTML = `
+    <h1>${v.key} &mdash; ${v.name} <small>parterre icon prototype, round ${v.round}</small></h1>
+    <p class="from">${v.from}</p>
+    <p class="note">${v.note}</p>
+
+    <h2>Platform shapes</h2>
+    <div class="row board mid">
+      ${cell(icon(v, 224, 'squircle'), 'macOS (rounded square)')}
+      ${cell(icon(v, 224, 'circle'), 'GNOME / Android (circle)')}
+      ${cell(icon(v, 224, 'square'), 'Windows (square)')}
+    </div>
+
+    <h2>Every size, on light</h2>
+    <div class="row board light">${sizes('squircle')}</div>
+
+    <h2>Every size, on dark</h2>
+    <div class="row board dark">${sizes('squircle')}</div>
+
+    <h2>In context</h2>
+    <div class="row">
+      ${cell(`<div class="wallpaper"><div class="dock">${generic(64,'#3b82f6')}${generic(64,'#9ca3af')}${icon(v,64)}${generic(64,'#ef7d3b')}${generic(64,'#22c55e')}</div></div>`, 'Dock, 64 px')}
+      ${cell(`<div class="taskbar">${generic(24,'#3b82f6')}${generic(24,'#9ca3af')}<span class="win">${icon(v,24)} parterre</span>${generic(24,'#ef7d3b')}</div>`, 'Taskbar, 24 px')}
+      ${cell(`<div class="titlebar">${icon(v,16)} parterre &mdash; ~/Source/repos/parterre</div>`, 'Title bar, 16 px')}
+    </div>`;
+  document.getElementById('key').textContent = v.key;
+  document.getElementById('name').textContent = v.name;
+  document.title = `${v.key} ${v.name} – parterre icon prototype`;
+}
+
+function renderSheet() {
+  const ladder = (v, shape) => [64, 48, 32, 24, 16].map(s => cell(icon(v, s, shape), s)).join('');
+  const row = v => `
+      <h2>${v.key} &mdash; ${v.name}: ${v.from}</h2>
+      <div class="row">
+        ${cell(icon(v, 160, 'squircle'), 'macOS')}
+        ${cell(icon(v, 160, 'circle'), 'circle')}
+        <div class="row board light">${ladder(v, 'squircle')}</div>
+        <div class="row board dark">${ladder(v, 'squircle')}</div>
+      </div>`;
+  const round = n => VARIANTS.filter(v => v.round === n).map(row).join('');
+  document.getElementById('page').innerHTML =
+    `<h1>All variants <small>parterre icon prototype</small></h1>` +
+    `<p class="note">Same mark in every row: macOS shape, circle, then the small sizes on light and on dark.</p>` +
+    `<h1>Round 2</h1>${round(2)}<h1 style="margin-top:48px">Round 1 (for reference)</h1>${round(1)}`;
+  document.getElementById('key').textContent = 'all';
+  document.getElementById('name').textContent = 'contact sheet';
+  document.title = 'All variants – parterre icon prototype';
+}
+
+function renderPair(keys) {
+  const vs = keys.map(k => VARIANTS.find(v => v.key === k));
+  const both = (size, shape = 'squircle') => vs.map(v => icon(v, size, shape)).join('');
+  const dock = (cls, wp) => `<div class="wallpaper ${wp}"><div class="dock ${cls}">${generic(64,'#3b82f6')}${generic(64,'#9ca3af')}${both(64)}${generic(64,'#ef7d3b')}</div></div>`;
+  const taskbar = cls => `<div class="taskbar ${cls}">${generic(24,'#3b82f6')}${generic(24,'#9ca3af')}${vs.map(v => `<span class="win">${icon(v,24)} parterre</span>`).join('')}${generic(24,'#ef7d3b')}</div>`;
+  const titlebar = cls => vs.map(v => `<div class="titlebar ${cls}">${icon(v,16)} parterre &mdash; ~/Source/repos/parterre</div>`).join('<div style="height:8px"></div>');
+  document.getElementById('page').innerHTML = `<div class="pair">
+    <h1>${keys.join(' vs ')} <small>parterre icon prototype</small></h1>
+    <p class="note">The same two marks on every surface that matters, light then dark. Left is ${keys[0]}, right is ${keys[1]}.</p>
+    <h2>Docks (macOS style), 64 px</h2>
+    <div class="row">${cell(dock('', ''), 'light dock')}${cell(dock('dark', 'dark'), 'dark dock')}</div>
+    <h2>Taskbars (Windows style), 24 px</h2>
+    <div class="row">${cell(taskbar('light'), 'light taskbar')}${cell(taskbar(''), 'dark taskbar')}</div>
+    <h2>Window title bars, 16 px</h2>
+    <div class="row">${cell(titlebar(''), 'light theme')}${cell(titlebar('dark'), 'dark theme')}</div>
+    <h2>Side by side, 128 px and 32 px</h2>
+    <div class="row">
+      <div class="row board light">${cell(both(128), '128 on light')}${cell(both(32), '32 on light')}</div>
+      <div class="row board mid">${cell(both(128), '128 on grey')}${cell(both(32), '32 on grey')}</div>
+      <div class="row board dark">${cell(both(128), '128 on dark')}${cell(both(32), '32 on dark')}</div>
+    </div>
+  </div>`;
+  document.getElementById('key').textContent = keys.join('/');
+  document.getElementById('name').textContent = 'head to head';
+  document.title = `${keys.join(' vs ')} – parterre icon prototype`;
+}
+
+let shown = null; // index of the variant on screen, -1 for the sheet
+function current() {
+  if (shown !== null) return shown;
+  const k = (new URLSearchParams(location.search).get('variant') || VARIANTS[0].key).toUpperCase();
+  if (k === 'ALL' || k.includes('V')) return -1; // 'all', or a pair like C1vC3
+  return Math.max(0, VARIANTS.findIndex(v => v.key === k));
+}
+function pairKeys() {
+  const k = (new URLSearchParams(location.search).get('variant') || '').toUpperCase();
+  const m = k.match(/^([A-Z][0-9]?)V([A-Z][0-9]?)$/);
+  return m && VARIANTS.some(v => v.key === m[1]) && VARIANTS.some(v => v.key === m[2]) ? [m[1], m[2]] : null;
+}
+function go(i) {
+  const n = (i + VARIANTS.length) % VARIANTS.length;
+  const url = new URL(location.href);
+  url.searchParams.set('variant', VARIANTS[n].key);
+  try { history.replaceState(null, '', url); } catch (e) { /* file:// in some browsers */ }
+  shown = n;
+  render(VARIANTS[n]);
+}
+document.getElementById('prev').onclick = () => go(current() - 1);
+document.getElementById('next').onclick = () => go(current() + 1);
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t.matches('input, textarea, [contenteditable]')) return;
+  if (e.key === 'ArrowLeft') go(current() - 1);
+  if (e.key === 'ArrowRight') go(current() + 1);
+});
+if (pairKeys()) renderPair(pairKeys()); else if (current() < 0) renderSheet(); else render(VARIANTS[current()]);
+</script>
+</body>
+</html>
