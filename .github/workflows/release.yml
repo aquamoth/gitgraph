@@ -55,12 +55,19 @@ jobs:
             echo "::error::--version printed '$actual', expected '$expected'"
             exit 1
           fi
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      # The binary with the README, its license, NOTICE and the licenses of the crates built
+      # into it.
       - name: Package
         shell: bash
         run: |
           name="gitgraph-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
           mkdir -p "$name" dist
-          cp README.md "$name/"
+          cp README.md LICENSE NOTICE "$name/"
+          cargo about generate --locked -c packaging/about.toml packaging/about.hbs \
+            -o "$name/THIRD-PARTY-NOTICES.html"
           if [ "$RUNNER_OS" = Windows ]; then
             cp "target/${{ matrix.target }}/release/gitgraph.exe" "$name/"
             7z a "dist/$name.zip" "$name"

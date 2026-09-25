@@ -14,8 +14,9 @@ in the root `Cargo.toml`, and both crates inherit it.
 
 3. `.github/workflows/release.yml` tests and builds on Linux, Windows and macOS (Apple silicon
    and Intel), then publishes a GitHub Release. The release has one archive per target
-   (`gitgraph-0.3.0-<target>.tar.gz`, or `.zip` for Windows) and a `SHA256SUMS` file. A tag
-   with a pre-release part, such as `v0.3.0-rc.1`, publishes a pre-release.
+   (`gitgraph-0.3.0-<target>.tar.gz`, or `.zip` for Windows) and a `SHA256SUMS` file. Each
+   archive holds the binary, the README, `LICENSE`, `NOTICE` and `THIRD-PARTY-NOTICES.html`.
+   A tag with a pre-release part, such as `v0.3.0-rc.1`, publishes a pre-release.
 
 The build fails if the tag isn't `v` + the `Cargo.toml` version, doesn't point at the commit
 being built, or the sources have local changes. In that case delete the tag
