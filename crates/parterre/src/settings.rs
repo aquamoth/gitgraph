@@ -1,6 +1,7 @@
 //! User-adjustable settings, persisted between runs by eframe.
 
 use parterre_core::layout::LayoutOptions;
+use parterre_core::log_layout::{Dividers, LogLayout};
 use parterre_core::physics::NetParams;
 use parterre_core::revgraph::GraphOptions;
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,8 @@ pub const STORAGE_KEY: &str = "gitgraph-settings";
 /// Storage key for remembered node positions: repository path -> commit hash -> rest offset
 /// from the layout, and whether the node was moved by hand.
 pub const MOVES_KEY: &str = "gitgraph-rest-offsets";
+/// Storage key for the recently opened repositories, newest first.
+pub const RECENT_KEY: &str = "parterre-recent-repositories";
 /// The format before nodes gave way to each other: only dropped (pinned) nodes and offsets.
 const OLD_MOVES_KEY: &str = "gitgraph-moved-nodes";
 
@@ -168,6 +171,29 @@ pub struct Settings {
     pub remember_moves: bool,
     /// Colours for branches by name; the first matching rule wins.
     pub branch_colors: Vec<BranchColor>,
+    pub log_window: LogWindowSettings,
+}
+
+/// What the log window remembers across runs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LogWindowSettings {
+    /// Inner size in points. (Its position can't be set on Wayland, so it isn't kept.)
+    pub size: [f32; 2],
+    /// How the panes are arranged.
+    pub layout: LogLayout,
+    /// Where the dividers are, for each layout.
+    pub dividers: Dividers,
+}
+
+impl Default for LogWindowSettings {
+    fn default() -> Self {
+        LogWindowSettings {
+            size: [1100.0, 760.0],
+            layout: LogLayout::default(),
+            dividers: Dividers::default(),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -185,6 +211,7 @@ impl Default for Settings {
             highlight_edges: true,
             remember_moves: false,
             branch_colors: Vec::new(),
+            log_window: LogWindowSettings::default(),
         };
         Look::Modern.apply(&mut s);
         s
@@ -214,5 +241,31 @@ mod tests {
             std::fs::read_to_string(to.join("app.ron")).unwrap(),
             "saved"
         );
+    }
+
+    #[test]
+    fn log_window_settings_saved_before_layouts_still_load() {
+        // As the log window saved them with layout A only (#39).
+        let old: Settings = ron::from_str("(log_window: (size: (900.0, 600.0)))").unwrap();
+        assert_eq!(old.log_window.size, [900.0, 600.0]);
+        assert_eq!(old.log_window.layout, LogLayout::Stacked);
+        assert_eq!(old.log_window.dividers, Dividers::default());
+
+        // Dividers saved for some layouts only keep the defaults of the others.
+        let partial: LogWindowSettings =
+            ron::from_str("(layout: FilesRight, dividers: (side_by_side: (0.3, 0.5)))").unwrap();
+        assert_eq!(partial.layout, LogLayout::FilesRight);
+        assert_eq!(partial.dividers.side_by_side, [0.3, 0.5]);
+        assert_eq!(partial.dividers.stacked, Dividers::default().stacked);
+    }
+
+    #[test]
+    fn log_layout_and_dividers_survive_a_round_trip() {
+        let mut s = Settings::default();
+        s.log_window.layout = LogLayout::DetailsBelow;
+        s.log_window.dividers.set(LogLayout::DetailsBelow, 1, 0.3);
+        let text = ron::to_string(&s).unwrap();
+        let back: Settings = ron::from_str(&text).unwrap();
+        assert_eq!(back.log_window, s.log_window);
     }
 }

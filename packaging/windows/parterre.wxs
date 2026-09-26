@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows installer, built by build-msi.ps1 next to this file with WiX v7 (see
+  docs/distribution.md for the choices behind it).
+
+  Dual-purpose: per-user by default, with no admin prompt, into %LOCALAPPDATA%\Programs\parterre;
+  machine-wide into Program Files with ALLUSERS=1, which Chocolatey passes. HKMU below is HKCU
+  for a per-user install and HKLM for a machine-wide one.
+
+  Preprocessor variables, all required:
+    Version  the MSI version, major.minor.patch (no pre-release part)
+    Stage    folder holding parterre.exe, LICENSE, NOTICE and THIRD-PARTY-NOTICES.html
+    Icon     packaging/icon/parterre.ico, for Settings → Apps
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- Never change the UpgradeCode: it is what makes a new version replace an old one. -->
+  <Package
+      Name="parterre"
+      Manufacturer="Trustfall AB"
+      Version="$(var.Version)"
+      UpgradeCode="{B139A92E-B931-4A5C-AFEF-2E75C53473C8}"
+      Scope="perUserOrMachine"
+      Language="1033">
+    <!-- A release candidate and its release share a version (MSI versions have no pre-release
+         part), so the same version must upgrade too, instead of installing side by side.
+         ICE61 warns about exactly that, so build-msi.ps1 suppresses it. -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of parterre is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Settings → Apps -->
+    <Icon Id="parterre.ico" SourceFile="$(var.Icon)" />
+    <Property Id="ARPPRODUCTICON" Value="parterre.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/aquamoth/parterre" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/aquamoth/parterre/issues" />
+    <!-- Nothing to choose, so no Modify button. -->
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <!-- winget reads the install location from here. -->
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
+
+    <!-- Program Files, or %LOCALAPPDATA%\Programs for a per-user install. -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="parterre" />
+    </StandardDirectory>
+
+    <Feature Id="Main">
+      <!-- Components under a user's profile need a registry key path rather than a file, so
+           each component below has one. With files as well, this one needs a GUID of its own;
+           as every upgrade removes the old version first, it can keep it when files change. -->
+      <Component Id="Program" Directory="INSTALLFOLDER" Guid="{60E56AC3-9969-405C-8F7F-1D732C10DBA0}">
+        <RegistryValue Root="HKMU" Key="Software\Trustfall AB\parterre" Name="Program"
+                       Type="integer" Value="1" KeyPath="yes" />
+        <File Id="parterre.exe" Source="$(var.Stage)\parterre.exe" />
+        <File Id="LICENSE" Source="$(var.Stage)\LICENSE" />
+        <File Id="NOTICE" Source="$(var.Stage)\NOTICE" />
+        <File Id="THIRD_PARTY_NOTICES" Source="$(var.Stage)\THIRD-PARTY-NOTICES.html" />
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+      </Component>
+
+      <!-- A Start menu entry of its own, no folder; no desktop shortcut.
+           ICE57 calls this component per-user data with a key path that may be per-machine. It
+           can't tell that ProgramMenuFolder and HKMU both follow ALLUSERS, so build-msi.ps1
+           suppresses it. The target names the folder rather than the file ([#parterre.exe]),
+           which ICE69 would flag as a reference into another component. -->
+      <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder">
+        <RegistryValue Root="HKMU" Key="Software\Trustfall AB\parterre" Name="StartMenuShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+        <Shortcut Id="StartMenuShortcut" Name="parterre"
+                  Description="Revision graph viewer for git repositories"
+                  Target="[INSTALLFOLDER]parterre.exe" WorkingDirectory="INSTALLFOLDER" />
+      </Component>
+
+      <!-- "Revision Graph" in Explorer's context menu, on a folder and on the
+           background of an open one, as TortoiseGit offers its revision graph. Plain shell verbs
+           under HKMU\Software\Classes: the user's classes for a per-user install, the machine's
+           for a machine-wide one. Windows 11 lists them under "Show more options"; a top-level
+           entry would need an IExplorerCommand handler and package identity (MSIX).
+           %V is the folder in both places. On a folder the entry is offered for one only, so
+           that selecting many doesn't open a window each. Every folder gets the entry, as a
+           verb can't ask git whether the folder is in a repository; parterre says so if not.
+           NoWorkingDirectory keeps Explorer from starting parterre in the folder, which would
+           then stay in use, so that it couldn't be renamed or deleted while the graph is open.
+           The keys are removed whole on uninstall. That is safe only because MajorUpgrade
+           removes the old version before installing the new one (its default schedule): moved
+           after the install, it would delete the new version's keys. -->
+      <Component Id="ExplorerMenu" Directory="INSTALLFOLDER">
+        <RegistryValue Root="HKMU" Key="Software\Trustfall AB\parterre" Name="ExplorerMenu"
+                       Type="integer" Value="1" KeyPath="yes" />
+        <RegistryKey Root="HKMU" Key="Software\Classes\Directory\shell\parterre"
+                     ForceDeleteOnUninstall="yes">
+          <RegistryValue Type="string" Value="Revision Graph" />
+          <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]parterre.exe" />
+          <RegistryValue Name="NoWorkingDirectory" Type="string" Value="" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Single" />
+          <RegistryValue Key="command" Type="string"
+                         Value="&quot;[INSTALLFOLDER]parterre.exe&quot; &quot;%V&quot;" />
+        </RegistryKey>
+        <RegistryKey Root="HKMU" Key="Software\Classes\Directory\Background\shell\parterre"
+                     ForceDeleteOnUninstall="yes">
+          <RegistryValue Type="string" Value="Revision Graph" />
+          <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]parterre.exe" />
+          <RegistryValue Name="NoWorkingDirectory" Type="string" Value="" />
+          <RegistryValue Key="command" Type="string"
+                         Value="&quot;[INSTALLFOLDER]parterre.exe&quot; &quot;%V&quot;" />
+        </RegistryKey>
+      </Component>
+
+      <!-- parterre on PATH: the user's PATH for a per-user install, the system's for a
+           machine-wide one. -->
+      <Component Id="UserPath" Directory="INSTALLFOLDER" Condition="NOT (ALLUSERS = 1)">
+        <RegistryValue Root="HKCU" Key="Software\Trustfall AB\parterre" Name="UserPath"
+                       Type="integer" Value="1" KeyPath="yes" />
+        <Environment Id="UserPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last"
+                     Action="set" System="no" Permanent="no" />
+      </Component>
+      <Component Id="SystemPath" Directory="INSTALLFOLDER" Condition="ALLUSERS = 1">
+        <!-- HKMU rather than HKLM, which is the same here but which ICE105 accepts in a package
+             that can install per-user. -->
+        <RegistryValue Root="HKMU" Key="Software\Trustfall AB\parterre" Name="SystemPath"
+                       Type="integer" Value="1" KeyPath="yes" />
+        <Environment Id="SystemPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last"
+                     Action="set" System="yes" Permanent="no" />
+      </Component>
+    </Feature>
+  </Package>
+</Wix>

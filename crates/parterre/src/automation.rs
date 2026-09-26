@@ -27,8 +27,13 @@ pub struct Automation {
     /// Open the ☰ menu, a toolbar popover (`filter`, `zoom`, `drag`) or the settings
     /// (`settings`, or `settings:<page>`) before the screenshot.
     pub demo_open: Option<String>,
+    /// Open the log window on `<ref>` or `<ref>..<ref>` (as if those nodes were selected in
+    /// that order) before the screenshot.
+    pub demo_log: Option<String>,
     /// Where the context menu is opened, once chosen.
     menu_at: Option<Pos2>,
+    /// When (in egui's clock) the menu or popover was opened.
+    opened_at: Option<f64>,
     frame: u32,
     requested: bool,
     frame_times: Vec<std::time::Instant>,
@@ -97,10 +102,12 @@ impl Automation {
         self.is_active().then_some(1.0 / 60.0)
     }
 
+    /// Called after each frame. Without a scene (no repository open) only the popups can be
+    /// opened before the screenshot.
     pub fn drive(
         &mut self,
         ctx: &egui::Context,
-        scene: &mut Scene,
+        scene: Option<&mut Scene>,
         view: &mut View,
         canvas: Rect,
         params: &NetParams,
@@ -117,13 +124,18 @@ impl Automation {
             view.zoom_around(canvas, canvas.center(), z / view.zoom);
         }
 
+        if self.frame == MENU_START {
+            self.opened_at = Some(ctx.input(|i| i.time));
+        }
         if self.frame == MENU_START
             && let Some(name) = &self.demo_open
             && !name.starts_with("settings")
         {
             egui::Popup::open_id(ctx, crate::app::popup_id(name));
         }
-        if self.frame == MENU_START {
+        if self.frame == MENU_START
+            && let Some(scene) = scene.as_deref()
+        {
             self.menu_at = match self.demo_menu {
                 Some(DemoMenu::Node) => self
                     .demo_node(scene, view, canvas)
@@ -133,7 +145,9 @@ impl Automation {
             };
         }
 
-        if let Some(delta) = self.demo_drag {
+        if let Some(delta) = self.demo_drag
+            && let Some(scene) = scene
+        {
             let f = self.frame;
             if f == DRAG_START {
                 if let Some(n) = self.demo_node(scene, view, canvas) {
@@ -153,12 +167,16 @@ impl Automation {
 
         let shoot_at = if self.demo_drag.is_some() {
             DRAG_START + DRAG_FRAMES + SETTLE_FRAMES
-        } else if self.demo_menu.is_some() || self.demo_open.is_some() {
+        } else if self.demo_menu.is_some() || self.demo_open.is_some() || self.demo_log.is_some() {
             MENU_START + 60
         } else {
             8
         };
-        if self.frame >= shoot_at && !self.requested {
+        // Popups fade in over wall-clock time, which 60 frames of a small window can undercut.
+        let faded_in = self.opened_at.is_none_or(|t| {
+            ctx.input(|i| i.time) - t > 2.0 * f64::from(ctx.global_style().animation_time)
+        });
+        if self.frame >= shoot_at && faded_in && !self.requested {
             self.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }

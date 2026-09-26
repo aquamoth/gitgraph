@@ -23,6 +23,7 @@ anyhow.workspace = true
 clap.workspace = true
 eframe.workspace = true
 image.workspace = true
+rfd.workspace = true
 serde.workspace = true
 
 # Only to turn on a feature of eframe's winit: on Wayland desktops that leave the title bar to
@@ -32,6 +33,8 @@ winit = { version = "0.30", default-features = false, features = ["wayland-csd-a
 
 [dev-dependencies]
 tempfile.workspace = true
+# The format eframe saves settings in, for testing that old settings still load.
+ron = "0.12"
 
 [build-dependencies]
 embed-resource = "3"

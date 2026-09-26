@@ -7,6 +7,7 @@ mod app;
 mod automation;
 mod console;
 mod export;
+mod frame_pacing;
 mod icon;
 mod menu;
 mod render;
@@ -19,13 +20,18 @@ mod theme;
 mod version;
 mod view;
 mod widgets;
+// Runs in build.rs; compiled here only for its tests.
+#[cfg(test)]
+mod win_resource;
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, ValueEnum};
 use eframe::egui;
 use parterre_core::layout::Direction;
+use parterre_core::log_layout::LogLayout;
 use parterre_core::physics::DragModel;
 use parterre_core::revgraph::Simplification;
 
@@ -39,9 +45,9 @@ const VERSION: &str = env!("PARTERRE_VERSION");
 #[derive(Debug, Parser)]
 #[command(version = VERSION, about)]
 struct Cli {
-    /// Repository to show (any directory inside it).
-    #[arg(default_value = ".")]
-    path: PathBuf,
+    /// Repository to show (any directory inside it). Without one, the repository of the current
+    /// directory, or none: the window then asks for one.
+    path: Option<PathBuf>,
 
     /// Which commits to show.
     #[arg(long, value_enum)]
@@ -132,6 +138,16 @@ struct Cli {
     #[arg(long, value_name = "WHAT", hide = true)]
     demo_open: Option<String>,
 
+    /// Open the log window before taking the screenshot: of REF, or of the range FIRST..SECOND
+    /// (refs or hash prefixes, as if those nodes were selected in that order).
+    #[arg(long, value_name = "REF[..REF]", hide = true)]
+    demo_log: Option<String>,
+
+    /// The log window's layout (for --demo-log): stacked, side-by-side, details-below or
+    /// files-right, or a, b, c or d.
+    #[arg(long, value_enum, hide = true)]
+    log_layout: Option<LogLayoutArg>,
+
     /// What moves when dragging (for --demo-drag).
     #[arg(long, value_enum, hide = true)]
     drag_mode: Option<DragModeArg>,
@@ -142,6 +158,18 @@ enum DragModeArg {
     Adapt,
     Free,
     Subtree,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LogLayoutArg {
+    #[value(alias = "a")]
+    Stacked,
+    #[value(alias = "b")]
+    SideBySide,
+    #[value(alias = "c")]
+    DetailsBelow,
+    #[value(alias = "d")]
+    FilesRight,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -199,16 +227,38 @@ fn parse_vec(s: &str) -> Result<(f32, f32), String> {
 
 fn main() -> ExitCode {
     console::attach_parent();
-    let cli = Cli::parse();
-    let repo = match parterre_core::git::load_repo(&cli.path) {
-        Ok(repo) => repo,
-        Err(e) => {
-            eprintln!("parterre: {e}");
-            return ExitCode::FAILURE;
-        }
+    let mut cli = Cli::parse();
+    cli.path = cli.path.take().map(repair_quoted_root);
+    // Why the repository named on the command line didn't open, when the window says so.
+    let mut open_error = None;
+    let repo = match &cli.path {
+        Some(path) => match parterre_core::git::load_repo(path) {
+            Ok(repo) => Some(repo),
+            // In a terminal or a scripted run, say why and stop. Started from Explorer's menu, a
+            // desktop entry or a shortcut there is no one to read stderr, so the window opens
+            // and shows it.
+            Err(e)
+                if cli.export.is_some()
+                    || cli.screenshot.is_some()
+                    || std::io::stderr().is_terminal() =>
+            {
+                eprintln!("parterre: {e}");
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                open_error = Some(format!("Could not open {}: {e}", path.display()));
+                None
+            }
+        },
+        // Started from a menu or file manager, the current directory is seldom a repository.
+        None => parterre_core::git::load_repo(std::path::Path::new(".")).ok(),
     };
 
     if let Some(path) = cli.export.clone() {
+        let Some(repo) = repo else {
+            eprintln!("parterre: not in a git repository; name one to export");
+            return ExitCode::FAILURE;
+        };
         let mut settings = settings::Settings::default();
         apply_cli(&cli, &mut settings);
         return match export_headless(&std::sync::Arc::new(repo), &settings, &path) {
@@ -227,15 +277,19 @@ fn main() -> ExitCode {
     }
 
     let (w, h) = cli.window_size.unwrap_or((1400.0, 900.0));
-    let options = eframe::NativeOptions {
+    // On Wayland a vsync'ed swap of a hidden window blocks the whole app (egui#5145); see
+    // `frame_pacing`. eframe reads this once, when it creates the GL context.
+    let vsync = !frame_pacing::wayland_session();
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(format!("{} – parterre", repo.display_name()))
+            .with_title(app::window_title(repo.as_ref()))
             .with_app_id(settings::APP_ID)
             .with_inner_size([w, h])
             .with_min_inner_size([400.0, 300.0])
             .with_icon(std::sync::Arc::new(icon::icon())),
         ..Default::default()
     };
+    options.glow_options.vsync = vsync;
     let mut automation = Automation::new(
         cli.screenshot.clone(),
         cli.fit,
@@ -244,11 +298,11 @@ fn main() -> ExitCode {
     );
     automation.demo_node = cli.demo_node.clone();
     automation.demo_open = cli.demo_open.clone();
+    automation.demo_log = cli.demo_log.clone();
     automation.demo_menu = cli.demo_menu.map(|m| match m {
         DemoMenuArg::Node => automation::DemoMenu::Node,
         DemoMenuArg::Canvas => automation::DemoMenu::Canvas,
     });
-    let path = cli.path.clone();
     let overrides = move |s: &mut settings::Settings| apply_cli(&cli, s);
     settings::adopt_old_storage();
     let result = eframe::run_native(
@@ -256,7 +310,7 @@ fn main() -> ExitCode {
         options,
         Box::new(move |cc| {
             Ok(Box::new(app::ParterreApp::new(
-                cc, path, repo, overrides, automation,
+                cc, repo, open_error, overrides, automation, vsync,
             )))
         }),
     );
@@ -322,12 +376,34 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
             DragModeArg::Subtree => DragModel::Subtree,
         };
     }
+    if let Some(layout) = cli.log_layout {
+        s.log_window.layout = match layout {
+            LogLayoutArg::Stacked => LogLayout::Stacked,
+            LogLayoutArg::SideBySide => LogLayout::SideBySide,
+            LogLayoutArg::DetailsBelow => LogLayout::DetailsBelow,
+            LogLayoutArg::FilesRight => LogLayout::FilesRight,
+        };
+    }
     if let Some(theme) = cli.theme {
         s.theme = match theme {
             Theme::System => ThemeChoice::System,
             Theme::Light => ThemeChoice::Light,
             Theme::Dark => ThemeChoice::Dark,
         };
+    }
+}
+
+/// Undoes a quirk of Windows command lines: a quoted path ending in a backslash, as Explorer
+/// passes the root of a drive (`"C:\"`), arrives with the backslash taken as escaping the
+/// closing quote (`C:"`). No Windows path can contain a quote, so a trailing one is put back
+/// as the backslash. Elsewhere a quote is a valid character and is left alone.
+fn repair_quoted_root(path: PathBuf) -> PathBuf {
+    if !cfg!(windows) {
+        return path;
+    }
+    match path.to_str().and_then(|s| s.strip_suffix('"')) {
+        Some(root) => PathBuf::from(format!("{root}\\")),
+        None => path,
     }
 }
 
@@ -361,4 +437,32 @@ fn export_headless(
     std::fs::write(path, export::to_svg(&scene, settings, &palette))?;
     eprintln!("wrote {} ({} nodes)", path.display(), scene.node_count());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn repairs_a_quoted_drive_root() {
+        // Explorer's `"%V"` on the background of C:\ gives `"C:\"`, which arrives as `C:"`.
+        assert_eq!(
+            repair_quoted_root(PathBuf::from("C:\"")),
+            PathBuf::from("C:\\")
+        );
+        assert_eq!(
+            repair_quoted_root(PathBuf::from("C:\\src\\repo")),
+            PathBuf::from("C:\\src\\repo")
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn keeps_quotes_where_names_may_have_them() {
+        assert_eq!(
+            repair_quoted_root(PathBuf::from("a\"")),
+            PathBuf::from("a\"")
+        );
+    }
 }

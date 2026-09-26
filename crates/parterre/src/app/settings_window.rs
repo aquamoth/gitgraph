@@ -6,6 +6,7 @@ use eframe::egui::{self, Align, Layout, RichText, ScrollArea, Stroke, Ui, vec2};
 use parterre_core::layout::{Direction, LayoutOptions, Ranking};
 
 use super::ParterreApp;
+use super::log_window::layout_picker;
 use super::toolbar::{HIDE_TIP, REF_FILTER_TIP, REMEMBER_TIP};
 use crate::settings::{Arrows, EdgeStyle, Look};
 use crate::theme::{BranchColor, ThemeChoice};
@@ -67,6 +68,8 @@ const STASH_TIP: &str = "Show the stash, as a label on the commit it was made on
 const LAYER_GAP_TIP: &str = "Space between rows of commits (TortoiseGit: 30).";
 const NODE_GAP_TIP: &str = "Space between neighbouring commits in a row (TortoiseGit: 25).";
 const EDGE_GAP_TIP: &str = "Room for each edge that passes between the commits of a row.";
+const LOG_LAYOUT_TIP: &str = "How the log window arranges its commits, details and changed \
+    files. Also in the log window's header.";
 const PAGE: f32 = 440.0;
 
 impl ParterreApp {
@@ -88,6 +91,11 @@ impl ParterreApp {
             .with_icon(self.window_icon.clone())
             .with_inner_size([SIDEBAR + PAGE + 56.0, 480.0])
             .with_resizable(false)
+            // A dialog: nothing to minimize or maximize (maximizing broke its layout). winit
+            // 0.30 does this on Windows and macOS only; on Linux (X11 and Wayland) it ignores
+            // the buttons, and only the window being fixed in size takes away maximize (winit's
+            // own Wayland title bar leaves it out, X11 gets a hint). Minimize stays there.
+            .with_minimize_button(false)
             .with_maximize_button(false);
         let id = egui::ViewportId::from_hash_of("settings");
         // A new window is created after this frame and painted in the next; don't wait for
@@ -158,51 +166,65 @@ impl ParterreApp {
         }
         let s = &mut self.settings;
         match page {
-            SettingsPage::Appearance => group(ui, |rows| {
-                rows.row("Theme", THEME_TIP, |ui| {
-                    text_segmented(ui, &mut s.theme, &ThemeChoice::ALL.map(|t| (t, t.label())));
-                });
-                rows.row(
-                    "Style",
-                    "Modern: curved edges bundled into trunks, and wide rows split so siblings \
+            SettingsPage::Appearance => {
+                group(ui, |rows| {
+                    rows.row("Theme", THEME_TIP, |ui| {
+                        text_segmented(ui, &mut s.theme, &ThemeChoice::ALL.map(|t| (t, t.label())));
+                    });
+                    rows.row(
+                        "Style",
+                        "Modern: curved edges bundled into trunks, and wide rows split so siblings \
                      stack. Classic: as TortoiseGit draws it.",
-                    |ui| {
-                        let current = Look::of(s);
-                        egui::ComboBox::from_id_salt("look")
-                            .selected_text(current.map_or("Custom", Look::label))
-                            .show_ui(ui, |ui| {
-                                for look in Look::ALL {
-                                    let chosen = current == Some(look);
-                                    if ui.selectable_label(chosen, look.label()).clicked() {
-                                        look.apply(s);
+                        |ui| {
+                            let current = Look::of(s);
+                            egui::ComboBox::from_id_salt("look")
+                                .selected_text(current.map_or("Custom", Look::label))
+                                .show_ui(ui, |ui| {
+                                    for look in Look::ALL {
+                                        let chosen = current == Some(look);
+                                        if ui.selectable_label(chosen, look.label()).clicked() {
+                                            look.apply(s);
+                                        }
                                     }
-                                }
-                            });
-                    },
-                );
-                rows.row("Edges", "Straight is how TortoiseGit draws them.", |ui| {
-                    text_segmented(
-                        ui,
-                        &mut s.edge_style,
-                        &EdgeStyle::ALL.map(|e| (e, e.label())),
+                                });
+                        },
                     );
+                    rows.row("Edges", "Straight is how TortoiseGit draws them.", |ui| {
+                        text_segmented(
+                            ui,
+                            &mut s.edge_style,
+                            &EdgeStyle::ALL.map(|e| (e, e.label())),
+                        );
+                    });
+                    rows.row("Arrows", ARROWS_TIP, |ui| {
+                        combo(ui, "arrows", &mut s.arrows, &Arrows::ALL, Arrows::label);
+                    });
+                    rows.switch(
+                        "Highlight edges of the selection",
+                        HIGHLIGHT_TIP,
+                        &mut s.highlight_edges,
+                    );
+                    rows.switch(
+                        "Count collapsed commits on edges",
+                        "Label each edge with the number of commits hidden in it.",
+                        &mut s.show_hidden_counts,
+                    );
+                    rows.switch("Overview map", OVERVIEW_TIP, &mut s.show_overview);
+                    rows.switch("Status bar", STATUS_TIP, &mut s.show_status_bar);
                 });
-                rows.row("Arrows", ARROWS_TIP, |ui| {
-                    combo(ui, "arrows", &mut s.arrows, &Arrows::ALL, Arrows::label);
+                ui.add_space(14.0);
+                title(ui, "Log window");
+                let log = &mut s.log_window;
+                group(ui, |rows| {
+                    rows.row("Layout", LOG_LAYOUT_TIP, |ui| {
+                        if let Some(layout) = layout_picker(ui, log.layout) {
+                            log.layout = layout;
+                        }
+                        ui.add_space(4.0);
+                        ui.weak(log.layout.label());
+                    });
                 });
-                rows.switch(
-                    "Highlight edges of the selection",
-                    HIGHLIGHT_TIP,
-                    &mut s.highlight_edges,
-                );
-                rows.switch(
-                    "Count collapsed commits on edges",
-                    "Label each edge with the number of commits hidden in it.",
-                    &mut s.show_hidden_counts,
-                );
-                rows.switch("Overview map", OVERVIEW_TIP, &mut s.show_overview);
-                rows.switch("Status bar", STATUS_TIP, &mut s.show_status_bar);
-            }),
+            }
             SettingsPage::BranchColours => branch_colours(ui, &mut s.branch_colors),
             SettingsPage::Graph => group(ui, |rows| {
                 rows.row("Newest commits", DIRECTION_TIP, |ui| {
