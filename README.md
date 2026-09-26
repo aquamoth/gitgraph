@@ -38,7 +38,8 @@ parterre also needs `git`. Packages for winget, Chocolatey and Linux are on thei
 ## Usage
 
 ```sh
-parterre [PATH]                    # open the repository containing PATH (default: .)
+parterre [PATH]                    # open the repository containing PATH (default: the
+                                   # current directory's, or none: the window asks for one)
 parterre --mode branches           # also show every fork point and merge
 parterre --mode all --no-remotes   # every commit, local branches and tags only
 parterre --look classic            # straight, unbundled edges like TortoiseGit
@@ -67,6 +68,7 @@ In the window:
 | `R` | Return all nodes to the layout |
 | `Esc` | Clear the selection |
 | `F5` | Reload the repository |
+| `Ctrl+O` / `Ctrl+W` | Open / close a folder; the ☰ menu also lists the recent ones |
 | `Ctrl+,` | Settings |
 
 The toolbar holds what you use every day, the ☰ menu has all of that and more, and

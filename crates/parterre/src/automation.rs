@@ -97,10 +97,12 @@ impl Automation {
         self.is_active().then_some(1.0 / 60.0)
     }
 
+    /// Called after each frame. Without a scene (no repository open) only the popups can be
+    /// opened before the screenshot.
     pub fn drive(
         &mut self,
         ctx: &egui::Context,
-        scene: &mut Scene,
+        scene: Option<&mut Scene>,
         view: &mut View,
         canvas: Rect,
         params: &NetParams,
@@ -123,7 +125,9 @@ impl Automation {
         {
             egui::Popup::open_id(ctx, crate::app::popup_id(name));
         }
-        if self.frame == MENU_START {
+        if self.frame == MENU_START
+            && let Some(scene) = scene.as_deref()
+        {
             self.menu_at = match self.demo_menu {
                 Some(DemoMenu::Node) => self
                     .demo_node(scene, view, canvas)
@@ -133,7 +137,9 @@ impl Automation {
             };
         }
 
-        if let Some(delta) = self.demo_drag {
+        if let Some(delta) = self.demo_drag
+            && let Some(scene) = scene
+        {
             let f = self.frame;
             if f == DRAG_START {
                 if let Some(n) = self.demo_node(scene, view, canvas) {

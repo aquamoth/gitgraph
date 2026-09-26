@@ -8,6 +8,7 @@ pub mod layout;
 pub mod oid;
 pub mod pattern;
 pub mod physics;
+pub mod recent;
 pub mod repo;
 pub mod revgraph;
 pub mod route;

@@ -29,6 +29,9 @@ eframe = { version = "0.36", default-features = false, features = [
     "wayland",
     "x11",
 ] }
+# Native folder picker: Windows' own dialog, macOS's NSOpenPanel, and on Linux the XDG desktop
+# portal (falling back to zenity), so no GTK is linked.
+rfd = "0.17"
 image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile = "3"
 

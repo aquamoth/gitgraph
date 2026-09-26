@@ -23,6 +23,7 @@ anyhow.workspace = true
 clap.workspace = true
 eframe.workspace = true
 image.workspace = true
+rfd.workspace = true
 serde.workspace = true
 
 # Only to turn on a feature of eframe's winit: on Wayland desktops that leave the title bar to
