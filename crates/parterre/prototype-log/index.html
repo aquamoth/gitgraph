@@ -1,9 +1,10 @@
 <!doctype html>
 <!--
   PROTOTYPE, throwaway. Question (#29): what should parterre's log window look and feel like,
-  given the scope decided in #27 and #28? Three structurally different layouts of the same
-  content: A stacked (TortoiseGit's order), B side by side, C inline (details open under the
-  selected row). Switch with ?variant=A|B|C, the arrows in the bottom bar, or the ← → keys.
+  given the scope decided in #27 and #28? Layouts of the same content. Round 2 (after
+  feedback): A stacked (TortoiseGit's order), B side by side, C details and files side by side
+  below the list, D files in a full-height right column. Round 1's C (inline under the selected
+  row) was dropped: it jumped around. Switch with ?variant=A|B|C|D, the arrows in the bottom bar, or the ← → keys.
   ?theme=light|dark. Live, read-only data from the repository serve.py was started on.
   The bottom bar also stands in for the graph: pick the node (or two nodes) to "Show log" on.
 -->
@@ -153,7 +154,7 @@ table.ft { width: 100%; border-collapse: collapse; }
   <button id="theme" title="Theme" style="width:auto;padding:0 10px">◐</button>
 </div>
 <script>
-const VARIANTS = { A: "Stacked", B: "Side by side", C: "Inline" };
+const VARIANTS = { A: "Stacked", B: "Side by side", C: "Details and files below", D: "Files on the right" };
 const params = new URLSearchParams(location.search);
 let variant = VARIANTS[params.get("variant")] ? params.get("variant") : "A";
 let theme = params.get("theme") === "dark" ? "dark" : "light";
@@ -165,7 +166,8 @@ const S = {
   repo: null, refs: {}, rows: [], sel: 0, spec: "", label: "",
   messages: new Map(), files: new Map(),
   filter: "", sort: null, // {key, dir}
-  sizes: { A: [45, 22], B: [56, 38] }, // A: list %, details % ; B: list width %, details height %
+  sizes: { A: [45, 22], B: [56, 38], C: [55, 40], D: [58, 62] },
+  // A: list %, details % ; B: list width %, details height % ; C: list height %, details width % ; D: left width %, list height %
 };
 
 const $ = (id) => document.getElementById(id);
@@ -295,7 +297,7 @@ function rowHTML(i, top) {
   const refs = (S.refs[h] || []).map(badge).join("");
   return `<div class="row${i === S.sel ? " sel" : ""}" data-i="${i}" style="top:${top}px"><div class="hash mono">${short(h)}</div><div class="subj">${refs}<span class="t">${esc(subj)}</span></div><div title="${esc(an)} &lt;${esc(ae)}&gt;">${esc(an)}</div><div class="date">${esc(ad)}</div></div>`;
 }
-function inlineOpen() { return variant === "C" && S.rows.length > 0; }
+function inlineOpen() { return false; } // round 1's inline variant, dropped
 const rowTop = (i) => i * ROW + (inlineOpen() && i > S.sel ? INLINE_H : 0);
 function drawRows() {
   const list = $("list"), host = $("rows"); if (!list) return;
@@ -339,8 +341,23 @@ function render() {
         <div class="pane" style="flex:0 0 ${d}%"><div class="details" id="details"></div></div>
         <div class="split-h" data-split="B1"></div>
         <div class="pane" style="flex:1"><div class="fbar" id="fbar"></div><div class="files" id="files"></div></div></div>`;
+  } else if (variant === "C") {
+    const [l, d] = S.sizes.C;
+    body.innerHTML = `<div class="col" style="flex:1">
+      <div class="pane" style="flex:0 0 ${l}%">${listHTML(false)}</div>
+      <div class="split-h" data-split="C0"></div>
+      <div style="flex:1;display:flex;min-height:0">
+        <div class="pane" style="flex:0 0 ${d}%"><div class="details" id="details"></div></div>
+        <div class="split-v" data-split="C1"></div>
+        <div class="pane" style="flex:1"><div class="fbar" id="fbar"></div><div class="files" id="files"></div></div></div></div>`;
   } else {
-    body.innerHTML = `<div class="pane" style="flex:1">${listHTML(false)}</div>`;
+    const [w, l] = S.sizes.D;
+    body.innerHTML = `<div class="col" style="flex:0 0 ${w}%">
+        <div class="pane" style="flex:0 0 ${l}%">${listHTML(true)}</div>
+        <div class="split-h" data-split="D1"></div>
+        <div class="pane" style="flex:1"><div class="details" id="details"></div></div></div>
+      <div class="split-v" data-split="D0"></div>
+      <div class="pane" style="flex:1"><div class="fbar" id="fbar"></div><div class="files" id="files"></div></div>`;
   }
   $("list").addEventListener("scroll", drawRows);
   refreshSelection(true);
@@ -349,7 +366,7 @@ function render() {
 function refreshSelection(scroll) {
   const r = S.rows[S.sel];
   if (r) need(r[0]);
-  if (variant !== "C") {
+  {
     if ($("details")) $("details").innerHTML = detailsHTML();
     const f = filesHTML();
     const hadFocus = document.activeElement && document.activeElement.id === "pathfilter";
@@ -396,12 +413,17 @@ document.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   const which = sp.dataset.split, box = $("body").getBoundingClientRect();
   const move = (ev) => {
-    if (which === "B0") S.sizes.B[0] = clamp((ev.clientX - box.left) / box.width * 100, 25, 80);
+    const px = (ev.clientX - box.left) / box.width * 100;
+    if (which === "B0") S.sizes.B[0] = clamp(px, 25, 80);
+    else if (which === "D0") S.sizes.D[0] = clamp(px, 25, 80);
+    else if (which === "C1") S.sizes.C[1] = clamp(px, 15, 80);
     else {
       const pct = (ev.clientY - box.top) / box.height * 100;
       if (which === "A0") S.sizes.A[0] = clamp(pct, 15, 80 - S.sizes.A[1]);
       if (which === "A1") S.sizes.A[1] = clamp(pct - S.sizes.A[0], 8, 80 - S.sizes.A[0]);
       if (which === "B1") S.sizes.B[1] = clamp(pct, 10, 85);
+      if (which === "C0") S.sizes.C[0] = clamp(pct, 15, 85);
+      if (which === "D1") S.sizes.D[1] = clamp(pct, 15, 85);
     }
     render();
   };
