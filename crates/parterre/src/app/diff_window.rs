@@ -191,6 +191,8 @@ struct RowInput {
     /// Rows drawn this frame, first and last.
     first: Option<usize>,
     last: Option<usize>,
+    /// Unified: the version a press where the pointer is would choose.
+    version: Option<Column>,
 }
 
 #[derive(Debug)]
@@ -803,7 +805,13 @@ impl DiffWindow {
         let selection = self.selection;
         let dragging = self.dragging;
         let pointer = ui.input(|i| i.pointer.interact_pos());
-        let (pressed, shift) = ui.input(|i| (i.pointer.primary_pressed(), i.modifiers.shift));
+        let (pressed, shift, ctrl) = ui.input(|i| {
+            (
+                i.pointer.primary_pressed(),
+                i.modifiers.shift,
+                i.modifiers.command,
+            )
+        });
         let mut input = RowInput::default();
         let mut child = ui.new_child(UiBuilder::new().max_rect(area));
         child.set_clip_rect(area.intersect(ui.clip_rect()));
@@ -890,26 +898,31 @@ impl DiffWindow {
                     if !on_numbers {
                         let _ = response.clone().on_hover_cursor(egui::CursorIcon::Text);
                     }
-                    if pressed && response.hovered() {
-                        let column = if side {
-                            *column
-                        } else if let Some(s) = selection.filter(|_| shift) {
-                            s.column
-                        } else if on_numbers {
-                            // The old numbers come first, then the new.
-                            if p.x < half.left() + gutter {
-                                Column::Old
-                            } else {
-                                Column::New
-                            }
-                        } else if diff
-                            .line(row, None)
-                            .is_some_and(|l| l.kind == LineKind::Removed)
-                        {
+                    // The version a press here chooses: side by side, the pane; unified,
+                    // the selection's with Shift, else the line's (Ctrl takes the old
+                    // version of an unchanged line), or on the numbers, their version.
+                    let column = if side {
+                        *column
+                    } else if let Some(s) = selection.filter(|_| shift) {
+                        s.column
+                    } else if on_numbers {
+                        // The old numbers come first, then the new.
+                        if p.x < half.left() + gutter {
                             Column::Old
                         } else {
                             Column::New
-                        };
+                        }
+                    } else {
+                        match diff.line(row, None).map(|l| l.kind) {
+                            Some(LineKind::Removed) => Column::Old,
+                            Some(LineKind::Same) if ctrl => Column::Old,
+                            _ => Column::New,
+                        }
+                    };
+                    if !side {
+                        input.version = Some(column);
+                    }
+                    if pressed && response.hovered() {
                         input.press = Some((r, column, char_at(at), on_numbers));
                     }
                 }
@@ -938,6 +951,17 @@ impl DiffWindow {
         );
         overview(ui, strip, diff, rows, &self.shown, side, view, row_h, c);
         self.select(ui, &input, area, out.state.offset.y, row_h);
+        // Unified: a badge by the pointer says which version choosing takes.
+        let badge = if self.dragging {
+            self.selection
+                .map(|s| s.column)
+                .filter(|_| form == DiffForm::Unified)
+        } else {
+            input.version
+        };
+        if let (Some(version), Some(p)) = (badge, ui.input(|i| i.pointer.hover_pos())) {
+            version_badge(ui, p, version, c);
+        }
         if let Some(lines) = input.fold {
             self.open.push(lines);
             self.dirty = true;
@@ -1377,6 +1401,29 @@ fn fold_button(ui: &mut Ui, on: bool, opened: bool) -> egui::Response {
         (false, _) => (glyphs::UNFOLD, false),
     };
     widgets::icon_button(ui, glyph, tinted)
+}
+
+/// A small `+` (new version) or `−` (old version) at the lower right of the pointer, to say
+/// which version choosing text takes in the unified form. egui can't change the cursor's
+/// image, so the badge is drawn beside it, above everything else.
+fn version_badge(ui: &Ui, pointer: egui::Pos2, version: Column, c: &Colors) {
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Tooltip,
+        egui::Id::new("diff-version-badge"),
+    ));
+    let center = pointer + vec2(12.0, 14.0);
+    let fill = match version {
+        Column::Old => c.removed,
+        Column::New => c.added,
+    };
+    let box_ = Rect::from_center_size(center, Vec2::splat(11.0));
+    painter.rect_filled(box_.expand(1.0), CornerRadius::same(3), Color32::WHITE);
+    painter.rect_filled(box_, CornerRadius::same(3), fill);
+    let stroke = Stroke::new(1.6, Color32::WHITE);
+    painter.hline(center.x - 3.0..=center.x + 3.0, center.y, stroke);
+    if version == Column::New {
+        painter.vline(center.x, center.y - 3.0..=center.y + 3.0, stroke);
+    }
 }
 
 /// A fold: `n unchanged lines`, across the row.
@@ -1918,6 +1965,19 @@ mod tests {
         let (a, b) = (at_unified(&ctx, &w, 0, 0), at_unified(&ctx, &w, 3, 3));
         drag(&ctx, &mut w, &mut settings, a, b);
         assert_eq!(w.selected_text().as_deref(), Some("keep\nnew line\nend"));
+
+        // From an unchanged line with Ctrl held: the old version.
+        let (a, b) = (at_unified(&ctx, &w, 0, 0), at_unified(&ctx, &w, 3, 3));
+        let ctrl = Modifiers::COMMAND;
+        let steps = [
+            vec![egui::Event::PointerMoved(a), button(a, true, ctrl)],
+            vec![egui::Event::PointerMoved(b)],
+            vec![button(b, false, ctrl)],
+        ];
+        for events in steps {
+            frame_with(&ctx, &mut w, &mut settings, events, ctrl);
+        }
+        assert_eq!(w.selected_text().as_deref(), Some("keep\nold line\nend"));
 
         // On the old line numbers (the first column): whole lines of the old version.
         let gutter_old = |row| at_unified(&ctx, &w, row, 0) - vec2(MARKER + 40.0, 0.0);
