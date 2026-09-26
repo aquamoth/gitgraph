@@ -55,10 +55,19 @@ fn input(rng: &mut Rng, n: usize) -> LayoutInput {
     }
 }
 
+/// `PHYSICS_SEED` and `PHYSICS_ITERS` override the seed and the number of graphs, to hunt
+/// for failures: `PHYSICS_SEED=31337 PHYSICS_ITERS=1000 cargo test --test properties_physics`.
+fn env_or(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
 #[test]
 fn physics_random_drags() {
-    let mut rng = Rng(4242);
-    for iter in 0..120 {
+    let mut rng = Rng(env_or("PHYSICS_SEED", 4242));
+    for iter in 0..env_or("PHYSICS_ITERS", 120) as usize {
         let n = 1 + rng.below(60) as usize;
         let inp = input(&mut rng, n);
         let opts = LayoutOptions {

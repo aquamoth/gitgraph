@@ -303,9 +303,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] Explorer context menu (#11; see question 21).
 - [ ] macOS `.app` bundle, so the Dock shows `packaging/icon/parterre.icns`; the release ships
       a bare binary, which gets the generic icon.
-- [ ] After some sequences of drags, undo and redo, a reset leaves an edge with a route of
-      its own. `physics_random_drags` finds one with seed 31337 (iteration 247), on main before
-      the child-above-parent ordering was merged too.
 - [ ] Open GitHub PRs in the graph (`docs/research/github-forks-and-pull-requests.md`, §12,
       §14). TortoiseGit has no such feature.
   - [ ] Slice 1: PR-icon tags on nodes whose commit is a PR head, opening the PR in the browser;
@@ -440,3 +437,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] Short hashes in the graph as long as git makes them for the repository (`core.abbrev`,
       9 on Apps), like the log window: node labels, tooltips, the status bar and the SVG
       export. Deliberate deviation from TortoiseGit, which always shows 8.
+- [x] A reset no longer leaves an edge with a route of its own. An edge re-routed round a node
+      was looked at again only when the node's new place touched the new route, so a node that
+      jumped clear in one frame, or that covered the layout route away from the new one, left
+      it routed. Now the node's old place counts too, and the layout route as well as the new
+      one. `physics_random_drags` takes `PHYSICS_SEED` and `PHYSICS_ITERS`.
