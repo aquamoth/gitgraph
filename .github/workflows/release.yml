@@ -1,9 +1,8 @@
 name: Release
 
-# Pushing a tag vX.Y.Z publishes a GitHub Release with binaries for Linux, Windows and macOS.
-# Bump `version` in the root Cargo.toml (through a PR) before tagging: PARTERRE_RELEASE_TAG makes
-# crates/parterre/build.rs fail the build unless the tag matches it and points at the commit
-# being built. See docs/releasing.md.
+# Pushing a tag vX.Y.Z[-prerelease] publishes a GitHub Release with binaries for Linux,
+# Windows and macOS. PARTERRE_RELEASE_TAG supplies the binary's version; build.rs checks that
+# the tag points at the clean commit being built. See docs/releasing.md.
 on:
   push:
     tags: ["v*"]
@@ -29,7 +28,7 @@ jobs:
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
           - { os: macos-latest, target: aarch64-apple-darwin }
           # Cross-compiled on the Apple silicon runner, so the binary can't run there: no tests
-          # and no --version check. build.rs still checks the tag.
+          # and no --version check. build.rs still checks the tag and sets the version.
           - { os: macos-latest, target: x86_64-apple-darwin, cross: true }
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}

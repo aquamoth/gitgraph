@@ -44,21 +44,19 @@ pub struct VcsInfo {
 /// crates.io. Every other build is a dev build, marked with a `dev` pre-release and the commit
 /// as build metadata: `0.3.0-dev+a1b2c3d(.dirty)`, or just `0.3.0-dev` without git.
 ///
-/// The release workflow sets `release_tag`, which turns a dev build into an error: the build
-/// fails unless the tag is `v` + `pkg_version`, points at the commit being built, and the
-/// checkout is clean.
+/// The release workflow sets `release_tag`. Its version comes from the tag, and the build
+/// fails unless that tag points at the commit being built and the checkout is clean.
 pub fn describe(
     pkg_version: &str,
     release_tag: Option<&str>,
     source: &Source,
 ) -> Result<String, String> {
-    let tag = format!("v{pkg_version}");
-    if let Some(given) = release_tag
-        && given != tag
-    {
+    let version = release_tag.map(parse_release_tag).transpose()?;
+    let version = version.unwrap_or(pkg_version);
+    let tag = format!("v{version}");
+    if matches!(source, Source::Package(_)) && release_tag.is_some() && version != pkg_version {
         return Err(format!(
-            "release tag {given} doesn't match the version in Cargo.toml ({pkg_version}); \
-             expected tag {tag}"
+            "release tag {tag} doesn't match the packaged crate version {pkg_version}"
         ));
     }
     let (commit, dirty, released) = match source {
@@ -85,8 +83,8 @@ pub fn describe(
     }
     if released && !dirty {
         return Ok(match commit {
-            Some(commit) => format!("{pkg_version} ({commit})"),
-            None => pkg_version.to_owned(),
+            Some(commit) => format!("{version} ({commit})"),
+            None => version.to_owned(),
         });
     }
     let sep = if pkg_version.contains('-') { '.' } else { '-' };
@@ -96,6 +94,39 @@ pub fn describe(
     };
     let dirty = if dirty { ".dirty" } else { "" };
     Ok(format!("{dev}+{commit}{dirty}"))
+}
+
+/// Accept `vX.Y.Z` with an optional semver pre-release suffix. Build metadata is left out of
+/// release tags so the same version can later be used as a Cargo package version.
+pub fn parse_release_tag(tag: &str) -> Result<&str, String> {
+    let Some(version) = tag.strip_prefix('v') else {
+        return Err(format!(
+            "invalid release tag {tag}: expected vX.Y.Z[-prerelease]"
+        ));
+    };
+    let (numbers, pre) = version
+        .split_once('-')
+        .map_or((version, None), |(n, p)| (n, Some(p)));
+    let valid_number = |n: &str| {
+        !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) && (n == "0" || !n.starts_with('0'))
+    };
+    if numbers.split('.').count() != 3
+        || !numbers.split('.').all(valid_number)
+        || pre.is_some_and(|p| {
+            p.split('.').any(|part| {
+                part.is_empty()
+                    || !part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    || (part.bytes().all(|b| b.is_ascii_digit())
+                        && part.len() > 1
+                        && part.starts_with('0'))
+            })
+        })
+    {
+        return Err(format!(
+            "invalid release tag {tag}: expected vX.Y.Z[-prerelease]"
+        ));
+    }
+    Ok(version)
 }
 
 /// Reads the commit from the `.cargo_vcs_info.json` that `cargo package` writes, e.g.
@@ -179,10 +210,20 @@ mod tests {
     }
 
     #[test]
-    fn release_tag_must_match_package_version() {
-        let git = git("a1b2c3d", false, &["v0.3.1"]);
-        let err = describe("0.3.0", Some("v0.3.1"), &git).unwrap_err();
-        assert!(err.contains("v0.3.1") && err.contains("0.3.0"), "{err}");
+    fn release_version_comes_from_tag() {
+        let git = git("a1b2c3d", false, &["v0.5.0-rc1"]);
+        assert_eq!(
+            describe("0.4.0", Some("v0.5.0-rc1"), &git).unwrap(),
+            "0.5.0-rc1 (a1b2c3d)"
+        );
+    }
+
+    #[test]
+    fn release_tag_must_be_a_version() {
+        let git = git("a1b2c3d", false, &["vnot-a-version"]);
+        assert!(describe("0.4.0", Some("vnot-a-version"), &git).is_err());
+        assert!(describe("0.4.0", Some("v0.5.0-"), &git).is_err());
+        assert!(describe("0.4.0", Some("v0.5.0-01"), &git).is_err());
     }
 
     #[test]

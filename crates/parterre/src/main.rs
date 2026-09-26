@@ -43,7 +43,8 @@ use parterre_core::revgraph::Simplification;
 use crate::automation::Automation;
 use crate::theme::ThemeChoice;
 
-/// This build's version: `0.3.0 (a1b2c3d)` for a release, `0.3.0-dev+a1b2c3d` otherwise.
+/// This build's version: `0.5.0-rc1 (a1b2c3d)` for a tagged release,
+/// `0.4.0-dev+a1b2c3d` otherwise.
 const VERSION: &str = env!("PARTERRE_VERSION");
 
 /// Show the revision graph of a git repository: how its branches and tags relate.
