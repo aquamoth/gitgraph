@@ -24,6 +24,7 @@ pub use toolbar::popup_id;
 use settings_window::SettingsPage;
 
 use crate::automation::Automation;
+use crate::export::{self, Format};
 use crate::frame_pacing::FrameLimiter;
 use crate::menu;
 use crate::render::{self, Marks};
@@ -224,7 +225,7 @@ pub struct ParterreApp {
     show_settings: bool,
     settings_page: SettingsPage,
     show_about: bool,
-    /// Path being edited in the "Export as SVG" dialog, when open.
+    /// Path being edited in the "Export graph" dialog, when open.
     export_path: Option<String>,
     messages: Messages,
     /// The log window (Show log), and what it keeps while closed.
@@ -361,6 +362,16 @@ impl ParterreApp {
         };
         if let (Some(commits), Some(repo)) = (demo_log, app.repo.clone()) {
             app.open_log(repo, &commits);
+        }
+        if let Some(export) = app.automation.demo_open.clone()
+            && let Some(format) = export.strip_prefix("export")
+        {
+            app.open_export();
+            if let (Some(path), Some(ext)) = (&mut app.export_path, format.strip_prefix(':')) {
+                let mut p = PathBuf::from(&*path);
+                p.set_extension(ext);
+                *path = p.display().to_string();
+            }
         }
         app
     }
@@ -1504,15 +1515,63 @@ impl ParterreApp {
         };
         let mut open = true;
         let mut save = false;
-        egui::Window::new("Export as SVG")
+        // PNG is drawn at the current zoom, as in TortoiseGit, and with the display's pixels
+        // per point, so that it looks as on screen.
+        let (zoom, ppp) = (self.view.zoom, ctx.pixels_per_point());
+        egui::Window::new("Export graph")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label("The whole graph is written at 100%, as currently arranged.");
+                let format = Format::from_path(Path::new(path.trim()));
+                ui.horizontal(|ui| {
+                    for f in [Format::Svg, Format::Png] {
+                        let label = f.extension().to_uppercase();
+                        if ui.selectable_label(format == Some(f), label).clicked() {
+                            let mut p = PathBuf::from(path.trim());
+                            p.set_extension(f.extension());
+                            *path = p.display().to_string();
+                        }
+                    }
+                });
+                match (format, &self.scene) {
+                    (Some(Format::Svg), _) => {
+                        ui.label("The whole graph at 100%, as currently arranged.");
+                    }
+                    (Some(Format::Png), Some(scene)) => {
+                        let size = export::png_size(scene, zoom, ppp);
+                        ui.label(format!(
+                            "The whole graph at the current zoom, as currently arranged: {} × {} \
+                             pixels at {:.0}%.",
+                            size.width,
+                            size.height,
+                            size.zoom * 100.0
+                        ));
+                        if size.reduced {
+                            ui.colored_label(
+                                ui.visuals().warn_fg_color,
+                                format!(
+                                    "Scaled down from {:.0}% to stay within {:.0} megapixels and \
+                                     {:.0} pixels a side.",
+                                    zoom * 100.0,
+                                    export::MAX_PNG_PIXELS / 1e6,
+                                    export::MAX_PNG_SIDE
+                                ),
+                            );
+                        }
+                    }
+                    (Some(Format::Png), None) => {}
+                    (None, _) => {
+                        ui.colored_label(
+                            ui.visuals().error_fg_color,
+                            "Name the file .svg or .png.",
+                        );
+                    }
+                }
                 let resp = ui.add(egui::TextEdit::singleline(path).desired_width(420.0));
-                save = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                save |= ui.button("Save").clicked();
+                let ok = format.is_some();
+                save = ok && resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                save |= ui.add_enabled(ok, egui::Button::new("Save")).clicked();
             });
         if save {
             let path = PathBuf::from(path.trim());
@@ -1521,13 +1580,12 @@ impl ParterreApp {
                 &self.settings.branch_colors,
             );
             self.status = Some(match &self.scene {
-                Some(scene) => match std::fs::write(
-                    &path,
-                    crate::export::to_svg(scene, &self.settings, &palette),
-                ) {
-                    Ok(()) => (format!("Saved {}", path.display()), false),
-                    Err(e) => (format!("Could not save {}: {e}", path.display()), true),
-                },
+                Some(scene) => {
+                    match export::write(&path, scene, &self.settings, &palette, zoom, ppp) {
+                        Ok(what) => (format!("Saved {} ({what})", path.display()), false),
+                        Err(e) => (format!("Could not save {}: {e}", path.display()), true),
+                    }
+                }
                 None => ("Nothing to export yet".into(), true),
             });
             open = false;

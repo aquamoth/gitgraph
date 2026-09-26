@@ -10,6 +10,7 @@ mod export;
 mod frame_pacing;
 mod icon;
 mod menu;
+mod raster;
 mod render;
 mod scene;
 mod settings;
@@ -99,7 +100,8 @@ struct Cli {
     #[arg(long, value_parser = parse_size)]
     window_size: Option<(f32, f32)>,
 
-    /// Write the graph as SVG to FILE and exit, without opening a window.
+    /// Write the graph to FILE and exit, without opening a window: SVG, or PNG if FILE ends in
+    /// .png (at 100%, or --zoom).
     #[arg(long, value_name = "FILE")]
     export: Option<PathBuf>,
 
@@ -115,8 +117,9 @@ struct Cli {
     #[arg(long, hide = true)]
     overview: bool,
 
-    /// Zoom level for the screenshot (1 = 100%), applied around the centre of the initial view.
-    #[arg(long, hide = true)]
+    /// Zoom (1 = 100%) of a PNG --export, or of the screenshot around the centre of its initial
+    /// view.
+    #[arg(long)]
     zoom: Option<f32>,
 
     /// Drag the centre node by DX,DY before taking the screenshot (demonstrates the physics).
@@ -133,8 +136,9 @@ struct Cli {
     #[arg(long, value_enum, hide = true)]
     demo_menu: Option<DemoMenuArg>,
 
-    /// Open the menu, a toolbar popover (filter, zoom, drag) or the settings (settings, or
-    /// settings:PAGE) before taking the screenshot.
+    /// Open the menu, a toolbar popover (filter, zoom, drag), the settings (settings, or
+    /// settings:PAGE) or the export dialog (export, or export:png) before taking the
+    /// screenshot.
     #[arg(long, value_name = "WHAT", hide = true)]
     demo_open: Option<String>,
 
@@ -261,7 +265,8 @@ fn main() -> ExitCode {
         };
         let mut settings = settings::Settings::default();
         apply_cli(&cli, &mut settings);
-        return match export_headless(&std::sync::Arc::new(repo), &settings, &path) {
+        let zoom = cli.zoom.unwrap_or(1.0);
+        return match export_headless(&std::sync::Arc::new(repo), &settings, &path, zoom) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("parterre: could not write {}: {e}", path.display());
@@ -407,35 +412,30 @@ fn repair_quoted_root(path: PathBuf) -> PathBuf {
     }
 }
 
-/// Lays the graph out without a window and writes it as SVG.
+/// Lays the graph out without a window and writes it as SVG or PNG (by the extension). A PNG
+/// is drawn at `zoom`, one pixel per point.
 fn export_headless(
     repo: &std::sync::Arc<parterre_core::Repo>,
     settings: &settings::Settings,
     path: &std::path::Path,
-) -> std::io::Result<()> {
-    let ctx = egui::Context::default();
-    // One pass initialises the fonts used to measure labels.
-    // Nothing is rendered, so the texture updates are discarded.
-    ctx.run_ui(egui::RawInput::default(), |_| {})
-        .textures_delta
-        .clear();
-    let font = egui::FontId::monospace(scene::FONT_SIZE);
-    let text_height = ctx.fonts_mut(|f| f.row_height(&font));
-    let input = ctx.fonts_mut(|f| {
-        let mut width = |s: &str| {
-            f.layout_no_wrap(s.to_owned(), font.clone(), egui::Color32::WHITE)
-                .size()
-                .x
-        };
-        scene::Scene::prepare(repo, settings, &mut width, text_height)
-    });
-    let scene = input.lay_out();
+    zoom: f32,
+) -> anyhow::Result<()> {
+    // Checked before the layout, which can take seconds.
+    anyhow::ensure!(
+        export::Format::from_path(path).is_some(),
+        "unknown format: name the file .svg or .png"
+    );
+    let scene = scene::Scene::headless(repo, settings);
     let palette = theme::Palette::new(
         settings.theme == theme::ThemeChoice::Dark,
         &settings.branch_colors,
     );
-    std::fs::write(path, export::to_svg(&scene, settings, &palette))?;
-    eprintln!("wrote {} ({} nodes)", path.display(), scene.node_count());
+    let what = export::write(path, &scene, settings, &palette, zoom, 1.0)?;
+    eprintln!(
+        "wrote {} ({} nodes; {what})",
+        path.display(),
+        scene.node_count()
+    );
     Ok(())
 }
 

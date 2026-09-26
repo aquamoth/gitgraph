@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 22._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 23._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -283,6 +283,25 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       F5 put every node back into the layout. Undo history does not survive.
     - The status bar says "Reloaded: the refs changed".
 
+22. **PNG export.** The export dialog now offers SVG and PNG; the file name's extension
+    decides, as in TortoiseGit's "Save graph as...". Calls you may want to overrule:
+    - **One menu item,** *Export as SVG or PNG…*, with SVG and PNG buttons in the dialog that
+      change the extension. The dialog shows the PNG's size before saving.
+    - **Current zoom,** as in TortoiseGit, times the display scale (2 on a HiDPI screen), so
+      the PNG looks as the window does. Zoomed out, labels under 4 px are left out, as on
+      screen. SVG stays at 100%. `--export out.png` draws at 100%, or at `--zoom`.
+    - **Limits:** at most 100 megapixels and 65,535 px a side. A bigger graph is scaled down
+      to fit, with a note in the dialog and the status bar, instead of failing (TortoiseGit
+      says "not enough memory" when Windows can't make the bitmap). On Apps, "Labelled
+      commits" fits at 100% in both looks (Classic: 24,232 × 3,745 px, 2.4 s); "Branchings
+      and merges" comes out at 61%, and "All commits" at 10%, too small to read. Drawing
+      holds the whole image in memory (300 MB at the limit). Writing the PNG in bands would
+      lift the limit, but needs the `png` crate directly (already built, as `image` uses it).
+    - **Background:** the theme's, opaque. No transparent PNG.
+    - **Other formats:** only `.svg` and `.png`. Other extensions (`.jpg`, `.bmp`, `.gif`,
+      which TortoiseGit also writes) are refused with a message; before, `--export` wrote SVG
+      whatever the name. A name without an extension still gets SVG.
+
 ## Planned
 
 - [ ] Wayland freeze workaround (#38, see Done). **Check regularly, and on every eframe
@@ -296,7 +315,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       would draw its own title bar: moving, resizing and double-click to maximise by hand; no
       Windows 11 snap-layout popup; on GNOME no compositor shadow. See the "Title bar: merged"
       toggle in the prototype on the branch `prototype/menus`.
-- [ ] PNG export: SVG exists; TortoiseGit also offers raster formats.
 - [ ] Distribution, as decided in `docs/distribution.md`: crates.io (#13), Windows MSI (#15),
       winget (#16), Chocolatey (#17), .deb and .rpm (#18), Snap (#19), publishing behind one
       approval (#20), Flathub later (#21). The MSI (#15) is built by CI and attached to
@@ -447,3 +465,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       and the drag net's neighbour lists are stored flat, which took the 100k-commit
       all-commits view from 900 to 740 MB and its layout from about 3 s to 2 s. What is left
       is mostly the drag net (about 170 bytes for each of 1.6M particles); question 11.
+- [x] PNG export (question 22): ☰ → *Export as SVG or PNG…*, and `--export out.png` (with
+      `--zoom`). Drawn by the window's own painting code, rasterised without a GPU, so labels
+      look as on screen.

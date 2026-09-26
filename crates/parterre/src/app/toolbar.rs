@@ -396,7 +396,7 @@ impl ParterreApp {
             self.settings.auto_reload = !auto;
         }
         let export = ui.add_enabled_ui(has_repo, |ui| {
-            menu::item(ui, "Export as SVG…", "", Mark::None)
+            menu::item(ui, "Export as SVG or PNG…", "", Mark::None)
         });
         if export.inner.clicked() {
             self.open_export();

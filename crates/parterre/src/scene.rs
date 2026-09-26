@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
+use eframe::egui::{Color32, FontId, Pos2, Rect, Vec2, pos2, vec2};
 use parterre_core::layout::{self, Layout, LayoutEdge, LayoutInput, LayoutOptions, Point};
 use parterre_core::physics::{DragModel, Net};
 use parterre_core::revgraph::{self, RevGraph};
@@ -154,6 +154,27 @@ impl Scene {
             options: settings.layout.clone(),
             row_height,
         }
+    }
+
+    /// Builds and lays out the scene on this thread, without a window (for `--export`).
+    pub fn headless(repo: &Arc<Repo>, settings: &Settings) -> Scene {
+        let ctx = eframe::egui::Context::default();
+        // One pass initialises the fonts used to measure labels.
+        // Nothing is rendered, so the texture updates are discarded.
+        ctx.run_ui(eframe::egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
+        let font = FontId::monospace(FONT_SIZE);
+        let text_height = ctx.fonts_mut(|f| f.row_height(&font));
+        let input = ctx.fonts_mut(|f| {
+            let mut width = |s: &str| {
+                f.layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            };
+            Scene::prepare(repo, settings, &mut width, text_height)
+        });
+        input.lay_out()
     }
 
     pub fn node_count(&self) -> usize {

@@ -24,8 +24,9 @@ pub struct Automation {
     pub demo_node: Option<String>,
     /// Right-click before the screenshot, to show the context menu.
     pub demo_menu: Option<DemoMenu>,
-    /// Open the ☰ menu, a toolbar popover (`filter`, `zoom`, `drag`) or the settings
-    /// (`settings`, or `settings:<page>`) before the screenshot.
+    /// Open the ☰ menu, a toolbar popover (`filter`, `zoom`, `drag`), the settings
+    /// (`settings`, or `settings:<page>`) or the export dialog (`export`, or `export:png`)
+    /// before the screenshot.
     pub demo_open: Option<String>,
     /// Open the log window on `<ref>` or `<ref>..<ref>` (as if those nodes were selected in
     /// that order) before the screenshot.
@@ -130,6 +131,7 @@ impl Automation {
         if self.frame == MENU_START
             && let Some(name) = &self.demo_open
             && !name.starts_with("settings")
+            && !name.starts_with("export")
         {
             egui::Popup::open_id(ctx, crate::app::popup_id(name));
         }
