@@ -230,6 +230,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] Window icon drawn in code; Linux `.desktop` entry; pre-commit hook (fmt and clippy).
 - [x] App icon (`parterre-core::icon`): the window icon, the SVG, PNGs, the `.ico` embedded in
       the Windows `.exe` and the `.icns` are all generated from one drawing.
+- [x] Version information in the Windows `.exe` (*Properties → Details*): product name,
+      versions, copyright and Trustfall AB as the company.
 - [x] Hovering an edge lists the commits collapsed into it. Help → Legend explains the colours.
 - [x] Independent code review. Fixed:
   - a crash when reloading after deleting a branch or tag
