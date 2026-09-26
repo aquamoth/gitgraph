@@ -71,6 +71,41 @@
                   Target="[INSTALLFOLDER]parterre.exe" WorkingDirectory="INSTALLFOLDER" />
       </Component>
 
+      <!-- "Revision graph (parterre)" in Explorer's context menu, on a folder and on the
+           background of an open one, as TortoiseGit offers its revision graph. Plain shell verbs
+           under HKMU\Software\Classes: the user's classes for a per-user install, the machine's
+           for a machine-wide one. Windows 11 lists them under "Show more options"; a top-level
+           entry would need an IExplorerCommand handler and package identity (MSIX).
+           %V is the folder in both places. On a folder the entry is offered for one only, so
+           that selecting many doesn't open a window each. Every folder gets the entry, as a
+           verb can't ask git whether the folder is in a repository; parterre says so if not.
+           NoWorkingDirectory keeps Explorer from starting parterre in the folder, which would
+           then stay in use, so that it couldn't be renamed or deleted while the graph is open.
+           The keys are removed whole on uninstall. That is safe only because MajorUpgrade
+           removes the old version before installing the new one (its default schedule): moved
+           after the install, it would delete the new version's keys. -->
+      <Component Id="ExplorerMenu" Directory="INSTALLFOLDER">
+        <RegistryValue Root="HKMU" Key="Software\Trustfall AB\parterre" Name="ExplorerMenu"
+                       Type="integer" Value="1" KeyPath="yes" />
+        <RegistryKey Root="HKMU" Key="Software\Classes\Directory\shell\parterre"
+                     ForceDeleteOnUninstall="yes">
+          <RegistryValue Type="string" Value="Revision graph (parterre)" />
+          <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]parterre.exe" />
+          <RegistryValue Name="NoWorkingDirectory" Type="string" Value="" />
+          <RegistryValue Name="MultiSelectModel" Type="string" Value="Single" />
+          <RegistryValue Key="command" Type="string"
+                         Value="&quot;[INSTALLFOLDER]parterre.exe&quot; &quot;%V&quot;" />
+        </RegistryKey>
+        <RegistryKey Root="HKMU" Key="Software\Classes\Directory\Background\shell\parterre"
+                     ForceDeleteOnUninstall="yes">
+          <RegistryValue Type="string" Value="Revision graph (parterre)" />
+          <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]parterre.exe" />
+          <RegistryValue Name="NoWorkingDirectory" Type="string" Value="" />
+          <RegistryValue Key="command" Type="string"
+                         Value="&quot;[INSTALLFOLDER]parterre.exe&quot; &quot;%V&quot;" />
+        </RegistryKey>
+      </Component>
+
       <!-- parterre on PATH: the user's PATH for a per-user install, the system's for a
            machine-wide one. -->
       <Component Id="UserPath" Directory="INSTALLFOLDER" Condition="NOT (ALLUSERS = 1)">

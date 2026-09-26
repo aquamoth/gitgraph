@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 21._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 22._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -196,9 +196,9 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     current directory's repository, or else an empty window asking for one. The ☰ menu starts
     with *Open folder…* (`Ctrl+O`), *Recent folders* and *Close folder* (`Ctrl+W`), not in
     the toolbar. Decisions you may want to overrule:
-    - **A path given that is not a repository** still ends with an error, as before, instead
-      of opening the empty window. From a terminal that says why. From a shortcut or the
-      planned Explorer menu nothing would show.
+    - **A path given that is not a repository** still ends with an error in a terminal, as
+      before. Without one (Explorer's menu, a shortcut, a desktop entry) the empty window
+      opens and shows the error instead, since #11 (question 21).
     - **The empty window also has an *Open folder…* button and the five most recent
       folders.** That is more than the message you asked for; the menu has the same.
     - **Recent folders:** the ten newest, each shown by name with the folder it is in (two
@@ -243,6 +243,28 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     - **Size on first open:** 1100 × 760; after that, the size it last had.
     - **No keyboard focus for the list:** the arrow keys, Page Up/Down, Home and End move the
       selected commit whenever the filter field doesn't have the keyboard.
+21. **Explorer context menu** (#11). *Revision graph (parterre)* on a folder and on the
+    background of an open one, registered by the MSI. Not yet clicked through in Explorer by
+    hand; the MSI was installed, its keys and command checked, and removed again. Calls #11
+    didn't settle:
+    - **Windows 11 shows it under *Show more options*.** At the top level it would need an
+      `IExplorerCommand` handler and package identity (MSIX or a sparse package), as #11 said.
+    - **Every folder gets the entry**, in or out of a repository: a plain registry verb
+      can't ask git. Outside one, parterre opens with the error and *Open folder…*.
+      TortoiseGit's shell extension can hide it; that takes a COM handler.
+    - **Errors in a window only when there is no terminal** (stderr isn't one). From a
+      terminal a bad path still prints the error and exits, and so does `--export`. Run with
+      stderr redirected to a file, a bad path now opens the window too; `--screenshot` runs
+      still fail. Other startup failures (no OpenGL, as over some remote desktops, or a
+      panic) still reach only stderr, so from Explorer nothing would show.
+    - **One folder at a time:** with several folders selected the entry is missing, rather
+      than opening a window for each.
+    - **Not on drives** (`Drive\shell`): right-clicking `C:` in *This PC* has no entry; the
+      background of an open drive does. Easy to add if repositories at a drive's root matter.
+    - **Not optional:** every install gets it; the MSI has no UI to leave it out.
+    - **Linux:** not done. `MimeType=inode/directory` in the desktop entry would list
+      parterre under *Open With* for folders, but some desktops then make it the default
+      folder handler (VS Code had that bug), so it needs trying on GNOME and KDE first.
 
 ## Planned
 
@@ -288,7 +310,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       winget (#16), Chocolatey (#17), .deb and .rpm (#18), Snap (#19), publishing behind one
       approval (#20), Flathub later (#21). The MSI (#15) is built by CI and attached to
       releases, and parterre finds Git for Windows when git isn't on PATH (question 17).
-- [ ] Explorer context menu (#11).
+- [x] Explorer context menu (#11; see question 21).
 - [ ] macOS `.app` bundle, so the Dock shows `packaging/icon/parterre.icns`; the release ships
       a bare binary, which gets the generic icon.
 - [ ] After some sequences of drags, undo and redo, a reset leaves an edge with a route of
