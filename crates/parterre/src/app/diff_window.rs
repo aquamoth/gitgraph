@@ -8,10 +8,10 @@
 //! choices are kept in the settings for the next window. On the right an overview strip shows
 //! where the changes are; long lines scroll sideways, both panes together.
 //!
-//! Deliberate deviations from TortoiseGitMerge (see `TODO.md`): unchanged stretches fold by
-//! default; line endings count unless whitespace changes are ignored, and a note says when
-//! they differ; changed words pair similar lines rather than lines by position; the change
-//! marks are an overview strip on the right instead of a locator bar on the left.
+//! Deliberate deviations from TortoiseGitMerge: unchanged stretches fold by default; line
+//! endings count unless whitespace changes are ignored, and a note says when they differ;
+//! changed words pair similar lines rather than lines by position; the change marks are an
+//! overview strip on the right instead of a locator bar on the left.
 
 use std::sync::{Arc, mpsc};
 

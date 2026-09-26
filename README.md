@@ -170,7 +170,9 @@ needed to build. See [docs/building.md](docs/building.md) for Windows and macOS 
 | `docs/research/` | Notes on how TortoiseGit's revision graph works, with source links |
 | `docs/architecture.md` | How the pieces fit together |
 | `docs/distribution.md` | Where parterre is published, under which names, and why |
-| `TODO.md` | Open questions and planned work |
+
+Open questions, planned work and bugs are tracked in
+[GitHub issues](https://github.com/aquamoth/parterre/issues).
 
 ## License
 

@@ -551,7 +551,7 @@ impl ParterreApp {
         if menu::item(ui, "About parterre", "", Mark::None).clicked() {
             self.show_about = true;
         }
-        // For users who start parterre from a file manager or Start menu (TODO question 12).
+        // For users who start parterre from a file manager or Start menu (#68).
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.add_space(36.0);
