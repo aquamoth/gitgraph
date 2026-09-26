@@ -28,6 +28,7 @@ use parterre_core::{CommitIx, GitRef, Oid, Repo};
 
 use super::{Messages, ParterreApp};
 use crate::settings::LogWindowSettings;
+use crate::text_size;
 use crate::theme::{Palette, text_on};
 use crate::widgets;
 
@@ -1639,6 +1640,7 @@ impl ParterreApp {
                 }
                 // Keys go to the main window too when the log is embedded in it.
                 self.log.handle_keys(ui);
+                text_size::read_input(ui, &mut self.settings.text_size, true);
                 if close {
                     self.log.view = None;
                 }

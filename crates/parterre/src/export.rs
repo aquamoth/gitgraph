@@ -299,6 +299,8 @@ pub fn to_image(
             let view = View {
                 offset: world + vec2(tx as f32, ty as f32) / (ppp * size.zoom),
                 zoom: size.zoom,
+                // Its own context, at the zoom factor egui starts with.
+                text_size: 1.0,
             };
             let mut input = egui::RawInput {
                 screen_rect: Some(canvas),
