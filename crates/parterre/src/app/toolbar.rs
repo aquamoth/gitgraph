@@ -157,21 +157,21 @@ impl ParterreApp {
     /// Shows or hides open pull requests; greyed out unless `origin` is on GitHub.
     fn pull_requests_button(&mut self, ui: &mut Ui) {
         let available = self.pull_requests.origin().is_some();
-        let on = &mut self.settings.graph.show_pull_requests;
+        let on = self.pull_requests_active();
         let response = ui
             .add_enabled_ui(available, |ui| {
-                widgets::icon_button(ui, glyphs::PULL_REQUEST, *on && available)
+                widgets::icon_button(ui, glyphs::PULL_REQUEST, on)
             })
             .inner;
-        let verb = if *on { "Hide" } else { "Show" };
+        let verb = if on { "Hide" } else { "Show" };
         let explained = match self.pull_requests.error() {
             Some(error) => format!("{PULL_REQUESTS_TIP}\n\nLast try: {error}."),
             None => PULL_REQUESTS_TIP.to_owned(),
         };
         let response = tip_explained(response, &format!("{verb} pull requests"), "", &explained)
-            .on_disabled_hover_text("Pull requests: origin is not a GitHub repository");
+            .on_disabled_hover_text(NO_PULL_REQUESTS_TIP);
         if response.clicked() {
-            *on = !*on;
+            self.toggle_pull_requests();
         }
     }
 
@@ -453,12 +453,13 @@ impl ParterreApp {
                 }
             }
             let available = self.pull_requests.origin().is_some();
-            let on = &mut g.show_pull_requests;
+            let on = self.pull_requests_active();
             let item = ui.add_enabled_ui(available, |ui| {
-                menu::item(ui, "Pull requests", "", Mark::Check(*on && available))
+                menu::item(ui, "Pull requests", "", Mark::Check(on))
             });
-            if item.inner.clicked() {
-                *on = !*on;
+            let item = item.inner.on_disabled_hover_text(NO_PULL_REQUESTS_TIP);
+            if item.clicked() {
+                self.toggle_pull_requests();
             }
         });
         menu::submenu(ui, "Filter", |ui| {
@@ -635,6 +636,8 @@ pub(super) const HIDE_TIP: &str = "Leave out branches matching these comma-separ
 pub(super) const PULL_REQUESTS_TIP: &str = "Open pull requests of origin on GitHub, and a \
     fork's into its parent, as labels on the commits they propose, where those have been \
     fetched. Click one to open it. Asks GitHub only when gh is signed in (gh auth login).";
+pub(super) const NO_PULL_REQUESTS_TIP: &str =
+    "Pull requests: only for repositories whose origin is on GitHub, for now.";
 pub(super) const REMEMBER_TIP: &str =
     "Keep nodes where you moved them, per repository, across runs and relayouts.";
 

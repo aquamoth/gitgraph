@@ -94,7 +94,8 @@ parterre adds:
 - colours by branch name, e.g. `feature/*` purple (*Settings → Branch colours*)
 - open pull requests on GitHub, as labels on the commits they propose, when `origin` is on
   GitHub and [`gh`](https://cli.github.com) is signed in (`gh auth login`). Click one to open
-  it in the browser; the toolbar's pull-request button hides them. A pull request shows once
+  it in the browser; the toolbar's pull-request button hides them, and if they can't be
+  shown, turning them on there says why. A pull request shows once
   its branch has been fetched and its base branch is shown. parterre asks GitHub about the
   fetched branches only, at most once a minute per repository, and never without signing in.
 - light and dark themes

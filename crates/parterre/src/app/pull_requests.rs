@@ -19,13 +19,19 @@ use parterre_core::forge::github::{self, GithubRepo};
 use parterre_core::forge::{self, ForgeError, PullRequests};
 use parterre_core::git::Git;
 
-/// What a finished load brought.
+/// What a finished load brought, and whether the user asked for it ([`PullRequestLoader::ask`])
+/// rather than parterre loading by itself: only then is it worth telling them.
 #[derive(Debug)]
 pub enum Loaded {
     /// A list of this many pull requests.
-    Found(usize),
-    /// Why there is none; `quiet` if it only says that signing in is needed.
-    Failed { message: String, quiet: bool },
+    Found {
+        count: usize,
+        asked: bool,
+    },
+    Failed {
+        error: ForgeError,
+        asked: bool,
+    },
 }
 
 /// What is known about one repository's pull requests.
@@ -39,6 +45,18 @@ struct Entry {
     failures: u32,
     /// Why the last load failed, if it did.
     error: Option<String>,
+    /// The last load failed for want of a signed-in `gh`.
+    needs_sign_in: bool,
+}
+
+/// A load running on a worker thread.
+#[derive(Debug)]
+struct Job {
+    /// The repository it is for.
+    path: PathBuf,
+    /// Whether the user asked for it.
+    asked: bool,
+    rx: Receiver<Result<PullRequests, ForgeError>>,
 }
 
 #[derive(Debug, Default)]
@@ -49,13 +67,15 @@ pub struct PullRequestLoader {
     origin: Option<GithubRepo>,
     /// Every repository asked about in this run.
     cache: HashMap<PathBuf, Entry>,
-    /// The load running, and the repository it is for.
-    job: Option<(PathBuf, Receiver<Result<PullRequests, ForgeError>>)>,
+    /// The load running.
+    job: Option<Job>,
     /// Something happened after which a list that is no longer fresh is loaded again: the
     /// repository was opened, or its refs changed.
     due: bool,
     /// Load whether or not the list is fresh: F5, or pull requests turned on.
     force: bool,
+    /// The user asked for pull requests: say how it went.
+    asked: bool,
 }
 
 impl PullRequestLoader {
@@ -89,6 +109,11 @@ impl PullRequestLoader {
         self.entry()?.error.as_deref()
     }
 
+    /// The shown repository's last load failed for want of a signed-in `gh`.
+    pub fn needs_sign_in(&self) -> bool {
+        self.entry().is_some_and(|e| e.needs_sign_in)
+    }
+
     pub fn is_loading(&self) -> bool {
         self.job.is_some()
     }
@@ -98,10 +123,15 @@ impl PullRequestLoader {
         self.due = true;
     }
 
-    /// Load again now (F5, or pull requests turned on). The list shown stays until the new
-    /// one is in.
+    /// Load again now (F5). The list shown stays until the new one is in.
     pub fn refresh(&mut self) {
         self.force = true;
+    }
+
+    /// The user turned pull requests on: load now, and say how it went.
+    pub fn ask(&mut self) {
+        self.force = true;
+        self.asked = true;
     }
 
     /// Starts a load if one is due and pull requests are `shown`; returns what a load of the
@@ -115,8 +145,9 @@ impl PullRequestLoader {
             self.due = false;
             self.force = false;
         }
-        let (path, job) = self.job.as_ref()?;
-        let result = match job.try_recv() {
+        let Job { path, asked, rx } = self.job.as_ref()?;
+        let asked = *asked;
+        let result = match rx.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => return None,
             Err(TryRecvError::Disconnected) => Err(ForgeError::Network(
@@ -131,6 +162,7 @@ impl PullRequestLoader {
             next: now,
             failures: 0,
             error: None,
+            needs_sign_in: false,
         });
         let loaded = match result {
             Ok(list) => {
@@ -139,17 +171,16 @@ impl PullRequestLoader {
                 entry.list = Some(Arc::new(list));
                 entry.failures = 0;
                 entry.error = None;
-                Loaded::Found(count)
+                entry.needs_sign_in = false;
+                Loaded::Found { count, asked }
             }
             Err(e) => {
                 entry.failures += 1;
                 let wait = forge::retry_after(entry.failures).max(e.wait().unwrap_or_default());
                 entry.next = now + wait;
                 entry.error = Some(e.to_string());
-                Loaded::Failed {
-                    message: e.to_string(),
-                    quiet: e.is_sign_in(),
-                }
+                entry.needs_sign_in = e.needs_sign_in();
+                Loaded::Failed { error: e, asked }
             }
         };
         // Another repository has been opened meanwhile: this one's result waits in the cache.
@@ -167,7 +198,11 @@ impl PullRequestLoader {
             let _ = tx.send(github::load(&git));
             ctx.request_repaint();
         });
-        self.job = Some((path, rx));
+        self.job = Some(Job {
+            path,
+            asked: std::mem::take(&mut self.asked),
+            rx,
+        });
     }
 }
 

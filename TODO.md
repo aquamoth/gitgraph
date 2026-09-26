@@ -318,8 +318,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     - **Asked for as t3code does** (your call of 2026-09-26, after looking at how t3code
       gets its pull requests), so that many users don't weigh on GitHub:
       - **Only signed in.** With the token of a signed-in `gh` (`gh auth token`), or not at
-        all: without one, GitHub is never asked, and the status bar says, in grey, to run
-        `gh auth login`. `GH_TOKEN` and `git credential fill` (§6) are left for later.
+        all: without one, GitHub is never asked. `GH_TOKEN` and `git credential fill` (§6) are
+        left for later.
       - **Per branch, only fetched ones.** One GraphQL request per 100 branches of `origin`
         fetched here, with a `pullRequests(headRefName:)` connection of 100 per branch on
         `origin` and on its parent at once, and only the fields shown. As in t3code (`gh pr
@@ -337,10 +337,22 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       - **A budget:** once fewer than a tenth of the hour's points are left (t3code's
         reserve), or GitHub says to wait (`Retry-After`), nothing is asked until the limit
         resets, for any repository.
-    - **On by default,** as t3code shows them whenever it can. §12 had the button greyed out
-      until the list had loaded; it is greyed out only when `origin` isn't on GitHub (git
-      alone tells). Settings saved while they were off by default keep them off. On for one
-      repository is on for all, like the other settings. `--export` never asks GitHub.
+    - **On by default, and quiet** (your call of 2026-09-26): nothing in the status bar
+      unless you asked. §12 had the button greyed out until the list had loaded; instead:
+      - **`origin` not on GitHub** (git alone tells): the button and ☰ → *Show → Pull
+        requests* are greyed out, with a tooltip saying why. Never a message.
+      - **`gh` missing or not signed in:** on by default they fail quietly, and the button
+        looks off, as nothing can be shown; its tooltip says why. They appear by themselves
+        once `gh` is signed in, at the next opening or ref change.
+      - **You turn them on** (the button, the menu or *Settings → Graph*) **and it fails:** a
+        dialog says what is wrong and what to do: for a missing `gh` with a button to its
+        installation page, for signing in with one to copy `gh auth login`. It doesn't rely
+        on the status bar, which may be hidden. On success the status bar counts them.
+      - Loads parterre makes by itself (opening, refs changing, F5) never write to the
+        status bar, even on success; the tooltip keeps the last error.
+
+      Settings saved while they were off by default keep them off. On for one repository is
+      on for all, like the other settings. `--export` never asks GitHub.
     - **Which repository:** `origin` only, as §12 says; gh's `gh-resolved` and remote ranking
       (§7) aren't used. A renamed repository is followed under its new name.
     - **Base branch shown** means: a remote-tracking branch of the base branch, in any remote
@@ -406,6 +418,9 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
         the fork's own PRs into its parent) whose base branch is visible. No fetching.
   - [ ] Slice 2: fetch other PR heads commits-only into a private cache; greyed-out nodes,
         dashed edges.
+  - [ ] Later, only when requested: pull requests of Azure DevOps origins. Findings and
+        estimate (about the core half of slice 1, no new crates; sign in through Git
+        Credential Manager with `git credential fill`): the research doc, §15.
 - [ ] Menus that overflow the window on Windows, like TortoiseGit's native ones: each menu (and
       submenu) as a borderless egui viewport placed in screen coordinates, kept on the monitor
       by sliding up from its bottom edge. Needs a Windows agent to build and try it; watch

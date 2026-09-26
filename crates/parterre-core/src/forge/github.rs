@@ -463,10 +463,11 @@ impl fmt::Debug for Token {
     }
 }
 
-/// The token of a signed-in `gh` (`gh auth token`), if `gh` is installed and answers within a
-/// few seconds.
+/// The token of a signed-in `gh` (`gh auth token`): [`ForgeError::NoGh`] if `gh` isn't
+/// installed, [`ForgeError::NotSignedIn`] if it isn't signed in to github.com or doesn't answer
+/// within a few seconds.
 #[cfg_attr(not(feature = "github"), allow(dead_code))]
-fn gh_token() -> Option<Token> {
+fn gh_token() -> Result<Token, ForgeError> {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
@@ -484,7 +485,11 @@ fn gh_token() -> Option<Token> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let mut child = cmd.spawn().ok()?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(ForgeError::NoGh),
+        Err(e) => return Err(ForgeError::Network(format!("could not run gh: {e}"))),
+    };
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match child.try_wait() {
@@ -493,19 +498,23 @@ fn gh_token() -> Option<Token> {
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return None;
+                return Err(ForgeError::NotSignedIn);
             }
         }
     }
     let mut out = String::new();
-    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut out).ok()?;
+    if let Some(mut stdout) = child.stdout.take() {
+        let _ = std::io::Read::read_to_string(&mut stdout, &mut out);
+    }
     let token = out.trim();
     // Tokens are letters, digits and underscores; anything else is not one.
     let plausible = !token.is_empty()
         && token
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_');
-    plausible.then(|| Token(token.to_owned()))
+    plausible
+        .then(|| Token(token.to_owned()))
+        .ok_or(ForgeError::NotSignedIn)
 }
 
 /// Runs `calls` against the API, signed in with `gh`'s token; without one, or while the
@@ -517,7 +526,7 @@ fn with_api<T>(calls: impl Fn(&dyn Api) -> Result<T, ForgeError>) -> Result<T, F
             minutes: wait.as_secs().div_ceil(60),
         });
     }
-    let token = gh_token().ok_or(ForgeError::NotSignedIn)?;
+    let token = gh_token()?;
     calls(&Http::new(token))
 }
 

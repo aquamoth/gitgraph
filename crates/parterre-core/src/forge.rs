@@ -121,10 +121,12 @@ pub enum ForgeError {
     NoForge,
     #[error("this build of parterre has no GitHub support")]
     Unsupported,
-    /// GitHub is only asked when signed in.
-    #[error("sign in with `gh auth login` to see them")]
+    /// GitHub is only asked signed in, as the GitHub CLI is.
+    #[error("the GitHub CLI (gh) isn't installed")]
+    NoGh,
+    #[error("the GitHub CLI (gh) isn't signed in to github.com")]
     NotSignedIn,
-    #[error("GitHub turned down gh's sign-in; sign in again with `gh auth login`")]
+    #[error("GitHub turned down the GitHub CLI's (gh's) sign-in")]
     TokenRejected,
     #[error(transparent)]
     Git(#[from] GitError),
@@ -141,9 +143,39 @@ pub enum ForgeError {
 }
 
 impl ForgeError {
-    /// True if this only says that pull requests need signing in: news, not a failure.
-    pub fn is_sign_in(&self) -> bool {
-        matches!(self, ForgeError::NotSignedIn)
+    /// True if pull requests can't be asked for until the user signs in with `gh`.
+    pub fn needs_sign_in(&self) -> bool {
+        matches!(
+            self,
+            ForgeError::NoGh | ForgeError::NotSignedIn | ForgeError::TokenRejected
+        )
+    }
+
+    /// What the user can do about it, if anything.
+    pub fn advice(&self) -> Option<&'static str> {
+        Some(match self {
+            ForgeError::NoGh => {
+                "parterre asks GitHub for pull requests signed in as the GitHub CLI is. Install \
+                 it, run `gh auth login` in a terminal, and turn pull requests on again."
+            }
+            ForgeError::NotSignedIn => {
+                "parterre asks GitHub for pull requests signed in as the GitHub CLI is. Run \
+                 `gh auth login` in a terminal, and turn pull requests on again."
+            }
+            ForgeError::TokenRejected => {
+                "Sign in again: run `gh auth login` in a terminal, and turn pull requests on \
+                 again."
+            }
+            ForgeError::RateLimited { .. } => {
+                "parterre keeps a tenth of the GitHub CLI's hourly allowance for other tools. \
+                 Pull requests come back by themselves once it resets."
+            }
+            ForgeError::NotFound { .. } => {
+                "If the repository is private, check that `gh auth status` shows an account \
+                 that can see it."
+            }
+            _ => return None,
+        })
     }
 
     /// How long GitHub asked to be left alone, if it did.

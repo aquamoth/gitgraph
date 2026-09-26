@@ -254,8 +254,10 @@ pub struct ParterreApp {
     watcher: Option<auto_reload::Watcher>,
     /// Open pull requests from GitHub, while they are shown.
     pull_requests: pull_requests::PullRequestLoader,
-    /// Whether pull requests were shown in the last frame.
-    pull_requests_shown: bool,
+    /// Whether pull requests were turned on in the last frame, to see the user turn them on.
+    pull_requests_setting: bool,
+    /// Why pull requests the user asked for couldn't be loaded, shown in a dialog.
+    pull_requests_error: Option<parterre_core::forge::ForgeError>,
     /// Load the pull requests again (F5).
     refresh_pull_requests: bool,
     system_theme: SystemTheme,
@@ -374,7 +376,8 @@ impl ParterreApp {
             carried_moves: None,
             watcher: None,
             pull_requests: pull_requests::PullRequestLoader::default(),
-            pull_requests_shown: false,
+            pull_requests_setting: false,
+            pull_requests_error: None,
             refresh_pull_requests: false,
             system_theme: SystemTheme::watch(&cc.egui_ctx),
             window_theme: None,
@@ -811,28 +814,98 @@ impl ParterreApp {
     fn update_pull_requests(&mut self, ctx: &egui::Context) {
         let loader = &mut self.pull_requests;
         loader.follow(self.repo.as_ref().map(|r| r.path.as_path()));
-        let shown = self.settings.graph.show_pull_requests && loader.origin().is_some();
-        if shown && !self.pull_requests_shown || std::mem::take(&mut self.refresh_pull_requests) {
+        // Turned on in the settings or the menu (the toolbar asks by itself). On by default
+        // they are loaded without a word, whatever comes of it.
+        let setting = self.settings.graph.show_pull_requests;
+        if setting && !self.pull_requests_setting {
+            loader.ask();
+        }
+        self.pull_requests_setting = setting;
+        if std::mem::take(&mut self.refresh_pull_requests) {
             loader.refresh();
         }
-        self.pull_requests_shown = shown;
-        match loader.update(shown, ctx) {
-            Some(pull_requests::Loaded::Found(count)) => {
+        let wanted = setting && loader.origin().is_some();
+        match loader.update(wanted, ctx) {
+            Some(pull_requests::Loaded::Found { count, asked }) => {
                 // Those whose head isn't here (another fork's, or pushed since the last fetch)
                 // can't be shown.
                 let here = match (&self.repo, loader.list()) {
                     (Some(repo), Some(list)) => list.heads(repo).len(),
                     _ => 0,
                 };
-                let status = pull_requests::loaded_status(count, here);
-                self.status = Some((status, false));
+                if asked {
+                    self.status = Some((pull_requests::loaded_status(count, here), false));
+                }
                 // Lay out again, with them.
                 self.requested = None;
             }
-            Some(pull_requests::Loaded::Failed { message, quiet }) => {
-                self.status = Some((format!("Pull requests: {message}"), !quiet));
+            // Only the user's own request gets an answer: loads parterre makes by itself fail
+            // quietly, and the button's tooltip says why.
+            Some(pull_requests::Loaded::Failed { error, asked: true }) => {
+                self.pull_requests_error = Some(error);
             }
-            None => {}
+            Some(pull_requests::Loaded::Failed { asked: false, .. }) | None => {}
+        }
+    }
+
+    /// Pull requests are on, `origin` is on GitHub, and `gh` isn't known to be missing or
+    /// signed out: what the toolbar shows as on.
+    pub(super) fn pull_requests_active(&self) -> bool {
+        self.settings.graph.show_pull_requests
+            && self.pull_requests.origin().is_some()
+            && !self.pull_requests.needs_sign_in()
+    }
+
+    /// Turns pull requests off if they are active, else on, asking GitHub now.
+    pub(super) fn toggle_pull_requests(&mut self) {
+        if self.pull_requests_active() {
+            self.settings.graph.show_pull_requests = false;
+        } else {
+            self.settings.graph.show_pull_requests = true;
+            self.pull_requests.ask();
+        }
+    }
+
+    /// Why pull requests the user asked for couldn't be loaded, and what to do about it.
+    fn pull_requests_dialog(&mut self, ctx: &egui::Context) {
+        let Some(error) = &self.pull_requests_error else {
+            return;
+        };
+        let mut open = true;
+        let mut close = false;
+        egui::Window::new("Pull requests")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_max_width(380.0);
+                ui.label(RichText::new(capitalise(&format!("{error}."))).strong());
+                if let Some(advice) = error.advice() {
+                    ui.add_space(4.0);
+                    ui.label(advice);
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    use parterre_core::forge::ForgeError;
+                    if matches!(error, ForgeError::NoGh)
+                        && ui.button("Install the GitHub CLI…").clicked()
+                        && let Err(e) = crate::browser::open(GH_INSTALL)
+                    {
+                        self.status = Some((e, true));
+                    }
+                    if error.needs_sign_in() && ui.button("Copy `gh auth login`").clicked() {
+                        ui.ctx().copy_text("gh auth login".to_owned());
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("OK").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            });
+        if !open || close {
+            self.pull_requests_error = None;
         }
     }
 
@@ -1536,7 +1609,11 @@ impl ParterreApp {
             None => Vec::new(),
         };
         let item = |text: &str, shortcut: &str| egui::Button::new(text).shortcut_text(shortcut);
-        let pull_requests_shown = self.pull_requests_shown && self.pull_requests.list().is_some();
+        // The scene is borrowed: `pull_requests_active`, field by field.
+        let pull_requests_shown = self.settings.graph.show_pull_requests
+            && self.pull_requests.origin().is_some()
+            && !self.pull_requests.needs_sign_in()
+            && self.pull_requests.list().is_some();
         egui::Popup::context_menu(&response)
             .style(menu::style)
             .show(|ui| {
@@ -1952,6 +2029,18 @@ impl ParterreApp {
     }
 }
 
+/// Where the GitHub CLI's installation is explained.
+const GH_INSTALL: &str = "https://github.com/cli/cli#installation";
+
+/// `text` with its first letter in upper case.
+fn capitalise(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 /// How many recent folders the welcome screen lists; the menu has them all.
 const WELCOME_RECENT: usize = 5;
 
@@ -2003,6 +2092,7 @@ impl eframe::App for ParterreApp {
             egui::CentralPanel::default().show(ui, |ui| self.welcome(ui));
         }
         self.shortcuts_window(&ctx);
+        self.pull_requests_dialog(&ctx);
         self.legend_window(&ctx);
         self.settings_window(&ctx);
         self.log_window(&ctx);
@@ -2011,7 +2101,7 @@ impl eframe::App for ParterreApp {
         // Scripted runs wait for the graph, unless there is none to wait for, and for the pull
         // requests and the layout with them.
         let pulling = self.pull_requests.is_loading()
-            || self.pull_requests_shown
+            || self.pull_requests_active()
                 && self.pull_requests.list().is_some()
                 && self.job.is_some();
         if (self.scene.is_some() || self.repo.is_none()) && !pulling {
