@@ -360,6 +360,12 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
   - [ ] Stretch goal: wrap long lines, as a toggle in the diff window's toolbar. Until then
         long lines scroll sideways ([#45](https://github.com/aquamoth/parterre/issues/45)).
   - [x] Free text selection in either pane, copied as in the file (wanted 2026-09-26).
+  - [ ] The `+`/`−` sign by the pointer doesn't look good on Windows (reported 2026-09-26,
+        with a photo). It is drawn at a fixed offset (10, 12) from the pointer
+        (`version_badge` in `diff_window.rs`), which lands on the I-beam's lower right serif:
+        Windows' I-beam is bigger than on Linux and scales with the display, and in a lime
+        custom pointer colour the green `+` merges with it. Place it clear of the actual
+        cursor's size, and make it stand out from any pointer colour (an outline, say).
   - [ ] Optional: find in a diff window (Ctrl+F)
         ([#45](https://github.com/aquamoth/parterre/issues/45)).
   - [ ] Another day: open a diff from outside parterre, e.g. right-click an edited file in the
