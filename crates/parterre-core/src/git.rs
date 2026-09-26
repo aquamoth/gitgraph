@@ -13,6 +13,8 @@ use std::process::{Command, Output, Stdio};
 use crate::oid::Oid;
 use crate::repo::{Commit, CommitIx, GitRef, Head, RefKind, Repo};
 
+mod program;
+
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
     #[error("could not run git ({0}); is git installed and on PATH?")]
@@ -49,7 +51,7 @@ impl Git {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let mut cmd = Command::new("git");
+        let mut cmd = Command::new(program::git());
         cmd.arg("-C")
             .arg(&self.dir)
             .args(["-c", "core.quotepath=off"])

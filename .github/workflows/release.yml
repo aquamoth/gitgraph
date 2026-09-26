@@ -90,6 +90,15 @@ jobs:
             cp "target/${{ matrix.target }}/release/parterre" "$name/"
             tar czf "dist/$name.tar.gz" "$name"
           fi
+      # The installer, from the same files as the zip (packaging/windows/build-msi.ps1).
+      - name: Windows installer
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          dotnet tool install --global wix --version 7.0.0
+          name="parterre-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
+          PATH="$USERPROFILE/.dotnet/tools:$PATH" \
+            pwsh packaging/windows/build-msi.ps1 -Stage "$name" -Out "dist/$name.msi"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
