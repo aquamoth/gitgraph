@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 19._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 21._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -96,8 +96,10 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 8. **Other refs** (`refs/t3/*` in Apps) are hidden by default; ☰ → Show → Other refs shows them.
 9. **HEAD marker.** Like TortoiseGit, only the current branch's row is highlighted (red). A
    detached HEAD gets its own red "HEAD" row, which TortoiseGit doesn't have.
-10. **No git actions.** Per your brief, there's no checkout, log, diff or delete. The context
-    menu only copies hashes, ref names or the subject. Should any actions be added?
+10. **No git actions.** Answered 2026-09-26: yes, towards parity with TortoiseGit's node menu.
+    The roadmap, its boundary rule and the open decisions live in the map *Revision-graph node
+    menu: roadmap to TortoiseGit parity* ([#25](https://github.com/aquamoth/parterre/issues/25)).
+    Show log comes first; *Browse repository* and the menu-bar Git menu are out.
 11. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
     commits, 2,490 refs and 1,846 merges:
     - Loading takes 0.6 s.
@@ -211,9 +213,67 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       repository opens that repository.
     - **Items that need a repository** (undo, reload, export, close) are greyed out while none
       is open. The toolbar stays as it is.
+19. **Log window layouts** (#40). #29 didn't settle:
+    - **The picker** is four icon segments drawing each layout's panes, named in their
+      tooltips, like the toolbar's drag modes. No keyboard shortcut for switching (the
+      prototype's ← → keys were prototype chrome).
+    - **Reset** is an icon button right of the picker. It moves only the current layout's
+      dividers back, and is greyed out while they are where they start.
+    - **In the settings** the same picker is a row "Layout" under a heading "Log window" at the
+      bottom of *Appearance* (below the fold: the page scrolls), with the layout's name beside
+      it. A page of its own for one row seemed too much.
+    - **Smallest pane:** 8 % of the height, 15 % of the width (the panes are tables, which need
+      room across). Starting positions are the prototype's.
+    - **Narrow panes get narrower columns:** a commit list under 720 points wide gets the
+      prototype's narrower author and date columns (as in its layouts B and D), and a
+      changed-files table whose path would get under 260 points gets narrower columns with
+      shorter headings ("Ext.", "Added", "Removed"; the full name in the tooltip). Decided by
+      width, not by layout, so a narrow window in layout A gets them too.
+20. **Log window** (#39, layout A). Calls #27–#29 didn't settle:
+    - **Ref badges follow the graph's ref kinds.** The log shows badges (and names the range
+      with refs) only of the kinds the graph shows: hide remote branches, other refs or the
+      stash in the graph and they go from the log too. The alternative is every ref, always,
+      which on Apps would add the `refs/t3/*` checkpoints.
+    - **Esc in the filter field** only leaves the field; a second Esc closes the window.
+    - **F5 in the log window** reloads the whole repository, graph included, as F5 in the
+      graph does; the log re-runs its query and keeps the selected commit.
+    - **Show log while the window is open** replaces its contents and asks the window manager
+      to raise it (Wayland may ignore that). Sort and filter of the changed files, and the
+      divider positions, carry over to the new log.
+    - **Size on first open:** 1100 × 760; after that, the size it last had.
+    - **No keyboard focus for the list:** the arrow keys, Page Up/Down, Home and End move the
+      selected commit whenever the filter field doesn't have the keyboard.
 
 ## Planned
 
+- [x] Show log window, as planned in the map *Revision-graph node menu: roadmap to TortoiseGit
+      parity* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
+      from TortoiseGit (decided in #28): when the second of two selected nodes is an ancestor
+      of the first, the two are swapped instead of showing an empty list.
+  - [x] Layout A (stacked) and its entry points: *Show log* first in the node menu, `L` and
+        double-click ([#39](https://github.com/aquamoth/parterre/issues/39); see question 20).
+  - [x] Layouts B, C and D, the layout picker (in the window's header and in *Settings →
+        Appearance*) and reset, and the layout and divider positions per layout saved with the
+        settings ([#40](https://github.com/aquamoth/parterre/issues/40); see question 19).
+- [x] Wayland freeze ([#38](https://github.com/aquamoth/parterre/issues/38)). On Wayland the
+      whole app froze when one of its windows was minimized while another was open; it
+      happened with Settings already. Worked around (see `frame_pacing.rs`, and
+      `docs/research/wayland-viewport-freeze.md` on the branch
+      `research/wayland-viewport-freeze`): on Wayland only, vsync off and frames capped at about
+      8 ms. Not verified on Wayland after the change (no headless Wayland to test with).
+  - [ ] **Check regularly, and on every eframe upgrade, whether the upstream fix has shipped:**
+        <https://github.com/emilk/egui/pull/8631> (bug:
+        <https://github.com/emilk/egui/issues/5145>). Once it is in a released eframe, remove
+        the frame cap and turn vsync back on.
+- [ ] Short hashes in the graph as long as git makes them for the repository (`core.abbrev`
+      auto: 9 on Apps), as the log window will. Today the graph uses a fixed 8, and 10 in one
+      place.
+- [x] Settings window without minimize and maximize buttons. It is a dialog, and maximizing it
+      breaks its layout. Asked of winit, which (0.30) does this on Windows and macOS only. On
+      Linux it ignores the request: there the window loses only its maximize button, because it
+      can't be resized (winit's own Wayland title bar, as on GNOME, leaves maximize out, and X11
+      window managers get a "not maximizable" hint), and minimize stays. Not checked by hand on
+      any platform.
 - [ ] Toolbar merged into the title bar, with ☰, the repository name and the window buttons in
       one row (wanted 2026-09-26, postponed as too big a change for now). Native on macOS
       (content under a transparent title bar, the traffic lights stay). Elsewhere parterre

@@ -27,6 +27,9 @@ pub struct Automation {
     /// Open the ☰ menu, a toolbar popover (`filter`, `zoom`, `drag`) or the settings
     /// (`settings`, or `settings:<page>`) before the screenshot.
     pub demo_open: Option<String>,
+    /// Open the log window on `<ref>` or `<ref>..<ref>` (as if those nodes were selected in
+    /// that order) before the screenshot.
+    pub demo_log: Option<String>,
     /// Where the context menu is opened, once chosen.
     menu_at: Option<Pos2>,
     frame: u32,
@@ -159,7 +162,7 @@ impl Automation {
 
         let shoot_at = if self.demo_drag.is_some() {
             DRAG_START + DRAG_FRAMES + SETTLE_FRAMES
-        } else if self.demo_menu.is_some() || self.demo_open.is_some() {
+        } else if self.demo_menu.is_some() || self.demo_open.is_some() || self.demo_log.is_some() {
             MENU_START + 60
         } else {
             8

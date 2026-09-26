@@ -1,0 +1,162 @@
+//! Text helpers for the log window, free of any GUI: web links in commit messages, paths cut
+//! at the start, and counts with thousands separators.
+
+use std::ops::Range;
+
+/// The byte ranges of the plain `http://` and `https://` URLs in `text`.
+///
+/// A URL runs to the next whitespace or `<`, `>`, `"`. Punctuation that more likely ends the
+/// sentence than the URL is left out: a trailing `.`, `,`, `;`, `:`, `!`, `?` or `'`, and a
+/// closing bracket without an opening one inside the URL (`(see https://x.org/a)`).
+pub fn find_urls(text: &str) -> Vec<Range<usize>> {
+    let mut urls = Vec::new();
+    let mut from = 0;
+    while let Some(found) = next_scheme(&text[from..]) {
+        let start = from + found;
+        let len = text[start..]
+            .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"'))
+            .unwrap_or(text.len() - start);
+        let mut end = start + len;
+        loop {
+            let url = &text[start..end];
+            let Some(last) = url.chars().last() else {
+                break;
+            };
+            let unbalanced = |open: char| url.matches(open).count() < url.matches(last).count();
+            let trim = match last {
+                '.' | ',' | ';' | ':' | '!' | '?' | '\'' => true,
+                ')' => unbalanced('('),
+                ']' => unbalanced('['),
+                '}' => unbalanced('{'),
+                _ => false,
+            };
+            if !trim {
+                break;
+            }
+            end -= last.len_utf8();
+        }
+        // Nothing after the scheme: not a link.
+        let scheme_len = if text[start..].starts_with("https") {
+            8
+        } else {
+            7
+        };
+        if end > start + scheme_len {
+            urls.push(start..end);
+        }
+        from = end.max(start + scheme_len);
+    }
+    urls
+}
+
+/// Offset of the next `http://` or `https://` that starts a word.
+fn next_scheme(text: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(i) = text[from..].find("http") {
+        let at = from + i;
+        let rest = &text[at..];
+        let word_start = text[..at]
+            .chars()
+            .last()
+            .is_none_or(|c| !c.is_alphanumeric());
+        if word_start && (rest.starts_with("http://") || rest.starts_with("https://")) {
+            return Some(at);
+        }
+        from = at + 4;
+    }
+    None
+}
+
+/// `text`, or its longest end that fits after an ellipsis (`…` then the end) when the whole
+/// doesn't. `fits` measures a candidate. Used for paths, so that the file name stays in view.
+pub fn elide_start(text: &str, fits: impl Fn(&str) -> bool) -> String {
+    if fits(text) {
+        return text.to_owned();
+    }
+    // Char boundaries where the kept end may start; binary search for the earliest that fits.
+    let starts: Vec<usize> = text.char_indices().map(|(i, _)| i).skip(1).collect();
+    let (mut lo, mut hi) = (0, starts.len());
+    let candidate = |k: usize| match starts.get(k) {
+        Some(&i) => format!("…{}", &text[i..]),
+        None => "…".to_owned(),
+    };
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if fits(&candidate(mid)) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    candidate(lo)
+}
+
+/// `n` with commas between thousands: `13,786`.
+pub fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn urls(text: &str) -> Vec<&str> {
+        find_urls(text).into_iter().map(|r| &text[r]).collect()
+    }
+
+    #[test]
+    fn finds_http_and_https_urls() {
+        assert_eq!(
+            urls("See https://github.com/aquamoth/parterre/issues/28 and http://x.org/a?b=c#d"),
+            [
+                "https://github.com/aquamoth/parterre/issues/28",
+                "http://x.org/a?b=c#d"
+            ]
+        );
+        assert_eq!(
+            urls("https://a.b/c\nhttps://d.e"),
+            ["https://a.b/c", "https://d.e"]
+        );
+        assert!(urls("no links, ftp://x.org, shttp://x.org or https:// alone").is_empty());
+    }
+
+    #[test]
+    fn leaves_out_the_punctuation_around_urls() {
+        assert_eq!(urls("Fixed (see https://x.org/a)."), ["https://x.org/a"]);
+        assert_eq!(
+            urls("https://en.wikipedia.org/wiki/Rust_(language), too"),
+            ["https://en.wikipedia.org/wiki/Rust_(language)"]
+        );
+        assert_eq!(urls("<https://x.org/a>"), ["https://x.org/a"]);
+        assert_eq!(urls("\"https://x.org/ä\"!"), ["https://x.org/ä"]);
+        assert_eq!(urls("[link](https://x.org/b)"), ["https://x.org/b"]);
+    }
+
+    #[test]
+    fn elides_at_the_start_so_the_end_stays() {
+        let fits = |n: usize| move |s: &str| s.chars().count() <= n;
+        assert_eq!(elide_start("src/app/log.rs", fits(20)), "src/app/log.rs");
+        assert_eq!(elide_start("src/app/log.rs", fits(10)), "…pp/log.rs");
+        assert_eq!(elide_start("src/app/log.rs", fits(1)), "…");
+        assert_eq!(elide_start("src/app/log.rs", fits(0)), "…");
+        assert_eq!(elide_start("dir/☃☃☃.txt", fits(8)), "…☃☃☃.txt");
+        assert_eq!(elide_start("", fits(0)), "");
+    }
+
+    #[test]
+    fn groups_thousands() {
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1000), "1,000");
+        assert_eq!(thousands(13786), "13,786");
+        assert_eq!(thousands(1234567), "1,234,567");
+    }
+}

@@ -4,8 +4,16 @@ parterre is a Cargo workspace with two crates:
 
 ```
 crates/parterre-core   GUI-free; everything testable lives here
-  git.rs               run `git log` / `git for-each-ref`, parse into a Repo
-  repo.rs              Repo snapshot: commits (with parent indices), refs, HEAD
+  git.rs               run `git log` / `git for-each-ref`, parse into a Repo; changed files
+                       of a commit (`git diff-tree`)
+  repo.rs              Repo snapshot: commits (with parent indices), refs, HEAD, git's hash
+                       length
+  log.rs               log query: tips and exclusions → commits in `git log --date-order`
+                       order, from the snapshot alone
+  log_layout.rs        the log window's four fixed layouts and their divider positions
+  changed_files.rs     changed-file types, `diff-tree -z` parser, files-before-folders order,
+                       the log window's file filter and column sort
+  text.rs              URLs in commit messages, paths cut at the start, thousands separators
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
   pattern.rs           branch-name wildcards, for hiding and colouring branches
   recent.rs            the recently opened repositories
@@ -27,6 +35,10 @@ crates/parterre        the binary (eframe/egui)
   app.rs               canvas interaction, search, status bar, windows, opening folders
     toolbar.rs         the toolbar, its popovers and the ☰ menu
     settings_window.rs the settings: pages of rows, applied as you change them
+    log_window.rs      the log window (Show log): an immediate viewport with three panes
+                       (commits, details, changed files) that one of four fixed layouts
+                       arranges, picked in its header; changed files come from git on a
+                       worker thread
   scene.rs             node contents and sizes + layout + physics net, hit testing
   render.rs            painting nodes, edges, arrows, overview
   view.rs              pan/zoom transform
@@ -35,7 +47,8 @@ crates/parterre        the binary (eframe/egui)
   menu.rs              the look of menus and popovers, menu items
   widgets.rs           icon buttons, segmented buttons, switches, text fields
   settings.rs          persisted settings and the Classic/Modern looks
-  automation.rs        --screenshot / --demo-drag / --demo-menu / --demo-open scripted runs
+  automation.rs        --screenshot / --demo-drag / --demo-menu / --demo-open / --demo-log
+                       scripted runs (the log window's layout: --log-layout)
 ```
 
 ## Data flow

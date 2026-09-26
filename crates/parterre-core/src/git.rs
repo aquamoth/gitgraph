@@ -10,8 +10,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+use crate::changed_files::{ChangedFile, parse_diff_tree};
 use crate::oid::Oid;
-use crate::repo::{Commit, CommitIx, GitRef, Head, RefKind, Repo};
+use crate::repo::{Commit, CommitIx, DEFAULT_ABBREV_LEN, GitRef, Head, RefKind, Repo};
 
 mod program;
 
@@ -190,24 +191,30 @@ impl Git {
         starts.extend(head_oid);
         starts.sort_unstable();
         starts.dedup();
-        let (commits, by_oid) = if starts.is_empty() {
-            (Vec::new(), HashMap::new())
-        } else {
-            let input: String = starts.iter().map(|o| format!("{o}\n")).collect();
-            let log = git.run_with_input(
-                &[
-                    "log",
-                    "--no-color",
-                    "--no-decorate",
-                    "--date=format-local:%Y-%m-%d %H:%M",
-                    "-z",
-                    LOG_FORMAT,
-                    "--stdin",
-                ],
-                input,
-            )?;
-            parse_log(&log)?
-        };
+        let (log, abbrev_len) = std::thread::scope(|s| {
+            // Asked alongside the log, so it adds no time to the load.
+            let abbrev = s.spawn(|| git.abbrev_len(&starts));
+            let log = if starts.is_empty() {
+                Ok((Vec::new(), HashMap::new()))
+            } else {
+                let input: String = starts.iter().map(|o| format!("{o}\n")).collect();
+                git.run_with_input(
+                    &[
+                        "log",
+                        "--no-color",
+                        "--no-decorate",
+                        "--date=format-local:%Y-%m-%d %H:%M",
+                        "-z",
+                        LOG_FORMAT,
+                        "--stdin",
+                    ],
+                    input,
+                )
+                .and_then(|log| parse_log(&log))
+            };
+            (log, abbrev.join().unwrap_or(DEFAULT_ABBREV_LEN))
+        });
+        let (commits, by_oid) = log?;
 
         let lookup = |oid: &Oid| by_oid.get(oid).copied();
         let head = match (&head_branch, head_oid) {
@@ -250,7 +257,31 @@ impl Git {
                 is_head: true,
             });
         }
-        Ok(Repo::new(root, commits, refs, head))
+        let mut repo = Repo::new(root, commits, refs, head);
+        repo.abbrev_len = abbrev_len;
+        Ok(repo)
+    }
+
+    /// git's abbreviation length for the repository, as `%h` would print it (`core.abbrev`,
+    /// `auto` by default). git lengthens an abbreviation that would be ambiguous, so this takes
+    /// the shortest of a few samples. [`DEFAULT_ABBREV_LEN`] if there are no commits or git
+    /// fails.
+    fn abbrev_len(&self, commits: &[Oid]) -> usize {
+        let samples: Vec<String> = commits.iter().take(3).map(Oid::to_hex).collect();
+        if samples.is_empty() {
+            return DEFAULT_ABBREV_LEN;
+        }
+        let mut args = vec!["log", "--no-walk=unsorted", "--no-color", "--format=%h"];
+        args.extend(samples.iter().map(String::as_str));
+        match self.query(&args) {
+            Ok(Some(out)) => out
+                .lines()
+                .map(|l| l.trim().len())
+                .filter(|&n| n > 0)
+                .min()
+                .unwrap_or(DEFAULT_ABBREV_LEN),
+            _ => DEFAULT_ABBREV_LEN,
+        }
     }
 }
 
@@ -259,6 +290,28 @@ impl Git {
     pub fn message(&self, oid: &Oid) -> Result<String, GitError> {
         let out = self.run(&["log", "-1", "--no-color", "--format=%B", &oid.to_hex()])?;
         Ok(out.trim_end().to_owned())
+    }
+
+    /// The changed files of a commit: what it changed compared with its first parent (a root
+    /// commit, or the boundary of a shallow clone, against the empty tree). Renames are
+    /// detected (`-M`); binary files have no line counts. Sorted by
+    /// [`compare_paths`](crate::changed_files::compare_paths).
+    pub fn changed_files(&self, commit: &Oid) -> Result<Vec<ChangedFile>, GitError> {
+        let out = self.run(&[
+            "diff-tree",
+            "-r",
+            "-M",
+            "--root",
+            "--diff-merges=first-parent",
+            "--no-commit-id",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-z",
+            "--raw",
+            "--numstat",
+            &commit.to_hex(),
+        ])?;
+        parse_diff_tree(&out).map_err(GitError::Parse)
     }
 }
 

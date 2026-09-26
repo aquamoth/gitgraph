@@ -381,12 +381,7 @@ pub fn build(repo: &Repo, options: &GraphOptions) -> RevGraph {
         node_of[c] = Some(nodes.len() as u32);
         let mut refs = std::mem::take(&mut refs_on[c]);
         // HEAD first, then TortoiseGit's order: by full ref name (heads, remotes, stash, tags).
-        refs.sort_by(|&a, &b| {
-            let (ra, rb) = (&repo.refs[a], &repo.refs[b]);
-            (rb.kind == RefKind::DetachedHead)
-                .cmp(&(ra.kind == RefKind::DetachedHead))
-                .then(ra.full_name.cmp(&rb.full_name))
-        });
+        refs.sort_by(|&a, &b| crate::repo::cmp_refs_for_display(&repo.refs[a], &repo.refs[b]));
         nodes.push(RevNode {
             commit: CommitIx(c as u32),
             refs,

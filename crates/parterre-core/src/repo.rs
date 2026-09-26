@@ -3,6 +3,7 @@
 //! The snapshot holds every commit reachable from any ref (except notes), so that view options
 //! such as "show remote branches" can be toggled without going back to git.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -83,6 +84,17 @@ pub enum Head {
     Detached(CommitIx),
 }
 
+/// The order refs on one commit are shown in: a detached HEAD first, then TortoiseGit's order,
+/// by full ref name (heads, remotes, stash, tags).
+pub fn cmp_refs_for_display(a: &GitRef, b: &GitRef) -> Ordering {
+    (b.kind == RefKind::DetachedHead)
+        .cmp(&(a.kind == RefKind::DetachedHead))
+        .then_with(|| a.full_name.cmp(&b.full_name))
+}
+
+/// git's abbreviation length for small repositories, used when git cannot tell us.
+pub const DEFAULT_ABBREV_LEN: usize = 7;
+
 #[derive(Clone, Debug)]
 pub struct Repo {
     /// Working tree root, or the git dir for bare repositories.
@@ -90,6 +102,9 @@ pub struct Repo {
     pub commits: Vec<Commit>,
     pub refs: Vec<GitRef>,
     pub head: Head,
+    /// How many hex digits git abbreviates hashes to in this repository (`core.abbrev`; by
+    /// default sized to the object count, 7 at minimum). Use with [`Oid::short`].
+    pub abbrev_len: usize,
     by_oid: HashMap<Oid, CommitIx>,
 }
 
@@ -105,6 +120,7 @@ impl Repo {
             commits,
             refs,
             head,
+            abbrev_len: DEFAULT_ABBREV_LEN,
             by_oid,
         }
     }
@@ -131,11 +147,43 @@ impl Repo {
             .collect()
     }
 
+    /// The commit `name` stands for: `HEAD`, a ref's short or full name, or a unique hash
+    /// prefix (at least 4 digits).
+    pub fn resolve(&self, name: &str) -> Option<CommitIx> {
+        if name == "HEAD" {
+            return self.head_commit();
+        }
+        if let Some(r) = self
+            .refs
+            .iter()
+            .find(|r| r.name == name || r.full_name == name)
+        {
+            return Some(r.target);
+        }
+        match self.find_by_prefix(name)[..] {
+            [one] => Some(one),
+            _ => None,
+        }
+    }
+
     pub fn head_commit(&self) -> Option<CommitIx> {
         match &self.head {
             Head::Branch { target, .. } => *target,
             Head::Detached(c) => Some(*c),
         }
+    }
+
+    /// For every commit, the indices into [`Repo::refs`] of the refs pointing at it, in
+    /// [`cmp_refs_for_display`] order.
+    pub fn refs_by_commit(&self) -> Vec<Vec<usize>> {
+        let mut on = vec![Vec::new(); self.commits.len()];
+        for (i, r) in self.refs.iter().enumerate() {
+            on[r.target.ix()].push(i);
+        }
+        for refs in &mut on {
+            refs.sort_by(|&a, &b| cmp_refs_for_display(&self.refs[a], &self.refs[b]));
+        }
+        on
     }
 
     /// Display name for the repository (directory name).
