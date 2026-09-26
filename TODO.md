@@ -5,9 +5,9 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 16._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 17._
 
-1. **Default look: "Modern" or "Classic"?** The toolbar has a Look selector.
+1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
      needed.
    - **Modern** (current default) uses curved edges and bundles edges that run into the same
@@ -72,8 +72,9 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
    - **The old prototypes are gone.** Spider web and Strings became Adapt; Rigid became Free.
    - **Mode switching** uses keys and buttons only. Shift and Ctrl already mean selection;
      another modifier (such as holding Space) could give a one-off Free drag.
-   - **Remembering moves.** Drag → *Remember moved nodes* (off by default) keeps nodes where
-     they rest, per repository, across runs and relayouts. Should it be on by default?
+   - **Remembering moves.** *Remember moved nodes* (in the drag options, off by default) keeps
+     nodes where they rest, per repository, across runs and relayouts. Should it be on by
+     default?
 3. **Fidelity quirks in "Labelled commits" (TortoiseGit's default mode).** TortoiseGit uses
    `git log --simplify-by-decoration` and inherits git's simplifications:
    - A `--no-ff` merge whose first parent is an ancestor of its second is folded away.
@@ -87,12 +88,12 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
    be better?
 5. **Layer spacing.** Gaps between rows grow when long sideways edges cross them. TortoiseGit
    (OGDF) does the same, capped at 300 px. This keeps edges steep but makes the graph taller.
-   Tune it under Graph → Spacing. Happy with the default?
+   Tune it under *Settings → Advanced*. Happy with the default?
 6. **Stash** is shown, as in TortoiseGit, as a single edge to its base commit. The index and
    untracked-files snapshot commits are hidden.
 7. **`origin/HEAD`**-style symbolic refs are hidden, because they duplicate `origin/main`.
    TortoiseGit shows them.
-8. **Other refs** (`refs/t3/*` in Apps) are hidden by default; Graph → Other refs shows them.
+8. **Other refs** (`refs/t3/*` in Apps) are hidden by default; ☰ → Show → Other refs shows them.
 9. **HEAD marker.** Like TortoiseGit, only the current branch's row is highlighted (red). A
    detached HEAD gets its own red "HEAD" row, which TortoiseGit doesn't have.
 10. **No git actions.** Per your brief, there's no checkout, log, diff or delete. The context
@@ -109,7 +110,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     Is 2.8 s and 880 MB for the all-commits view of a 100k repo acceptable, or worth more
     work? (Apps, at 15k commits, needs 0.2 s.)
 12. **Releases** (`docs/releasing.md`). Decisions you may want to overrule:
-    - **Version in the UI:** besides `--version`, the Help menu ends with a greyed
+    - **Version in the UI:** besides `--version`, the ☰ menu ends with a greyed
       `parterre 0.3.0 (a1b2c3d)` line, for users who start parterre from a file manager or
       Start menu and never see a terminal.
     - **Assets:** one archive per target (`.tar.gz`, `.zip` on Windows) holding the binary,
@@ -125,8 +126,9 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     - **Dirty** means uncommitted changes under `crates/`, `.cargo/`, the Cargo files or
       `rust-toolchain.toml`, the files that go into the binary. Edits to docs don't count.
 13. **Hiding and colouring branches by name** (your request of 2026-09-25). Neither is in
-    TortoiseGit. *Graph → Hide branches* takes wildcards such as `pipeline/*, release/*`;
-    *View → Branch colours…* holds rules such as `feature/*` → purple (first match wins). On
+    TortoiseGit. *Hide branches* (the toolbar's filter options, or *Settings → Filters*) takes
+    wildcards such as `pipeline/*, release/*`; *Settings → Branch colours* holds rules such as
+    `feature/*` → purple (first match wins). On
     Apps, hiding `pipeline/*, release/*` takes the graph from 167 to 97 nodes. Only one of the
     64 branches stays: `origin/pipeline/8/15749`, which three prototype and spike branches grow
     out of. Decisions you may want to overrule:
@@ -142,9 +144,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     - **Colours stay as picked in the dark theme.** The built-in colours are
       lightness-inverted there instead.
     - **Global, not per repository**, like the other settings. Both lists start empty.
-    - **The Graph menu stays open** when you click inside it, so its text fields can be
-      clicked into. Its checkboxes and radio buttons now leave it open too. A click outside
-      it or Esc closes it. Other menus still close on any click.
+    - **The filter options stay open** when you click inside them, so their text fields can
+      be clicked into. A click outside or Esc closes them. Menus close on any click.
     - **`--hide` and `--branch-color`** replace the saved list or rules, like `--filter`.
       Like every command-line option, the change is saved when the window closes.
 14. **Edge ends in Classic.** On your request, edges now always leave a node's bottom centre
@@ -157,9 +158,27 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     verdicts and a head-to-head of the last two is on the branch `prototype/app-icon`
     (`packaging/icon-prototype/index.html`). Nothing is taken from the publisher's name. macOS
     26 could also take a dark appearance; nothing else can, so one icon serves everywhere.
+16. **Toolbar, menu and settings** (reorganised 2026-09-26 after the prototype on the branch
+    `prototype/menus`). Calls I made that the prototype didn't settle:
+    - **Left out of the ☰ menu:** "Select subtree of selection" and "Return selection to
+      layout". The right-click menu has both, and acts on the selection the node belongs to.
+    - **Added to the ☰ menu:** *Find* (`Ctrl+F`) in the toolbar's order, and the version at
+      the foot (question 12).
+    - **Only in the ☰ menu and *Settings → Graph*:** stash, other refs and "tags make nodes".
+      The toolbar's filter options keep the four filters you change most.
+    - **Physics sliders are always enabled** (*Settings → Advanced*). They only affect Adapt,
+      as their tooltips say; before, they were greyed out in the other modes.
+    - **The toolbar no longer wraps.** In narrow windows the find field shrinks instead, and
+      drops its `Ctrl+F` hint.
 
 ## Planned
 
+- [ ] Toolbar merged into the title bar, with ☰, the repository name and the window buttons in
+      one row (wanted 2026-09-26, postponed as too big a change for now). Native on macOS
+      (content under a transparent title bar, the traffic lights stay). Elsewhere parterre
+      would draw its own title bar: moving, resizing and double-click to maximise by hand; no
+      Windows 11 snap-layout popup; on GNOME no compositor shadow. See the "Title bar: merged"
+      toggle in the prototype on the branch `prototype/menus`.
 - [ ] PNG export: SVG exists; TortoiseGit also offers raster formats.
 - [ ] Reload automatically when refs change; TortoiseGit only reloads on F5.
 - [ ] Tooltip on edges showing the collapsed commits.
@@ -167,7 +186,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [ ] Distribution, as decided in `docs/distribution.md`: crates.io (#13), Windows MSI (#15),
       winget (#16), Chocolatey (#17), .deb and .rpm (#18), Snap (#19), publishing behind one
       approval (#20), Flathub later (#21).
-- [ ] Explorer context menu (#11) and *File → Open repository…* (#12).
+- [ ] Explorer context menu (#11) and *Open repository…* in the ☰ menu (#12).
 - [ ] macOS `.app` bundle, so the Dock shows `packaging/icon/parterre.icns`; the release ships
       a bare binary, which gets the generic icon.
 - [ ] After some sequences of drags, undo and redo, a reset leaves an edge with a route of
@@ -231,7 +250,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
   - edges re-route through the gaps between rows as nodes are moved
 - [x] Tag-driven releases (question 12): pushing `vX.Y.Z` builds Linux, Windows and macOS
       archives and publishes a GitHub Release. The build fails unless the tag matches
-      `Cargo.toml`. `--version` and the Help menu read `0.3.0 (a1b2c3d)` for releases and
+      `Cargo.toml`. `--version` and the ☰ menu read `0.3.0 (a1b2c3d)` for releases and
       `0.3.0-dev+a1b2c3d` for every other build.
 - [x] Hiding branches by wildcard, leaves only, and colours by branch name (question 13).
       Available in the menus and as `--hide` and `--branch-color`. The status bar counts the
@@ -244,3 +263,16 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
   - click an edge to keep it highlighted, also in the overview; the status bar says where it
     leads
   - the blue dot is gone
+- [x] Context menu restyled after current desktop menus: rounded, soft shadow, roomier rows
+      with a rounded highlight, shortcuts on the right, unavailable items greyed out rather
+      than left out. "Follow system" now follows the desktop's light or dark mode on Linux
+      too, switching as soon as the desktop does (XDG desktop portal, via `gdbus`); winit
+      reports no system theme there, so it used to be dark always.
+- [x] Title bar: on GNOME (Wayland desktops that leave it to the app) winit's Adwaita-style
+      title bar with the window title and round buttons, instead of a plain dark bar. The
+      title bar follows parterre's light or dark theme, also on Windows and macOS.
+- [x] Toolbar, ☰ menu and settings reorganised (question 16): icon tools for what to show, the
+      ref toggles with filter options, find, zoom, HEAD, the overview map and the drag modes
+      with their options; everything again in the ☰ menu, in the toolbar's order; the rest in
+      a settings window that leaves the graph visible and applies changes at once. The status
+      bar can be hidden, and no longer shows the layout time or the drag mode's description.

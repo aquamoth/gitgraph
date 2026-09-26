@@ -6,20 +6,27 @@ use eframe::egui::{
     self, Color32, FontId, Key, Modifiers, PointerButton, Pos2, Rect, RichText, Sense, Ui, Vec2,
     vec2,
 };
-use parterre_core::layout::{Direction, LayoutOptions, Ranking};
+use parterre_core::layout::{Direction, LayoutOptions};
 use parterre_core::physics::DragModel;
-use parterre_core::revgraph::{GraphOptions, RevEdge, Simplification};
+use parterre_core::revgraph::{GraphOptions, RevEdge};
 use std::sync::Arc;
 
 use parterre_core::{Oid, Repo};
 
+mod settings_window;
+mod toolbar;
+
+pub use toolbar::popup_id;
+
+use settings_window::SettingsPage;
+
 use crate::automation::Automation;
+use crate::menu;
 use crate::render::{self, Marks};
 use crate::scene::{FONT_SIZE, Scene, to_point};
-use crate::settings::{
-    Arrows, EdgeStyle, Look, MOVES_KEY, RememberedMoves, STORAGE_KEY, Settings, load_moves,
-};
-use crate::theme::{BranchColor, Palette, ThemeChoice};
+use crate::settings::{MOVES_KEY, RememberedMoves, STORAGE_KEY, Settings, load_moves};
+use crate::system_theme::SystemTheme;
+use crate::theme::{Palette, ThemeChoice};
 use crate::view::View;
 
 #[derive(Clone, Copy, Debug)]
@@ -51,10 +58,6 @@ impl Selection {
 
     fn contains(&self, node: usize) -> bool {
         self.nodes.contains(&node)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
     }
 
     fn len(&self) -> usize {
@@ -209,13 +212,22 @@ pub struct ParterreApp {
     status: Option<(String, bool)>,
     show_shortcuts: bool,
     show_legend: bool,
-    show_branch_colors: bool,
+    show_settings: bool,
+    settings_page: SettingsPage,
     show_about: bool,
     /// Path being edited in the "Export as SVG" dialog, when open.
     export_path: Option<String>,
     messages: Messages,
     /// Dragged nodes of every repository, kept when `remember_moves` is on.
     moves: RememberedMoves,
+    system_theme: SystemTheme,
+    /// The theme last given to the window (its title bar), if any.
+    window_theme: Option<egui::SystemTheme>,
+    /// The same for the settings window, while it is open.
+    settings_window_theme: Option<egui::SystemTheme>,
+    window_icon: Arc<egui::IconData>,
+    /// What is typed into the zoom level, while it has the focus.
+    zoom_text: String,
     automation: Automation,
 }
 
@@ -248,6 +260,13 @@ impl ParterreApp {
             .map(load_moves)
             .unwrap_or_default();
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
+        // One screenshot shows everything: the settings in the main window.
+        cc.egui_ctx.set_embed_viewports(automation.is_active());
+        let demo_settings = automation
+            .demo_open
+            .as_deref()
+            .and_then(|o| o.strip_prefix("settings"))
+            .map(|page| SettingsPage::named(page.trim_start_matches(':')).unwrap_or_default());
         ParterreApp {
             repo_path,
             repo: Arc::new(repo),
@@ -271,11 +290,17 @@ impl ParterreApp {
             status: None,
             show_shortcuts: false,
             show_legend: false,
-            show_branch_colors: false,
+            show_settings: demo_settings.is_some(),
+            settings_page: demo_settings.unwrap_or_default(),
             show_about: false,
             export_path: None,
             messages: Messages::default(),
             moves,
+            system_theme: SystemTheme::watch(&cc.egui_ctx),
+            window_theme: None,
+            settings_window_theme: None,
+            window_icon: Arc::new(crate::icon::icon()),
+            zoom_text: String::new(),
             automation,
         }
     }
@@ -482,6 +507,13 @@ impl ParterreApp {
         Some((oid(edge.child), oid(edge.parent)))
     }
 
+    fn open_export(&mut self) {
+        let default = std::env::current_dir()
+            .unwrap_or_default()
+            .join(format!("{}-parterre.svg", self.repo.display_name()));
+        self.export_path = Some(default.display().to_string());
+    }
+
     fn reload(&mut self) {
         match parterre_core::git::load_repo(&self.repo_path) {
             Ok(repo) => {
@@ -607,22 +639,8 @@ impl ParterreApp {
         }
     }
 
-    /// The selected nodes that rest away from the layout.
-    fn displaced_selection(&self) -> Vec<usize> {
-        let Some(scene) = &self.scene else {
-            return Vec::new();
-        };
-        self.selection
-            .nodes
-            .iter()
-            .copied()
-            .filter(|&n| scene.net.is_displaced(n))
-            .collect()
-    }
-
     fn set_drag_model(&mut self, model: DragModel) {
         self.settings.net.model = model;
-        self.status = Some((format!("Drag: {}", model.description()), false));
     }
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
@@ -636,6 +654,9 @@ impl ParterreApp {
         let command = |k: Key| ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, k));
         if command(Key::F) {
             self.search.request_focus = true;
+        }
+        if command(Key::Comma) {
+            self.open_settings(self.settings_page);
         }
         if command(Key::C) {
             self.copy_selected_hash(ctx);
@@ -712,389 +733,6 @@ impl ParterreApp {
         }
     }
 
-    fn menu_bar(&mut self, ui: &mut Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui
-                    .add(egui::Button::new("Reload").shortcut_text("F5"))
-                    .clicked()
-                {
-                    self.reload();
-                    ui.close();
-                }
-                if ui.button("Export as SVG…").clicked() {
-                    let default = std::env::current_dir()
-                        .unwrap_or_default()
-                        .join(format!("{}-parterre.svg", self.repo.display_name()));
-                    self.export_path = Some(default.display().to_string());
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("Quit").clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            });
-            ui.menu_button("View", |ui| {
-                if ui
-                    .add(egui::Button::new("Zoom in").shortcut_text("+"))
-                    .clicked()
-                {
-                    self.view
-                        .zoom_around(self.canvas, self.canvas.center(), 1.0 / 0.8);
-                }
-                if ui
-                    .add(egui::Button::new("Zoom out").shortcut_text("-"))
-                    .clicked()
-                {
-                    self.view
-                        .zoom_around(self.canvas, self.canvas.center(), 0.8);
-                }
-                if ui
-                    .add(egui::Button::new("Zoom to 100%").shortcut_text("0"))
-                    .clicked()
-                {
-                    self.view
-                        .zoom_around(self.canvas, self.canvas.center(), 1.0 / self.view.zoom);
-                }
-                if ui
-                    .add(egui::Button::new("Fit graph").shortcut_text("F"))
-                    .clicked()
-                {
-                    self.fit();
-                    ui.close();
-                }
-                if ui
-                    .add(egui::Button::new("Go to HEAD").shortcut_text("Home"))
-                    .clicked()
-                {
-                    self.go_to_head();
-                    ui.close();
-                }
-                ui.separator();
-                ui.checkbox(&mut self.settings.show_overview, "Show overview");
-                ui.checkbox(
-                    &mut self.settings.show_hidden_counts,
-                    "Show collapsed-commit counts",
-                );
-                ui.checkbox(
-                    &mut self.settings.highlight_edges,
-                    "Highlight edges of selection",
-                );
-                ui.separator();
-                ui.menu_button("Look", |ui| {
-                    for look in Look::ALL {
-                        if ui
-                            .radio(Look::of(&self.settings) == Some(look), look.label())
-                            .clicked()
-                        {
-                            look.apply(&mut self.settings);
-                        }
-                    }
-                });
-                ui.menu_button("Edges", |ui| {
-                    for s in EdgeStyle::ALL {
-                        ui.radio_value(&mut self.settings.edge_style, s, s.label());
-                    }
-                });
-                ui.menu_button("Arrows", |ui| {
-                    for a in Arrows::ALL {
-                        ui.radio_value(&mut self.settings.arrows, a, a.label());
-                    }
-                });
-                ui.menu_button("Theme", |ui| {
-                    for t in ThemeChoice::ALL {
-                        ui.radio_value(&mut self.settings.theme, t, t.label());
-                    }
-                });
-                if ui.button("Branch colours…").clicked() {
-                    self.show_branch_colors = true;
-                    ui.close();
-                }
-            });
-            // egui closes menus on any click inside them, which would close this one when you
-            // click into its text fields. It closes on clicks outside instead, so its options
-            // can also be changed several at a time.
-            egui::containers::menu::MenuButton::new("Graph")
-                .config(
-                    egui::containers::menu::MenuConfig::new()
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
-                )
-                .ui(ui, |ui| self.graph_menu(ui));
-            ui.menu_button("Drag", |ui| self.drag_menu(ui));
-            ui.menu_button("Help", |ui| {
-                if ui.button("Keyboard and mouse").clicked() {
-                    self.show_shortcuts = true;
-                    ui.close();
-                }
-                if ui.button("Legend").clicked() {
-                    self.show_legend = true;
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("About parterre").clicked() {
-                    self.show_about = true;
-                    ui.close();
-                }
-                ui.label(RichText::new(format!("parterre {}", crate::VERSION)).weak());
-            });
-        });
-    }
-
-    fn graph_menu(&mut self, ui: &mut Ui) {
-        let g = &mut self.settings.graph;
-        ui.label(RichText::new("Show").weak());
-        for s in Simplification::ALL {
-            ui.radio_value(&mut g.simplification, s, s.label());
-        }
-        ui.separator();
-        ui.checkbox(&mut g.show_local_branches, "Local branches");
-        ui.checkbox(&mut g.show_remote_branches, "Remote branches");
-        ui.checkbox(&mut g.show_tags, "Tags");
-        ui.add_enabled(g.show_tags, egui::Checkbox::new(&mut g.tags_make_nodes, "Show all tags"))
-            .on_hover_text("When off, a tag alone does not make a commit a node (TortoiseGit's \"Show all tags\").");
-        ui.checkbox(&mut g.show_stash, "Stash");
-        ui.checkbox(&mut g.show_other_refs, "Other refs")
-            .on_hover_text(
-                "Refs outside heads, remotes and tags, e.g. refs/pull/* or tool checkpoints.",
-            );
-        ui.separator();
-        ui.checkbox(&mut g.current_branch_only, "Current branch only")
-            .on_hover_text("Only HEAD's history (TortoiseGit filter \"Current branch\").");
-        ui.horizontal(|ui| {
-            ui.label("Branch filter");
-            ui.add(egui::TextEdit::singleline(&mut g.ref_filter).hint_text("e.g. main, release").desired_width(160.0))
-                .on_hover_text("Only branches and tags whose names contain one of these comma-separated words start history.");
-        });
-        ui.horizontal(|ui| {
-            ui.label("Hide branches");
-            ui.add(egui::TextEdit::singleline(&mut g.hide_branches).hint_text("e.g. pipeline/*, release/*").desired_width(160.0))
-                .on_hover_text("Leave out branches matching these comma-separated wildcards (* is any text, ? one character; origin/release/1 matches release/*), with the history only they lead to. Branches that a shown branch's history contains stay, and so does the current branch.");
-        });
-        ui.checkbox(&mut g.first_parent_only, "First parent only")
-            .on_hover_text(
-                "Follow only first parents: merged side branches without refs disappear.",
-            );
-        ui.separator();
-        let l = &mut self.settings.layout;
-        ui.menu_button("Direction", |ui| {
-            for d in Direction::ALL {
-                ui.radio_value(&mut l.direction, d, d.label());
-            }
-        });
-        ui.menu_button("Vertical placement", |ui| {
-            for r in Ranking::ALL {
-                ui.radio_value(&mut l.ranking, r, r.label());
-            }
-        });
-        ui.checkbox(&mut l.concentrate_edges, "Bundle edges into trunks")
-            .on_hover_text(
-                "Edges running into the same commit share one line where they run in parallel.",
-            );
-        ui.menu_button("Spacing", |ui| {
-            ui.add(egui::Slider::new(&mut l.layer_gap, 10.0..=120.0).text("between layers"));
-            ui.add(egui::Slider::new(&mut l.gap_per_span, 0.0..=0.5).text("extra for slanted edges"))
-                .on_hover_text("Widen gaps that long sideways edges cross, so edges stay steep (TortoiseGit does this, up to 300).");
-            ui.add(egui::Slider::new(&mut l.node_gap, 5.0..=100.0).text("between nodes"));
-            ui.add(egui::Slider::new(&mut l.edge_gap, 2.0..=40.0).text("between edges"));
-            ui.add(egui::Slider::new(&mut l.max_layer_width, 0.0..=10000.0).text("max row width"))
-                .on_hover_text(
-                    "Rows wider than this are split so siblings stack up. 0 = never (TortoiseGit).",
-                );
-            if ui.button("TortoiseGit defaults").clicked() {
-                *l = LayoutOptions {
-                    direction: l.direction,
-                    ranking: l.ranking,
-                    ..LayoutOptions::default()
-                };
-            }
-        });
-    }
-
-    fn drag_menu(&mut self, ui: &mut Ui) {
-        ui.label(RichText::new("What moves when you drag").weak());
-        for (m, key) in DragModel::ALL.into_iter().zip(["1", "2", "3"]) {
-            let text = format!("{} ({key})", m.label());
-            if ui
-                .radio(self.settings.net.model == m, text)
-                .on_hover_text(m.description())
-                .clicked()
-            {
-                self.set_drag_model(m);
-            }
-        }
-        ui.separator();
-        let n = &mut self.settings.net;
-        ui.add_enabled_ui(n.model.adapts(), |ui| {
-            ui.add(egui::Slider::new(&mut n.pull, 0.0..=1.0).text("pull"))
-                .on_hover_text("How far neighbours are pulled along their edges");
-            ui.add(egui::Slider::new(&mut n.push, 0.0..=1.0).text("push"))
-                .on_hover_text("How strongly, and from how far, nodes push each other away");
-            ui.add(egui::Slider::new(&mut n.wobble, 0.0..=1.0).text("wobble"));
-            ui.checkbox(&mut n.avoid_overlap, "Keep nodes from overlapping");
-        });
-        let before = self.settings.remember_moves;
-        ui.checkbox(&mut self.settings.remember_moves, "Remember moved nodes")
-            .on_hover_text(
-                "Keep nodes where you moved them, per repository, across runs and relayouts.",
-            );
-        if self.settings.remember_moves && !before {
-            self.record_moves();
-        }
-        ui.separator();
-        let (can_undo, can_redo) = self
-            .scene
-            .as_ref()
-            .map_or((false, false), |s| (s.net.can_undo(), s.net.can_redo()));
-        if ui
-            .add_enabled(
-                can_undo,
-                egui::Button::new("Undo move").shortcut_text("Ctrl+Z"),
-            )
-            .clicked()
-        {
-            self.undo();
-        }
-        if ui
-            .add_enabled(
-                can_redo,
-                egui::Button::new("Redo move").shortcut_text("Ctrl+Shift+Z"),
-            )
-            .clicked()
-        {
-            self.redo();
-        }
-        ui.separator();
-        if ui
-            .add_enabled(
-                !self.selection.is_empty(),
-                egui::Button::new("Select subtree of selection"),
-            )
-            .on_hover_text("Add everything that grows out of the selected nodes")
-            .clicked()
-        {
-            let roots = self.selection.nodes.clone();
-            self.select_subtree(&roots);
-            ui.close();
-        }
-        let displaced = self.displaced_selection();
-        if !self.selection.is_empty()
-            && ui
-                .add_enabled(
-                    !displaced.is_empty(),
-                    egui::Button::new("Return selection to layout"),
-                )
-                .clicked()
-        {
-            self.return_to_layout(&displaced);
-            ui.close();
-        }
-        if ui
-            .add(egui::Button::new("Return all nodes to layout").shortcut_text("R"))
-            .clicked()
-        {
-            self.reset_positions();
-            ui.close();
-        }
-    }
-
-    fn toolbar(&mut self, ui: &mut Ui) {
-        // Wraps onto a second line in narrow windows.
-        ui.horizontal_wrapped(|ui| {
-            let g = &mut self.settings.graph;
-            for s in Simplification::ALL {
-                ui.selectable_value(&mut g.simplification, s, s.label());
-            }
-            group_break(ui, 190.0);
-            ui.toggle_value(&mut g.show_local_branches, "Local");
-            ui.toggle_value(&mut g.show_remote_branches, "Remote");
-            ui.toggle_value(&mut g.show_tags, "Tags");
-            group_break(ui, 290.0);
-            let current = Look::of(&self.settings);
-            egui::ComboBox::from_id_salt("look")
-                .selected_text(current.map_or("Custom", Look::label))
-                .show_ui(ui, |ui| {
-                    for look in Look::ALL {
-                        if ui
-                            .selectable_label(current == Some(look), look.label())
-                            .clicked()
-                        {
-                            look.apply(&mut self.settings);
-                        }
-                    }
-                });
-            egui::ComboBox::from_id_salt("direction")
-                .selected_text(self.settings.layout.direction.label())
-                .show_ui(ui, |ui| {
-                    for d in Direction::ALL {
-                        ui.selectable_value(&mut self.settings.layout.direction, d, d.label());
-                    }
-                });
-            group_break(ui, 100.0);
-            if ui
-                .button("Fit")
-                .on_hover_text("Fit the whole graph (F)")
-                .clicked()
-            {
-                self.fit();
-            }
-            if ui
-                .button("HEAD")
-                .on_hover_text("Go to HEAD (Home)")
-                .clicked()
-            {
-                self.go_to_head();
-            }
-            group_break(ui, 230.0);
-            ui.label("Drag:");
-            for (m, key) in DragModel::ALL.into_iter().zip(["1", "2", "3"]) {
-                if ui
-                    .selectable_label(self.settings.net.model == m, m.label())
-                    .on_hover_text(format!("{} ({key})", m.description()))
-                    .clicked()
-                {
-                    self.set_drag_model(m);
-                }
-            }
-            if self.scene.as_ref().is_some_and(|s| s.net.any_displaced())
-                && ui
-                    .button("Reset")
-                    .on_hover_text("Return all nodes to the layout (R)")
-                    .clicked()
-            {
-                self.reset_positions();
-            }
-            group_break(ui, 210.0);
-            let search = egui::TextEdit::singleline(&mut self.search.query)
-                .id(egui::Id::new("search"))
-                .hint_text("Find (Ctrl+F)")
-                .desired_width(200.0);
-            let resp = ui.add(search);
-            if self.search.request_focus {
-                resp.request_focus();
-                self.search.request_focus = false;
-            }
-            if resp.changed() {
-                self.update_search();
-                if !self.search.hits.is_empty() {
-                    self.goto_search_hit(true);
-                }
-            }
-            if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                let back = ui.input(|i| i.modifiers.shift);
-                self.goto_search_hit(!back);
-                resp.request_focus();
-            }
-            if !self.search.query.is_empty() {
-                let n = self.search.hits.len();
-                let text = match self.search.current {
-                    Some(c) => format!("{}/{}", c + 1, n),
-                    None => format!("{n} found"),
-                };
-                ui.label(text);
-            }
-        });
-    }
-
     fn status_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             if self.is_laying_out() {
@@ -1132,10 +770,9 @@ impl ParterreApp {
                         n => format!(" · {n} branches hidden"),
                     };
                     ui.label(format!(
-                        "{} nodes · {} commits{hidden} · layout {} ms",
+                        "{} nodes · {} commits{hidden}",
                         scene.node_count(),
                         scene.graph.visible_commits,
-                        (scene.build_time + scene.layout_time).as_millis()
                     ));
                     if let Some((msg, error)) = &self.status {
                         ui.separator();
@@ -1458,72 +1095,82 @@ impl ParterreApp {
             None => Vec::new(),
         };
         let mut action = None;
-        response.context_menu(|ui| {
-            let Some(node) = context_node else {
-                if ui.button("Fit graph").clicked() {
-                    action = Some(MenuAction::Fit);
-                    ui.close();
-                }
-                if ui.button("Return all nodes to layout").clicked() {
-                    action = Some(MenuAction::ResetAll);
-                    ui.close();
-                }
-                return;
-            };
-            let n = &scene.graph.nodes[node];
-            let commit = scene.repo.commit(n.commit);
-            if ui.button("Copy hash").clicked() {
-                ui.ctx().copy_text(commit.oid.to_hex());
-                ui.close();
-            }
-            if ui.button("Copy ref names").clicked() {
-                let names: Vec<&str> = n
-                    .refs
-                    .iter()
-                    .map(|&r| scene.repo.refs[r].full_name.as_str())
-                    .collect();
-                let text = if names.is_empty() {
-                    commit.oid.to_hex()
-                } else {
-                    names.join("\n")
+        let item = |text: &str, shortcut: &str| egui::Button::new(text).shortcut_text(shortcut);
+        egui::Popup::context_menu(&response)
+            .style(menu::style)
+            .show(|ui| {
+                ui.set_min_width(menu::MIN_WIDTH);
+                let Some(node) = context_node else {
+                    if ui.add(item("Fit graph", "F")).clicked() {
+                        action = Some(MenuAction::Fit);
+                        ui.close();
+                    }
+                    if ui.add(item("Return all nodes to layout", "R")).clicked() {
+                        action = Some(MenuAction::ResetAll);
+                        ui.close();
+                    }
+                    return;
                 };
-                ui.ctx().copy_text(text);
-                ui.close();
-            }
-            if ui.button("Copy subject").clicked() {
-                ui.ctx().copy_text(commit.subject.clone());
-                ui.close();
-            }
-            ui.separator();
-            if ui
-                .button("Select subtree")
-                .on_hover_text(
-                    "Select everything that grows out of this (first-parent descendants)",
-                )
-                .clicked()
-            {
-                action = Some(MenuAction::SelectSubtree(group.clone()));
-                ui.close();
-            }
-            let displaced: Vec<usize> = group
-                .iter()
-                .copied()
-                .filter(|&n| scene.net.is_displaced(n))
-                .collect();
-            let label = if group.len() > 1 {
-                "Return selection to layout"
-            } else {
-                "Return node to layout"
-            };
-            if !displaced.is_empty() && ui.button(label).clicked() {
-                action = Some(MenuAction::ReturnToLayout(displaced));
-                ui.close();
-            }
-            if ui.button("Centre view here").clicked() {
-                action = Some(MenuAction::Center(node));
-                ui.close();
-            }
-        });
+                let n = &scene.graph.nodes[node];
+                let commit = scene.repo.commit(n.commit);
+                // Right-clicking selects the node, so Ctrl+C would copy the same hash.
+                let copy_hash = if group.len() > 1 { "" } else { "Ctrl+C" };
+                if ui.add(item("Copy hash", copy_hash)).clicked() {
+                    ui.ctx().copy_text(commit.oid.to_hex());
+                    ui.close();
+                }
+                if ui.button("Copy ref names").clicked() {
+                    let names: Vec<&str> = n
+                        .refs
+                        .iter()
+                        .map(|&r| scene.repo.refs[r].full_name.as_str())
+                        .collect();
+                    let text = if names.is_empty() {
+                        commit.oid.to_hex()
+                    } else {
+                        names.join("\n")
+                    };
+                    ui.ctx().copy_text(text);
+                    ui.close();
+                }
+                if ui.button("Copy subject").clicked() {
+                    ui.ctx().copy_text(commit.subject.clone());
+                    ui.close();
+                }
+                menu::separator(ui);
+                if ui
+                    .button("Select subtree")
+                    .on_hover_text(
+                        "Select everything that grows out of this (first-parent descendants)",
+                    )
+                    .clicked()
+                {
+                    action = Some(MenuAction::SelectSubtree(group.clone()));
+                    ui.close();
+                }
+                let displaced: Vec<usize> = group
+                    .iter()
+                    .copied()
+                    .filter(|&n| scene.net.is_displaced(n))
+                    .collect();
+                let label = if group.len() > 1 {
+                    "Return selection to layout"
+                } else {
+                    "Return node to layout"
+                };
+                // Greyed out rather than left out, so the menu keeps its shape.
+                if ui
+                    .add_enabled(!displaced.is_empty(), egui::Button::new(label))
+                    .clicked()
+                {
+                    action = Some(MenuAction::ReturnToLayout(displaced));
+                    ui.close();
+                }
+                if ui.button("Centre view here").clicked() {
+                    action = Some(MenuAction::Center(node));
+                    ui.close();
+                }
+            });
         match action {
             Some(MenuAction::Fit) => self.fit(),
             Some(MenuAction::ResetAll) => self.reset_positions(),
@@ -1613,6 +1260,7 @@ impl ParterreApp {
             ctx.global_style().visuals.dark_mode,
             &self.settings.branch_colors,
         );
+        let mut open_colours = false;
         egui::Window::new("Legend")
             .open(&mut self.show_legend)
             .resizable(false)
@@ -1664,7 +1312,7 @@ impl ParterreApp {
                     swatch(ui, rule.color, &rule.patterns, "Branches matching");
                 }
                 if ui.link("Branch colours…").clicked() {
-                    self.show_branch_colors = true;
+                    open_colours = true;
                 }
                 ui.add_space(6.0);
                 ui.label(
@@ -1672,77 +1320,9 @@ impl ParterreApp {
                 );
                 ui.label("commits; hover an edge to list them, click it to keep it highlighted.");
             });
-    }
-
-    fn branch_colors_window(&mut self, ctx: &egui::Context) {
-        egui::Window::new("Branch colours")
-            .open(&mut self.show_branch_colors)
-            .resizable(false)
-            .collapsible(false)
-            .show(ctx, |ui| {
-                // A fixed width, so the text wraps there instead of squeezing the fields.
-                ui.set_width(380.0);
-                ui.label(
-                    "Branches whose names match a rule get its colour. The first matching rule \
-                     wins, and the current branch stays red.",
-                );
-                ui.label(
-                    RichText::new(
-                        "* is any text, ? one character; commas separate wildcards. \
-                         origin/feature/x matches feature/*.",
-                    )
-                    .weak(),
-                );
-                ui.add_space(4.0);
-                let rules = &mut self.settings.branch_colors;
-                let (mut swap, mut remove) = (None, None);
-                // Rows rather than a Grid: a Grid keeps text fields at their first-frame width.
-                let count = rules.len();
-                for (i, rule) in rules.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
-                        egui::color_picker::color_edit_button_srgba(
-                            ui,
-                            &mut rule.color,
-                            egui::color_picker::Alpha::Opaque,
-                        );
-                        ui.add(
-                            egui::TextEdit::singleline(&mut rule.patterns)
-                                .hint_text("e.g. feature/*")
-                                .desired_width(240.0),
-                        );
-                        if ui
-                            .add_enabled(i > 0, egui::Button::new("⏶"))
-                            .on_hover_text("Move up")
-                            .clicked()
-                        {
-                            swap = Some(i - 1);
-                        }
-                        if ui
-                            .add_enabled(i + 1 < count, egui::Button::new("⏷"))
-                            .on_hover_text("Move down")
-                            .clicked()
-                        {
-                            swap = Some(i);
-                        }
-                        if ui.button("🗑").on_hover_text("Remove").clicked() {
-                            remove = Some(i);
-                        }
-                    });
-                }
-                if let Some(i) = swap {
-                    rules.swap(i, i + 1);
-                }
-                if let Some(i) = remove {
-                    rules.remove(i);
-                }
-                if ui.button("Add rule").clicked() {
-                    let suggested = BranchColor::SUGGESTED;
-                    rules.push(BranchColor {
-                        patterns: String::new(),
-                        color: suggested[rules.len() % suggested.len()],
-                    });
-                }
-            });
+        if open_colours {
+            self.open_settings(SettingsPage::BranchColours);
+        }
     }
 
     fn shortcuts_window(&mut self, ctx: &egui::Context) {
@@ -1788,6 +1368,7 @@ impl ParterreApp {
                         ("F3, N", "Next search hit"),
                         ("Ctrl+C", "Copy the selected commit's hash"),
                         ("F5", "Reload the repository"),
+                        ("Ctrl+,", "Settings"),
                         (
                             "Right-click a node",
                             "Copy hash or refs, select its subtree, return it to the layout",
@@ -1849,14 +1430,26 @@ fn node_name(scene: &Scene, node: u32) -> String {
     }
 }
 
-/// Separates groups in the (wrapping) toolbar: a separator, or a new line if the next group,
-/// about `width` wide, would not fit.
-fn group_break(ui: &mut Ui, width: f32) {
-    // (In a wrapping layout `available_width` is the whole row.)
-    if ui.max_rect().right() - ui.cursor().min.x < width {
-        ui.end_row();
-    } else {
-        ui.separator();
+impl ParterreApp {
+    /// Sets the theme of egui and of the window's title bar.
+    fn apply_theme(&mut self, ctx: &egui::Context) {
+        use egui::{SystemTheme as Window, Theme, ThemePreference as Egui};
+        let (egui_theme, window_theme) = match self.settings.theme {
+            // Where winit can't tell the system theme, egui would pick dark (and the title bar
+            // would stay as it started).
+            ThemeChoice::System => match self.system_theme.get() {
+                Some(Theme::Light) => (Egui::Light, Window::Light),
+                Some(Theme::Dark) => (Egui::Dark, Window::Dark),
+                None => (Egui::System, Window::SystemDefault),
+            },
+            ThemeChoice::Light => (Egui::Light, Window::Light),
+            ThemeChoice::Dark => (Egui::Dark, Window::Dark),
+        };
+        ctx.set_theme(egui_theme);
+        if self.window_theme != Some(window_theme) {
+            self.window_theme = Some(window_theme);
+            ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(window_theme));
+        }
     }
 }
 
@@ -1875,21 +1468,23 @@ enum MenuAction {
 impl eframe::App for ParterreApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        ctx.set_theme(match self.settings.theme {
-            ThemeChoice::System => egui::ThemePreference::System,
-            ThemeChoice::Light => egui::ThemePreference::Light,
-            ThemeChoice::Dark => egui::ThemePreference::Dark,
-        });
+        self.apply_theme(&ctx);
         self.ensure_scene(&ctx);
         self.handle_keys(&ctx);
 
-        egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
-        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
-        egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
+        egui::Panel::top("toolbar")
+            .frame(
+                egui::Frame::side_top_panel(&ctx.global_style())
+                    .inner_margin(egui::Margin::symmetric(8, 6)),
+            )
+            .show(ui, |ui| self.toolbar(ui));
+        if self.settings.show_status_bar {
+            egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
+        }
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
         self.shortcuts_window(&ctx);
         self.legend_window(&ctx);
-        self.branch_colors_window(&ctx);
+        self.settings_window(&ctx);
         self.about_window(&ctx);
         self.export_window(&ctx);
 
@@ -1897,6 +1492,10 @@ impl eframe::App for ParterreApp {
             self.automation
                 .drive(&ctx, scene, &mut self.view, self.canvas, &self.settings.net);
         }
+    }
+
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.automation.inject_input(raw_input);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

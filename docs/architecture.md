@@ -8,6 +8,7 @@ crates/parterre-core   GUI-free; everything testable lives here
   repo.rs              Repo snapshot: commits (with parent indices), refs, HEAD
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
   pattern.rs           branch-name wildcards, for hiding and colouring branches
+  glyphs.rs            toolbar and menu icons as SVG path data, and a path flattener
   layout/              layered (Sugiyama) layout
     rank.rs            layer assignment (network simplex / longest path / chronological),
                        plus splitting of over-wide layers
@@ -22,13 +23,18 @@ crates/parterre        the binary (eframe/egui)
   build.rs             asks git for the commit and sets the version string
   main.rs              CLI (clap), window setup
   version.rs           release/dev version strings (runs in build.rs; see docs/releasing.md)
-  app.rs               menus, toolbar, canvas interaction, search, status bar
+  app.rs               canvas interaction, search, status bar, windows
+    toolbar.rs         the toolbar, its popovers and the ☰ menu
+    settings_window.rs the settings: pages of rows, applied as you change them
   scene.rs             node contents and sizes + layout + physics net, hit testing
   render.rs            painting nodes, edges, arrows, overview
   view.rs              pan/zoom transform
   theme.rs             TortoiseGit colours (light, and dark via lightness inversion)
+  system_theme.rs      light or dark desktop preference on Linux (XDG portal)
+  menu.rs              the look of menus and popovers, menu items
+  widgets.rs           icon buttons, segmented buttons, switches, text fields
   settings.rs          persisted settings and the Classic/Modern looks
-  automation.rs        --screenshot / --demo-drag scripted runs
+  automation.rs        --screenshot / --demo-drag / --demo-menu / --demo-open scripted runs
 ```
 
 ## Data flow

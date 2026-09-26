@@ -1,9 +1,9 @@
 //! Scripted runs for checking the rendering without a human: take a screenshot after a few
-//! frames, optionally after dragging a node, then exit.
+//! frames, optionally after dragging a node or opening the context menu, then exit.
 
 use std::path::PathBuf;
 
-use eframe::egui::{self, Rect, Vec2};
+use eframe::egui::{self, Pos2, Rect, Vec2, vec2};
 use parterre_core::physics::NetParams;
 
 use crate::scene::{Scene, to_point};
@@ -22,6 +22,13 @@ pub struct Automation {
     pub zoom: Option<f32>,
     /// Drag this node (a ref name or hash prefix) instead of the one nearest the centre.
     pub demo_node: Option<String>,
+    /// Right-click before the screenshot, to show the context menu.
+    pub demo_menu: Option<DemoMenu>,
+    /// Open the ☰ menu, a toolbar popover (`filter`, `zoom`, `drag`) or the settings
+    /// (`settings`, or `settings:<page>`) before the screenshot.
+    pub demo_open: Option<String>,
+    /// Where the context menu is opened, once chosen.
+    menu_at: Option<Pos2>,
     frame: u32,
     requested: bool,
     frame_times: Vec<std::time::Instant>,
@@ -45,13 +52,44 @@ impl Automation {
     }
 }
 
+/// What to right-click for `demo_menu`.
+#[derive(Clone, Copy, Debug)]
+pub enum DemoMenu {
+    /// The node of `demo_node`, or the one nearest the centre.
+    Node,
+    /// The empty spot farthest from any node.
+    Canvas,
+}
+
 const DRAG_START: u32 = 5;
+const MENU_START: u32 = 5;
 const DRAG_FRAMES: u32 = 30;
 const SETTLE_FRAMES: u32 = 90;
 
 impl Automation {
     pub fn is_active(&self) -> bool {
         self.screenshot.is_some() || self.demo_drag.is_some()
+    }
+
+    /// Feeds the synthetic pointer events of `demo_menu`: move there, right-click, then hover
+    /// the second item. Called before each frame, after [`Self::drive`] has counted the last.
+    pub fn inject_input(&self, raw: &mut egui::RawInput) {
+        let Some(at) = self.menu_at else { return };
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        match self.frame - MENU_START {
+            1 => raw.events.push(egui::Event::PointerMoved(at)),
+            2 => raw.events.push(button(true)),
+            3 => raw.events.push(button(false)),
+            6 => raw
+                .events
+                .push(egui::Event::PointerMoved(at + vec2(60.0, 45.0))),
+            _ => {}
+        }
     }
 
     /// Automated runs step the physics at a fixed rate so they are reproducible.
@@ -79,31 +117,26 @@ impl Automation {
             view.zoom_around(canvas, canvas.center(), z / view.zoom);
         }
 
+        if self.frame == MENU_START
+            && let Some(name) = &self.demo_open
+            && !name.starts_with("settings")
+        {
+            egui::Popup::open_id(ctx, crate::app::popup_id(name));
+        }
+        if self.frame == MENU_START {
+            self.menu_at = match self.demo_menu {
+                Some(DemoMenu::Node) => self
+                    .demo_node(scene, view, canvas)
+                    .map(|n| view.to_screen(canvas, scene.node_center(n))),
+                Some(DemoMenu::Canvas) => Some(emptiest_spot(scene, view, canvas)),
+                None => None,
+            };
+        }
+
         if let Some(delta) = self.demo_drag {
             let f = self.frame;
             if f == DRAG_START {
-                let centre = view.to_world(canvas, canvas.center());
-                let named = self.demo_node.as_deref().and_then(|name| {
-                    (0..scene.node_count()).find(|&i| {
-                        let node = &scene.graph.nodes[i];
-                        scene
-                            .repo
-                            .commit(node.commit)
-                            .oid
-                            .to_hex()
-                            .starts_with(name)
-                            || node.refs.iter().any(|&r| scene.repo.refs[r].name == name)
-                    })
-                });
-                let node = named.or_else(|| {
-                    (0..scene.node_count()).min_by(|&a, &b| {
-                        scene
-                            .node_center(a)
-                            .distance_sq(centre)
-                            .total_cmp(&scene.node_center(b).distance_sq(centre))
-                    })
-                });
-                if let Some(n) = node {
+                if let Some(n) = self.demo_node(scene, view, canvas) {
                     let carried = scene.carried_nodes(&[n], params.model);
                     scene.net.grab(n, &[n], &carried, params.model.adapts());
                     self.dragging = Some((n, scene.node_center(n)));
@@ -120,6 +153,8 @@ impl Automation {
 
         let shoot_at = if self.demo_drag.is_some() {
             DRAG_START + DRAG_FRAMES + SETTLE_FRAMES
+        } else if self.demo_menu.is_some() || self.demo_open.is_some() {
+            MENU_START + 60
         } else {
             8
         };
@@ -162,4 +197,48 @@ impl Automation {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
+}
+
+impl Automation {
+    /// The node named by `demo_node` (a ref name or hash prefix), or the one nearest the
+    /// centre of the canvas.
+    fn demo_node(&self, scene: &Scene, view: &View, canvas: Rect) -> Option<usize> {
+        let centre = view.to_world(canvas, canvas.center());
+        let named = self.demo_node.as_deref().and_then(|name| {
+            (0..scene.node_count()).find(|&i| {
+                let node = &scene.graph.nodes[i];
+                scene
+                    .repo
+                    .commit(node.commit)
+                    .oid
+                    .to_hex()
+                    .starts_with(name)
+                    || node.refs.iter().any(|&r| scene.repo.refs[r].name == name)
+            })
+        });
+        named.or_else(|| {
+            (0..scene.node_count()).min_by(|&a, &b| {
+                scene
+                    .node_center(a)
+                    .distance_sq(centre)
+                    .total_cmp(&scene.node_center(b).distance_sq(centre))
+            })
+        })
+    }
+}
+
+/// The point of the canvas's upper left quarter (where an opened menu still fits) farthest
+/// from any node.
+fn emptiest_spot(scene: &Scene, view: &View, canvas: Rect) -> Pos2 {
+    let area = Rect::from_min_size(canvas.min, canvas.size() / 2.0).shrink(20.0);
+    let nearest = |p: Pos2| {
+        (0..scene.node_count())
+            .map(|n| view.to_screen(canvas, scene.node_center(n)).distance_sq(p))
+            .fold(f32::INFINITY, f32::min)
+    };
+    (0..=16)
+        .flat_map(|i| (0..=16).map(move |j| (i as f32 / 16.0, j as f32 / 16.0)))
+        .map(|(u, v)| area.lerp_inside(vec2(u, v)))
+        .max_by(|&a, &b| nearest(a).total_cmp(&nearest(b)))
+        .unwrap_or(area.center())
 }

@@ -34,7 +34,7 @@ Where else parterre is published, and why, is in [distribution.md](distribution.
 
 ## Version strings
 
-`parterre --version` and the Help menu show which build is running:
+`parterre --version` and the foot of the ☰ menu show which build is running:
 
 | Build | Version |
 |---|---|
