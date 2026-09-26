@@ -145,6 +145,13 @@ _Decisions I made on my own that you may want to overrule. Try them with `parter
 - [ ] Tooltip on edges showing the collapsed commits.
 - [ ] Less memory for all-commits views of huge repositories (compact adjacency).
 - [ ] Windows `.exe` icon resource; try on macOS.
+- [ ] Open GitHub PRs in the graph (`docs/research/github-forks-and-pull-requests.md`, §12,
+      §14). TortoiseGit has no such feature.
+  - [ ] Slice 1: PR-icon tags on nodes whose commit is a PR head, opening the PR in the browser;
+        a toolbar toggle, disabled without a GitHub connection; only PRs of `origin` (plus
+        the fork's own PRs into its parent) whose base branch is visible. No fetching.
+  - [ ] Slice 2: fetch other PR heads commits-only into a private cache; greyed-out nodes,
+        dashed edges.
 
 ## Done
 
