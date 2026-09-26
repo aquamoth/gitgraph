@@ -93,9 +93,11 @@ writes `packaging/icon/`: the SVG, PNGs from 16 to 512 px, `parterre.ico` and `p
 Rerun it after changing the drawing and commit the results.
 
 `crates/parterre/build.rs` embeds `parterre.ico` in the Windows executable through a resource
-script it writes. That needs `rc.exe` from the Windows SDK (installed with the
+script it writes (`crates/parterre/src/win_resource.rs`), together with the version information
+Explorer shows under *Properties → Details*: product name, file and product version, the
+copyright line of `NOTICE` and Trustfall AB as the company. That needs `rc.exe` from the Windows SDK (installed with the
 build tools above), or `x86_64-w64-mingw32-windres` for the GNU target; without one the build
-only warns and the `.exe` has no icon. The `.icns` waits for a macOS `.app` bundle.
+only warns and the `.exe` has no icon or details. The `.icns` waits for a macOS `.app` bundle.
 
 On Linux, `packaging/linux/install.sh` installs the release binary into `~/.local/bin`, and the
 desktop entry and the icon where the desktop finds them; `--uninstall` removes them again. A
