@@ -23,19 +23,34 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          # In Ubuntu 22.04, so the binary needs only glibc 2.35 and runs on Debian 12, Ubuntu
+          # 22.04 and newer (docs/distribution.md). The Rust toolchain still comes from rustup.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, container: "ubuntu:22.04" }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
           - { os: macos-latest, target: aarch64-apple-darwin }
           # Cross-compiled on the Apple silicon runner, so the binary can't run there: no tests
           # and no --version check. build.rs still checks the tag.
           - { os: macos-latest, target: x86_64-apple-darwin, cross: true }
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     env:
       PARTERRE_RELEASE_TAG: ${{ github.ref_name }}
     # No rust-cache: caches saved by a tag run are never restored by later runs, and a release
     # should come from a clean build anyway.
     steps:
+      # Before checkout: without git it downloads the sources without .git, and build.rs needs
+      # the commit.
+      - name: Prepare container
+        if: matrix.container
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ca-certificates curl git
       - uses: actions/checkout@v4
+      # The checkout belongs to the runner's user and the container runs as root; git ignores
+      # such repositories unless they are marked safe.
+      - name: Trust the checkout
+        if: matrix.container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

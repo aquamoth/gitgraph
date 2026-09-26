@@ -88,8 +88,8 @@ cargo run --release -p parterre-core --example icon_assets
 writes `packaging/icon/`: the SVG, PNGs from 16 to 512 px, `parterre.ico` and `parterre.icns`.
 Rerun it after changing the drawing and commit the results.
 
-`crates/parterre/build.rs` embeds `parterre.ico` in the Windows executable through
-`crates/parterre/parterre.rc`. That needs `rc.exe` from the Windows SDK (installed with the
+`crates/parterre/build.rs` embeds `parterre.ico` in the Windows executable through a resource
+script it writes. That needs `rc.exe` from the Windows SDK (installed with the
 build tools above), or `x86_64-w64-mingw32-windres` for the GNU target; without one the build
 only warns and the `.exe` has no icon. The `.icns` waits for a macOS `.app` bundle.
 

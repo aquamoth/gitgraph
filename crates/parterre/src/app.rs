@@ -1804,8 +1804,9 @@ impl ParterreApp {
     /// The "Appropriate Legal Notices" of GPL-3.0 section 5(d). NOTICE requires works based on
     /// parterre to keep showing them.
     fn about_window(&mut self, ctx: &egui::Context) {
-        const NOTICE: &str = include_str!("../../../NOTICE");
-        const LICENSE: &str = include_str!("../../../LICENSE");
+        // Paths chosen by build.rs.
+        const NOTICE: &str = include_str!(env!("PARTERRE_NOTICE"));
+        const LICENSE: &str = include_str!(env!("PARTERRE_LICENSE"));
         // Room for the title bar and the heading; the texts scroll within the rest.
         let max_height = ctx.content_rect().height() - 140.0;
         egui::Window::new("About parterre")
