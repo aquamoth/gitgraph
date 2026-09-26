@@ -66,9 +66,11 @@ In the window:
 | `R` | Return all nodes to the layout |
 | `Esc` | Clear the selection |
 | `F5` | Reload the repository |
+| `Ctrl+,` | Settings |
 
-The toolbar and the *Graph*, *View* and *Drag* menus hold the options. TortoiseGit's
-options are all there:
+The toolbar holds what you use every day, the ☰ menu has all of that and more, and
+*Settings* (`Ctrl+,`) the rest; the graph shows every change while the settings stay open.
+TortoiseGit's options are all there:
 - show branchings and merges
 - local or remote branches
 - tags, and "show all tags"
@@ -79,9 +81,9 @@ parterre adds:
 - four directions and three vertical placements
 - edge bundling, row splitting and curved edges
 - first-parent-only view, and stash or other refs
-- hiding branches by wildcard, e.g. `pipeline/*` (*Graph → Hide branches*). A hidden branch
+- hiding branches by wildcard, e.g. `pipeline/*` (the toolbar's filter options, or *Settings → Filters*). A hidden branch
   still shows where the history of a shown branch contains it, so only leaves vanish.
-- colours by branch name, e.g. `feature/*` purple (*View → Branch colours…*)
+- colours by branch name, e.g. `feature/*` purple (*Settings → Branch colours*)
 - light and dark themes
 - rearranging by hand: drag modes, multi-selection, undo
 

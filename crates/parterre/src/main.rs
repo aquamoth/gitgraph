@@ -8,14 +8,17 @@ mod automation;
 mod console;
 mod export;
 mod icon;
+mod menu;
 mod render;
 mod scene;
 mod settings;
+mod system_theme;
 mod theme;
 // Runs in build.rs; compiled here only for its tests.
 #[cfg(test)]
 mod version;
 mod view;
+mod widgets;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -119,6 +122,16 @@ struct Cli {
     #[arg(long, value_name = "NAME", hide = true)]
     demo_node: Option<String>,
 
+    /// Right-click a node (--demo-node, or the one nearest the centre) or empty canvas before
+    /// taking the screenshot, to show the context menu.
+    #[arg(long, value_enum, hide = true)]
+    demo_menu: Option<DemoMenuArg>,
+
+    /// Open the menu, a toolbar popover (filter, zoom, drag) or the settings (settings, or
+    /// settings:PAGE) before taking the screenshot.
+    #[arg(long, value_name = "WHAT", hide = true)]
+    demo_open: Option<String>,
+
     /// What moves when dragging (for --demo-drag).
     #[arg(long, value_enum, hide = true)]
     drag_mode: Option<DragModeArg>,
@@ -129,6 +142,12 @@ enum DragModeArg {
     Adapt,
     Free,
     Subtree,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DemoMenuArg {
+    Node,
+    Canvas,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -224,6 +243,11 @@ fn main() -> ExitCode {
         cli.zoom,
     );
     automation.demo_node = cli.demo_node.clone();
+    automation.demo_open = cli.demo_open.clone();
+    automation.demo_menu = cli.demo_menu.map(|m| match m {
+        DemoMenuArg::Node => automation::DemoMenu::Node,
+        DemoMenuArg::Canvas => automation::DemoMenu::Canvas,
+    });
     let path = cli.path.clone();
     let overrides = move |s: &mut settings::Settings| apply_cli(&cli, s);
     settings::adopt_old_storage();

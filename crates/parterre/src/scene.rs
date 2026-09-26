@@ -2,7 +2,6 @@
 //! net that holds the current (possibly dragged) positions.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 use parterre_core::layout::{self, Layout, LayoutEdge, LayoutInput, LayoutOptions, Point};
@@ -48,8 +47,6 @@ pub struct Scene {
     pub visuals: Vec<NodeVisual>,
     pub net: Net,
     pub row_height: f32,
-    pub build_time: Duration,
-    pub layout_time: Duration,
 }
 
 /// Everything needed to lay a scene out, prepared on the UI thread (which owns the fonts);
@@ -62,12 +59,10 @@ pub struct SceneInput {
     input: LayoutInput,
     options: LayoutOptions,
     row_height: f32,
-    build_time: Duration,
 }
 
 impl SceneInput {
     pub fn lay_out(self) -> Scene {
-        let t = Instant::now();
         let layout = layout::layout(&self.input, &self.options);
         let net = Net::new(&layout, &self.input.sizes);
         Scene {
@@ -77,8 +72,6 @@ impl SceneInput {
             visuals: self.visuals,
             net,
             row_height: self.row_height,
-            build_time: self.build_time,
-            layout_time: t.elapsed(),
         }
     }
 }
@@ -92,9 +85,7 @@ impl Scene {
         text_width: &mut dyn FnMut(&str) -> f32,
         text_height: f32,
     ) -> SceneInput {
-        let t = Instant::now();
         let graph = revgraph::build(repo, &settings.graph);
-        let build_time = t.elapsed();
 
         let row_height = text_height + 2.0 * MARGIN_Y;
         let hash_width = text_width(&"8".repeat(HASH_DIGITS));
@@ -161,7 +152,6 @@ impl Scene {
             input,
             options: settings.layout.clone(),
             row_height,
-            build_time,
         }
     }
 
@@ -202,13 +192,14 @@ impl Scene {
             .collect()
     }
 
-    /// Bounding box of the drawing in world coordinates (including dragged nodes).
+    /// Bounding box of the nodes where they are now, in world coordinates. Not the layout's
+    /// box: after nodes have been dragged in from its edges, fitting that would leave empty
+    /// margins.
     pub fn bounds(&self) -> Rect {
-        let mut r = Rect::from_min_max(to_pos(self.layout.min), to_pos(self.layout.max));
-        for i in 0..self.node_count() {
-            r = r.union(self.node_rect(i));
-        }
-        r
+        (0..self.node_count())
+            .map(|i| self.node_rect(i))
+            .reduce(|a, b| a.union(b))
+            .unwrap_or_else(|| Rect::from_min_max(to_pos(self.layout.min), to_pos(self.layout.max)))
     }
 
     pub fn head_node(&self) -> Option<usize> {

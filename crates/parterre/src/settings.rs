@@ -73,7 +73,7 @@ impl EdgeStyle {
 
     pub fn label(self) -> &'static str {
         match self {
-            EdgeStyle::Straight => "Straight (TortoiseGit)",
+            EdgeStyle::Straight => "Straight",
             EdgeStyle::Curved => "Curved",
         }
     }
@@ -159,6 +159,7 @@ pub struct Settings {
     pub arrows: Arrows,
     /// Overview map of the whole graph in the bottom-right corner.
     pub show_overview: bool,
+    pub show_status_bar: bool,
     /// Label edges with the number of commits collapsed into them.
     pub show_hidden_counts: bool,
     /// Highlight the edges of the hovered and selected nodes.
@@ -179,6 +180,7 @@ impl Default for Settings {
             edge_style: EdgeStyle::default(),
             arrows: Arrows::default(),
             show_overview: false,
+            show_status_bar: true,
             show_hidden_counts: false,
             highlight_edges: true,
             remember_moves: false,

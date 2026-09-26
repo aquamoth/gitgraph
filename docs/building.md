@@ -74,7 +74,11 @@ cargo run --release -- ~/repo --screenshot out.png --window-size 1400x900 [--fit
 ```
 
 This renders a few frames, saves the window to `out.png`, and exits. `--demo-drag DX,DY` drags
-the centre node first, to show the physics.
+the centre node first, to show the physics. `--demo-menu node` (or `canvas`) right-clicks the
+centre node (or `--demo-node NAME`, or empty canvas) and hovers the second item, to show the
+context menu. `--demo-open menu` (or `filter`, `zoom`, `drag`, `settings`, `settings:advanced`
+and the other pages) opens the ☰ menu, a toolbar popover or the settings. Without `--theme` the
+theme follows the desktop.
 
 ## Icon
 
