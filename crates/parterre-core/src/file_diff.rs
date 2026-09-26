@@ -263,6 +263,8 @@ pub struct DiffLine {
     pub kind: LineKind,
     /// The text to show: no line ending, tabs expanded.
     pub text: String,
+    /// The line as it is in the file, without its ending: what copying gives.
+    pub raw: String,
     /// Changed words, as byte ranges of `text`, in order.
     pub spans: Vec<Range<usize>>,
 }
@@ -404,6 +406,7 @@ impl FileDiff {
                 no: i as u32 + 1,
                 kind,
                 text,
+                raw: without_ending(raw).to_owned(),
                 spans,
             }
         };
@@ -483,6 +486,18 @@ impl FileDiff {
             .max()
             .unwrap_or(0);
         d
+    }
+
+    /// The text of `row` as a form shows it: side by side, one side's line (`None` for a
+    /// filler); unified, the line, which for an unchanged one is its new version.
+    pub fn line(&self, row: Row, side: Option<bool>) -> Option<&DiffLine> {
+        let old = row.old.map(|i| &self.old[i as usize]);
+        let new = row.new.map(|i| &self.new[i as usize]);
+        match side {
+            Some(true) => old,
+            Some(false) => new,
+            None => new.or(old),
+        }
     }
 
     /// True if a row shows a removed or an added line.
@@ -710,11 +725,39 @@ fn whole(raw: &str) -> Vec<Range<usize>> {
     }
 }
 
+/// A line without its ending (`\n` or `\r\n`).
+fn without_ending(raw: &str) -> &str {
+    let body = raw.strip_suffix('\n').unwrap_or(raw);
+    body.strip_suffix('\r').unwrap_or(body)
+}
+
+impl DiffLine {
+    /// Where display column `col` (a character of [`DiffLine::text`]) falls in
+    /// [`DiffLine::raw`], as a byte offset. A column inside a tab's run of spaces counts as
+    /// after the tab.
+    pub fn raw_offset(&self, col: usize) -> usize {
+        let mut at = 0;
+        for (i, c) in self.raw.char_indices() {
+            if at >= col {
+                return i;
+            }
+            at += if c == '\t' {
+                TAB_WIDTH - at % TAB_WIDTH
+            } else {
+                1
+            };
+            if at > col {
+                return i + c.len_utf8();
+            }
+        }
+        self.raw.len()
+    }
+}
+
 /// The display form of a raw line, and its spans moved along: the line ending dropped and tabs
 /// expanded to multiples of [`TAB_WIDTH`].
 pub fn display(raw: &str, spans: &[Range<usize>]) -> (String, Vec<Range<usize>>) {
-    let body = raw.strip_suffix('\n').unwrap_or(raw);
-    let body = body.strip_suffix('\r').unwrap_or(body);
+    let body = without_ending(raw);
     let mut text = String::with_capacity(body.len());
     // Where each byte of `body` lands in `text`, plus the end.
     let mut map = Vec::with_capacity(body.len() + 1);
@@ -1025,6 +1068,23 @@ mod tests {
         assert_eq!(spans, [6..8, 8..9]);
         let (text, _) = display("é\tx", &[]);
         assert_eq!(text, "é   x");
+    }
+
+    #[test]
+    fn display_columns_map_back_to_the_raw_line() {
+        let d = FileDiff::new("", "\tab\tcé\r\n", DiffOptions::default());
+        let l = &d.new[0];
+        assert_eq!(l.text, "    ab  cé");
+        assert_eq!(l.raw, "\tab\tcé");
+        // Columns 0..4 are the first tab: 0 is before it, 1 to 3 inside it (after it).
+        assert_eq!(l.raw_offset(0), 0);
+        assert_eq!(l.raw_offset(2), 1);
+        assert_eq!(l.raw_offset(4), 1);
+        assert_eq!(l.raw_offset(5), 2);
+        assert_eq!(l.raw_offset(8), 4);
+        assert_eq!(&l.raw[l.raw_offset(4)..l.raw_offset(9)], "ab\tc");
+        assert_eq!(l.raw_offset(10), l.raw.len());
+        assert_eq!(l.raw_offset(99), l.raw.len());
     }
 
     #[test]

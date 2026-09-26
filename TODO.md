@@ -354,8 +354,9 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       left; it scrolls on click, as the locator bar does.
   - [ ] Stretch goal: wrap long lines, as a toggle in the diff window's toolbar. Until then
         long lines scroll sideways ([#45](https://github.com/aquamoth/parterre/issues/45)).
-  - [ ] Optional: find in a diff window (Ctrl+F), and free text selection. The first version
-        copies whole lines only ([#45](https://github.com/aquamoth/parterre/issues/45)).
+  - [x] Free text selection in either pane, copied as in the file (wanted 2026-09-26).
+  - [ ] Optional: find in a diff window (Ctrl+F)
+        ([#45](https://github.com/aquamoth/parterre/issues/45)).
   - [ ] Another day: open a diff from outside parterre, e.g. right-click an edited file in the
         file manager and diff it with its previous commit
         ([#45](https://github.com/aquamoth/parterre/issues/45)).

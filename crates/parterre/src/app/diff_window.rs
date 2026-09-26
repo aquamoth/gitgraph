@@ -118,25 +118,80 @@ enum Load {
     Failed(String),
 }
 
-/// Which version a line number belongs to.
+/// A column of text: one side side by side, or the one column of the unified form.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Side {
+enum Column {
     Old,
     New,
+    Unified,
 }
 
-/// Lines chosen on their line numbers, for copying: a run on one side, by line index.
+impl Column {
+    /// The side for [`FileDiff::line`].
+    fn side(self) -> Option<bool> {
+        match self {
+            Column::Old => Some(true),
+            Column::New => Some(false),
+            Column::Unified => None,
+        }
+    }
+}
+
+/// "To the end of the line", as a column.
+const LINE_END: usize = usize::MAX;
+
+/// Text chosen with the mouse, for copying: in one column, from `anchor` to `head`, each a
+/// row of the form and a column (a character of the row's display text). Dragging over the
+/// line numbers, or clicking them, chooses whole lines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Selection {
-    side: Side,
-    anchor: u32,
-    end: u32,
+    column: Column,
+    anchor: (usize, usize),
+    head: (usize, usize),
+    lines: bool,
 }
 
 impl Selection {
-    fn contains(&self, side: Side, line: u32) -> bool {
-        side == self.side && (self.anchor.min(self.end)..=self.anchor.max(self.end)).contains(&line)
+    fn ordered(&self) -> ((usize, usize), (usize, usize)) {
+        if self.anchor <= self.head {
+            (self.anchor, self.head)
+        } else {
+            (self.head, self.anchor)
+        }
     }
+
+    /// The display columns chosen in `row` of `column` (the end may be [`LINE_END`]).
+    fn columns(&self, column: Column, row: usize) -> Option<std::ops::Range<usize>> {
+        let (a, b) = self.ordered();
+        if column != self.column || row < a.0 || row > b.0 {
+            return None;
+        }
+        if self.lines {
+            return Some(0..LINE_END);
+        }
+        let start = if row == a.0 { a.1 } else { 0 };
+        let end = if row == b.0 { b.1 } else { LINE_END };
+        Some(start..end)
+    }
+
+    fn is_empty(&self) -> bool {
+        !self.lines && self.anchor == self.head
+    }
+}
+
+/// What the pointer did in the rows this frame, for the window to act on afterwards.
+#[derive(Default)]
+struct RowInput {
+    /// A fold was clicked: the lines of the new version it hides.
+    fold: Option<std::ops::Range<u32>>,
+    /// The primary button went down on text or a line number: row, column, character, and
+    /// whether on the line numbers.
+    press: Option<(usize, Column, usize, bool)>,
+    /// The pointer is over this row: row, and the character under it in each column.
+    hover: Option<(usize, [(Column, usize); 2])>,
+    /// Rows drawn this frame, first and last.
+    first: Option<usize>,
+    last: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -171,6 +226,8 @@ struct DiffWindow {
     /// Sideways scroll of the text, in points, shared by both panes.
     hoff: f32,
     selection: Option<Selection>,
+    /// The mouse is choosing text.
+    dragging: bool,
     /// Bring the window to the front in the next frame.
     focus: bool,
     closed: bool,
@@ -236,6 +293,7 @@ impl DiffWindow {
             pinned: None,
             hoff: 0.0,
             selection: None,
+            dragging: false,
             focus: false,
             closed: false,
             title_theme: None,
@@ -277,6 +335,8 @@ impl DiffWindow {
         {
             let loaded = ready.loaded.clone();
             **ready = Ready::new(loaded, self.options);
+            // The rows change with the options; the selection was made on the old ones.
+            self.selection = None;
             self.dirty = true;
             self.jump = Some(self.current.unwrap_or(0));
         }
@@ -389,6 +449,9 @@ impl DiffWindow {
             return;
         }
         let changes = self.positions.len();
+        if ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::A)) {
+            self.select_all();
+        }
         let (form, next, prev, close) = ui.input_mut(|i| {
             (
                 i.consume_key(Modifiers::COMMAND, Key::D),
@@ -742,103 +805,93 @@ impl DiffWindow {
         };
         let shown = &self.shown;
         let selection = self.selection;
-        let mut clicked: Option<Click> = None;
+        let dragging = self.dragging;
+        let pointer = ui.input(|i| i.pointer.interact_pos());
+        let pressed = ui.input(|i| i.pointer.primary_pressed());
+        let mut input = RowInput::default();
         let mut child = ui.new_child(UiBuilder::new().max_rect(area));
         child.set_clip_rect(area.intersect(ui.clip_rect()));
         child.spacing_mut().item_spacing = Vec2::ZERO;
         let out = scroll.show_rows(&mut child, row_h, shown.len(), |ui, range| {
             for i in range {
-                let (rect, response) =
-                    ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
-                match &shown[i] {
+                let (rect, response) = ui.allocate_exact_size(
+                    vec2(ui.available_width(), row_h),
+                    Sense::click_and_drag(),
+                );
+                let r = match &shown[i] {
                     Shown::Fold(hidden) => {
                         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                         fold_row(ui, rect, hidden.len(), response.hovered(), c);
-                        if response.clicked() {
-                            clicked = fold_lines(rows, hidden).map(Click::Fold);
+                        if response.clicked() && !dragging {
+                            input.fold = fold_lines(rows, hidden);
                         }
+                        continue;
                     }
-                    Shown::Row(r) => {
-                        let row = rows[*r];
-                        let old = row.old.map(|i| &diff.old[i as usize]);
-                        let new = row.new.map(|i| &diff.new[i as usize]);
-                        let halves = if side {
-                            let mid = rect.center().x;
-                            let left = Rect::from_x_y_ranges(rect.left()..=mid, rect.y_range());
-                            let right = Rect::from_x_y_ranges(mid..=rect.right(), rect.y_range());
-                            paint_line(
-                                ui,
-                                left,
-                                old,
-                                Numbers::One(Side::Old),
-                                &geometry,
-                                selection,
-                                c,
-                            );
-                            paint_line(
-                                ui,
-                                right,
-                                new,
-                                Numbers::One(Side::New),
-                                &geometry,
-                                selection,
-                                c,
-                            );
-                            ui.painter()
-                                .vline(mid, rect.y_range(), Stroke::new(1.0, c.line));
-                            [(left, Side::Old, row.old), (right, Side::New, row.new)]
+                    Shown::Row(r) => *r,
+                };
+                input.first.get_or_insert(r);
+                input.last = Some(r);
+                let row = rows[r];
+                // Each column: where it is, its numbers, its line, and where its text went.
+                let columns: Vec<(Column, Rect, f32, Option<TextAt>)> = if side {
+                    let mid = rect.center().x;
+                    let halves = [
+                        (Column::Old, rect.left()..=mid, Numbers::Own),
+                        (Column::New, mid..=rect.right(), Numbers::Own),
+                    ];
+                    let drawn = halves
+                        .into_iter()
+                        .map(|(column, xs, numbers)| {
+                            let half = Rect::from_x_y_ranges(xs, rect.y_range());
+                            let line = diff.line(row, column.side());
+                            let sel =
+                                selection.and_then(|s| Some((s.columns(column, r)?, s.lines)));
+                            let at = paint_line(ui, half, line, numbers, &geometry, sel, c);
+                            (column, half, gutter, at)
+                        })
+                        .collect();
+                    ui.painter()
+                        .vline(mid, rect.y_range(), Stroke::new(1.0, c.line));
+                    drawn
+                } else {
+                    let line = diff.line(row, None);
+                    let sel =
+                        selection.and_then(|s| Some((s.columns(Column::Unified, r)?, s.lines)));
+                    let numbers = Numbers::Both(row.old, row.new);
+                    let at = paint_line(ui, rect, line, numbers, &geometry, sel, c);
+                    vec![(Column::Unified, rect, 2.0 * gutter, at)]
+                };
+                let Some(p) = pointer.filter(|p| rect.y_range().contains(p.y)) else {
+                    continue;
+                };
+                let char_at = |at: &Option<TextAt>| {
+                    at.as_ref().map_or(0, |t| {
+                        if p.x <= t.origin.x {
+                            0
                         } else {
-                            // A same line shows its new text (they may differ in ignored whitespace).
-                            let line = new.or(old);
-                            paint_line(
-                                ui,
-                                rect,
-                                line,
-                                Numbers::Both(row.old, row.new),
-                                &geometry,
-                                selection,
-                                c,
-                            );
-                            let a = Rect::from_min_size(rect.min, vec2(gutter, row_h));
-                            let b = a.translate(vec2(gutter, 0.0));
-                            [(a, Side::Old, row.old), (b, Side::New, row.new)]
-                        };
-                        if response.clicked()
-                            && let Some(p) = response.interact_pointer_pos()
-                        {
-                            for (r, side, line) in halves {
-                                let numbers = Rect::from_min_size(r.min, vec2(gutter, row_h));
-                                if let Some(line) = line
-                                    && numbers.contains(p)
-                                {
-                                    let shift = ui.input(|i| i.modifiers.shift);
-                                    clicked = Some(Click::Line(side, line, shift));
-                                }
-                            }
+                            t.galley.cursor_from_pos(p - t.origin).index.0
                         }
+                    })
+                };
+                let under: Vec<(Column, usize)> = columns
+                    .iter()
+                    .map(|(col, _, _, at)| (*col, char_at(at)))
+                    .collect();
+                input.hover = Some((r, [under[0], *under.last().unwrap_or(&under[0])]));
+                if let Some((column, half, numbers_w, at)) = columns
+                    .iter()
+                    .find(|(_, half, _, _)| half.x_range().contains(p.x))
+                {
+                    let on_numbers = p.x < half.left() + numbers_w;
+                    if !on_numbers {
+                        let _ = response.clone().on_hover_cursor(egui::CursorIcon::Text);
+                    }
+                    if pressed && response.hovered() {
+                        input.press = Some((r, *column, char_at(at), on_numbers));
                     }
                 }
             }
         });
-
-        match clicked {
-            Some(Click::Fold(lines)) => {
-                self.open.push(lines);
-                self.dirty = true;
-            }
-            Some(Click::Line(side, line, extend)) => {
-                self.selection = match self.selection {
-                    Some(s) if extend && s.side == side => Some(Selection { end: line, ..s }),
-                    _ => Some(Selection {
-                        side,
-                        anchor: line,
-                        end: line,
-                    }),
-                };
-            }
-            None => {}
-        }
-
         // The change in view: the one jumped to while the view stays put, else the last one
         // at or above the reading line (as far down as a jump puts a change).
         let offset = out.state.offset.y;
@@ -861,6 +914,11 @@ impl DiffWindow {
             out.content_size.y,
         );
         overview(ui, strip, diff, rows, &self.shown, side, view, row_h, c);
+        self.select(ui, &input, area, out.state.offset.y, row_h);
+        if let Some(lines) = input.fold {
+            self.open.push(lines);
+            self.dirty = true;
+        }
         // The overview scrolls too: click or drag to put that place in the middle.
         let response = ui.interact(
             strip,
@@ -945,23 +1003,162 @@ impl DiffWindow {
         ui.painter().rect_filled(thumb, CornerRadius::same(3), fill);
     }
 
-    /// The text of the selected lines, one per line, without markers.
-    fn selected_text(&self) -> Option<String> {
-        let s = self.selection?;
+    /// Chooses text with the mouse: a press starts (Shift extends), a drag moves the end
+    /// (scrolling past the edges), a double-click takes a word, and a click without a drag
+    /// clears. Presses on the line numbers choose whole lines.
+    fn select(&mut self, ui: &Ui, input: &RowInput, area: Rect, offset: f32, row_h: f32) {
+        let (down, shift, double) = ui.input(|i| {
+            (
+                i.pointer.primary_down(),
+                i.modifiers.shift,
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary),
+            )
+        });
+        if let Some((row, column, col, on_numbers)) = input.press {
+            let here = (row, if on_numbers { LINE_END } else { col });
+            self.selection = match self.selection {
+                Some(s) if shift && s.column == column => Some(Selection { head: here, ..s }),
+                _ => Some(Selection {
+                    column,
+                    anchor: here,
+                    head: here,
+                    lines: on_numbers,
+                }),
+            };
+            self.dragging = true;
+        } else if double
+            && let Some((row, under)) = input.hover
+            && let Some(s) = self.selection
+            && !s.lines
+            && let Some(&(_, col)) = under.iter().find(|(c, _)| *c == s.column)
+            && let Some(words) = self.word_at(s.column, row, col)
+        {
+            self.selection = Some(Selection {
+                anchor: (row, words.start),
+                head: (row, words.end),
+                ..s
+            });
+            self.dragging = false;
+        }
+        if !self.dragging {
+            return;
+        }
+        if !down {
+            self.dragging = false;
+            if self.selection.is_some_and(|s| s.is_empty()) {
+                self.selection = None;
+            }
+            return;
+        }
+        let Some(mut s) = self.selection else { return };
+        let pointer = ui.input(|i| i.pointer.interact_pos());
+        if let Some((row, under)) = input.hover
+            && let Some(&(_, col)) = under.iter().find(|(c, _)| *c == s.column)
+        {
+            s.head = (row, if s.lines { LINE_END } else { col });
+        } else if let Some(p) = pointer {
+            // Past the top or bottom: take the first or last row drawn, and scroll on.
+            if p.y < area.top() {
+                if let Some(first) = input.first {
+                    s.head = (first, 0);
+                }
+                self.scroll_to = Some(offset - row_h);
+            } else if p.y > area.bottom() {
+                if let Some(last) = input.last {
+                    s.head = (last, LINE_END);
+                }
+                self.scroll_to = Some(offset + row_h);
+            }
+            ui.ctx().request_repaint();
+        }
+        self.selection = Some(s);
+    }
+
+    /// The word (or run of blanks, or other character) at display column `col` of a row.
+    fn word_at(&self, column: Column, row: usize, col: usize) -> Option<std::ops::Range<usize>> {
         let ready = self.ready()?;
-        let lines = match s.side {
-            Side::Old => &ready.diff.old,
-            Side::New => &ready.diff.new,
+        let (rows, _) = Self::rows_and_changes(&ready.diff, self.form);
+        let text: Vec<char> = ready
+            .diff
+            .line(*rows.get(row)?, column.side())?
+            .text
+            .chars()
+            .collect();
+        let col = col.min(text.len().checked_sub(1)?);
+        let class = |c: char| {
+            if c.is_alphanumeric() || c == '_' {
+                0
+            } else if c.is_whitespace() {
+                1
+            } else {
+                2
+            }
         };
-        let (a, b) = (s.anchor.min(s.end) as usize, s.anchor.max(s.end) as usize);
-        let mut text = lines
-            .get(a..=b.min(lines.len().saturating_sub(1)))?
-            .iter()
-            .map(|l| l.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        text.push('\n');
+        let k = class(text[col]);
+        if k == 2 {
+            return Some(col..col + 1);
+        }
+        let start = (0..col)
+            .rev()
+            .take_while(|&i| class(text[i]) == k)
+            .last()
+            .unwrap_or(col);
+        let end = (col..text.len())
+            .take_while(|&i| class(text[i]) == k)
+            .last()
+            .unwrap_or(col)
+            + 1;
+        Some(start..end)
+    }
+
+    /// The chosen text as it is in the file (tabs kept), a line per row; whole lines end
+    /// with a newline. Fillers have no text and add no line.
+    fn selected_text(&self) -> Option<String> {
+        let s = self.selection.filter(|s| !s.is_empty())?;
+        let ready = self.ready()?;
+        let (rows, _) = Self::rows_and_changes(&ready.diff, self.form);
+        let (a, b) = s.ordered();
+        let mut lines = Vec::new();
+        let chosen = rows.iter().enumerate().take(b.0 + 1).skip(a.0);
+        for (r, &row) in chosen {
+            let Some(line) = ready.diff.line(row, s.column.side()) else {
+                continue;
+            };
+            let cols = s.columns(s.column, r)?;
+            let start = line.raw_offset(cols.start);
+            let end = if cols.end == LINE_END {
+                line.raw.len()
+            } else {
+                line.raw_offset(cols.end)
+            };
+            lines.push(&line.raw[start..end.max(start)]);
+        }
+        let mut text = lines.join("\n");
+        if s.lines || b.1 == LINE_END {
+            text.push('\n');
+        }
         Some(text)
+    }
+
+    /// Chooses every line of the column in use (the new side, or the unified column).
+    fn select_all(&mut self) {
+        let Some(ready) = self.ready() else { return };
+        let (rows, _) = Self::rows_and_changes(&ready.diff, self.form);
+        let Some(last) = rows.len().checked_sub(1) else {
+            return;
+        };
+        let column = match (self.selection, self.form) {
+            (Some(s), _) => s.column,
+            (None, DiffForm::SideBySide) => Column::New,
+            (None, DiffForm::Unified) => Column::Unified,
+        };
+        self.selection = Some(Selection {
+            column,
+            anchor: (0, 0),
+            head: (last, LINE_END),
+            lines: true,
+        });
     }
 
     /// Shows the window; returns nothing, but sets `closed` when it was closed.
@@ -1028,13 +1225,6 @@ impl DiffWindow {
     }
 }
 
-enum Click {
-    /// A fold: the lines of the new version it hides.
-    Fold(std::ops::Range<u32>),
-    /// A line number: the side, the line, and whether Shift was held.
-    Line(Side, u32, bool),
-}
-
 /// Sizes shared by the rows of a frame.
 struct Geometry {
     row_h: f32,
@@ -1043,26 +1233,38 @@ struct Geometry {
     font: FontId,
 }
 
-/// The line numbers a row shows: its side's, or both (unified).
+/// The line numbers a row shows: its own line's, or both sides' (unified).
 enum Numbers {
-    One(Side),
+    Own,
     Both(Option<u32>, Option<u32>),
 }
 
-/// Paints one line (or a filler, for `None`) into `rect`: line numbers, marker, text.
+/// Where a line's text was drawn, for finding the character under the pointer.
+struct TextAt {
+    galley: Arc<egui::Galley>,
+    origin: egui::Pos2,
+}
+
+/// Paints one line (or a filler, for `None`) into `rect`: line numbers, marker, text, and
+/// the chosen characters `sel` (display columns, the end may be [`LINE_END`]; and whether
+/// whole lines were chosen, on the numbers). Returns where the text went.
 fn paint_line(
     ui: &Ui,
     rect: Rect,
     line: Option<&DiffLine>,
     numbers: Numbers,
     g: &Geometry,
-    selection: Option<Selection>,
+    sel: Option<(std::ops::Range<usize>, bool)>,
     c: &Colors,
-) {
+) -> Option<TextAt> {
+    let (sel, whole) = match sel {
+        Some((range, lines)) => (Some(range), lines),
+        None => (None, false),
+    };
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     let Some(line) = line else {
         painter.rect_filled(rect, 0.0, c.filler);
-        return;
+        return None;
     };
     let (bg, word, marker, marker_color) = match line.kind {
         LineKind::Same => (Color32::TRANSPARENT, Color32::TRANSPARENT, "", c.weak),
@@ -1071,28 +1273,27 @@ fn paint_line(
     };
     painter.rect_filled(rect, 0.0, bg);
     let y = rect.top() + 1.5;
-    let number = |x: f32, side: Side, no: Option<u32>| {
+    let number = |x: f32, no: Option<u32>| {
         let Some(ix) = no else { return };
-        let selected = selection.is_some_and(|s| s.contains(side, ix));
         let cell = Rect::from_min_size(pos2(x, rect.top()), vec2(g.gutter, g.row_h));
-        if selected {
+        if whole {
             painter.rect_filled(cell, 0.0, c.selected_bg);
         }
-        let color = if selected { c.selected_fg } else { c.weak };
+        let color = if whole { c.selected_fg } else { c.weak };
         let text = (ix + 1).to_string();
         let galley = painter.layout_no_wrap(text, g.font.clone(), color);
         painter.galley(pos2(x + g.gutter - 8.0 - galley.size().x, y), galley, color);
     };
     let mut x = rect.left();
     match numbers {
-        Numbers::One(side) => {
-            number(x, side, Some(line.no - 1));
+        Numbers::Own => {
+            number(x, Some(line.no - 1));
             x += g.gutter;
         }
         Numbers::Both(old, new) => {
-            number(x, Side::Old, old);
+            number(x, old);
             x += g.gutter;
-            number(x, Side::New, new);
+            number(x, new);
             x += g.gutter;
         }
     }
@@ -1125,9 +1326,26 @@ fn paint_line(
     }
     let galley = painter.layout_job(job);
     let clip = Rect::from_min_max(pos2(x, rect.top()), rect.max).intersect(ui.clip_rect());
-    painter
-        .with_clip_rect(clip)
-        .galley(pos2(x - g.hoff, y), galley, c.text);
+    let text = painter.with_clip_rect(clip);
+    let origin = pos2(x - g.hoff, y);
+    if let Some(sel) = sel {
+        let at =
+            |col: usize| origin.x + galley.pos_from_cursor(egui::text::CCursor::new(col)).min.x;
+        let x0 = at(sel.start);
+        let x1 = if sel.end == LINE_END {
+            // Past the end, a little, to show the line break is included.
+            origin.x + galley.size().x + g.row_h / 2.0
+        } else {
+            at(sel.end)
+        };
+        text.rect_filled(
+            Rect::from_x_y_ranges(x0..=x1, rect.y_range()),
+            0.0,
+            c.selection,
+        );
+    }
+    text.galley(origin, galley.clone(), c.text);
+    Some(TextAt { galley, origin })
 }
 
 /// The fold toggle: off, on, or on with some folds opened by hand (shown half on, with a dot).
@@ -1309,6 +1527,8 @@ struct Colors {
     note: Color32,
     selected_bg: Color32,
     selected_fg: Color32,
+    /// Behind chosen text.
+    selection: Color32,
     thumb: Color32,
     thumb_hover: Color32,
 }
@@ -1337,6 +1557,7 @@ fn colors(ui: &Ui) -> Colors {
             note: Color32::from_rgb(0xe8, 0xc0, 0x6a),
             selected_bg: t.on_bg,
             selected_fg: Color32::from_rgb(0xcf, 0xe5, 0xff),
+            selection: Color32::from_rgba_unmultiplied(0x35, 0x84, 0xe4, 110),
             thumb: Color32::from_white_alpha(50),
             thumb_hover: Color32::from_white_alpha(90),
         }
@@ -1359,6 +1580,7 @@ fn colors(ui: &Ui) -> Colors {
             note: Color32::from_rgb(0x9a, 0x5b, 0x00),
             selected_bg: t.on_bg,
             selected_fg: Color32::from_rgb(0x0b, 0x3d, 0x7a),
+            selection: Color32::from_rgba_unmultiplied(0x35, 0x84, 0xe4, 80),
             thumb: Color32::from_black_alpha(45),
             thumb_hover: Color32::from_black_alpha(90),
         }
@@ -1461,9 +1683,22 @@ mod tests {
         settings: &mut DiffWindowSettings,
         events: Vec<egui::Event>,
     ) {
+        frame_with(ctx, w, settings, events, Modifiers::NONE);
+    }
+
+    /// As [`frame`], with `modifiers` held.
+    fn frame_with(
+        ctx: &egui::Context,
+        w: &mut DiffWindow,
+        settings: &mut DiffWindowSettings,
+        events: Vec<egui::Event>,
+        modifiers: Modifiers,
+    ) {
+        let mut all = vec![egui::Event::ModifiersChanged(modifiers)];
+        all.extend(events);
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))),
-            events,
+            events: all,
             ..Default::default()
         };
         // As `show` does, less the viewport. Nothing is rendered, so the texture updates are
@@ -1511,6 +1746,111 @@ mod tests {
         frame(&ctx, &mut w, &mut settings, Vec::new());
         assert_eq!(w.form, DiffForm::SideBySide);
         assert_eq!(settings.form, DiffForm::SideBySide);
+    }
+
+    /// Where display column `col` of row `row` starts in the new (right) pane, side by side and
+    /// unfolded, with no notes in the header.
+    fn at(ctx: &egui::Context, w: &DiffWindow, row: usize, col: usize) -> egui::Pos2 {
+        let font = FontId::monospace(FONT_SIZE);
+        let (row_h, char_w) =
+            ctx.fonts_mut(|f| (f.row_height(&font).ceil() + 3.0, f.glyph_width(&font, '0')));
+        let ready = w.ready().unwrap();
+        let lines = ready.diff.old.len().max(ready.diff.new.len()).max(1);
+        let gutter = ((lines as f32).log10().floor() + 1.0) * char_w + 18.0;
+        let mid = (1200.0 - OVERVIEW) / 2.0;
+        let top = TOOLBAR + 34.0 + PANE_TITLE;
+        pos2(
+            mid + gutter + MARKER + col as f32 * char_w + 1.0,
+            top + (row as f32 + 0.5) * row_h,
+        )
+    }
+
+    fn button(at: egui::Pos2, pressed: bool, modifiers: Modifiers) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        }
+    }
+
+    fn text_window() -> (egui::Context, DiffWindow, DiffWindowSettings) {
+        // An added last line keeps the header free of notes ("Content unchanged").
+        let text = "one\n\ttwo three\nfour five\n";
+        let mut settings = DiffWindowSettings {
+            fold: false,
+            ..DiffWindowSettings::default()
+        };
+        let mut w = window(text, &format!("{text}six\n"), &settings);
+        let ctx = egui::Context::default();
+        frame(&ctx, &mut w, &mut settings, Vec::new());
+        (ctx, w, settings)
+    }
+
+    #[test]
+    fn dragging_over_text_copies_it_as_in_the_file() {
+        let (ctx, mut w, mut settings) = text_window();
+        // From "two" (column 4, after the tab's spaces) to "four| five".
+        let (a, b) = (at(&ctx, &w, 1, 4), at(&ctx, &w, 2, 4));
+        let none = Modifiers::NONE;
+        let steps = [
+            vec![egui::Event::PointerMoved(a), button(a, true, none)],
+            vec![egui::Event::PointerMoved(b)],
+            vec![button(b, false, none)],
+        ];
+        for events in steps {
+            frame(&ctx, &mut w, &mut settings, events);
+        }
+        assert!(!w.dragging);
+        assert_eq!(w.selected_text().as_deref(), Some("two three\nfour"));
+    }
+
+    #[test]
+    fn line_numbers_choose_whole_lines_with_their_tabs() {
+        let (ctx, mut w, mut settings) = text_window();
+        let (a, b) = (at(&ctx, &w, 0, 0), at(&ctx, &w, 1, 0));
+        // On the numbers: well left of the text.
+        let (a, b) = (a - vec2(MARKER + 12.0, 0.0), b - vec2(MARKER + 12.0, 0.0));
+        let (none, shift) = (Modifiers::NONE, Modifiers::SHIFT);
+        let steps = [
+            (
+                vec![egui::Event::PointerMoved(a), button(a, true, none)],
+                none,
+            ),
+            (vec![button(a, false, none)], none),
+            (
+                vec![egui::Event::PointerMoved(b), button(b, true, shift)],
+                shift,
+            ),
+            (vec![button(b, false, shift)], shift),
+        ];
+        for (events, held) in steps {
+            frame_with(&ctx, &mut w, &mut settings, events, held);
+        }
+        assert_eq!(w.selected_text().as_deref(), Some("one\n\ttwo three\n"));
+    }
+
+    #[test]
+    fn a_double_click_takes_a_word_and_ctrl_a_everything() {
+        let (ctx, mut w, mut settings) = text_window();
+        let p = at(&ctx, &w, 2, 6);
+        let none = Modifiers::NONE;
+        for _ in 0..2 {
+            frame(
+                &ctx,
+                &mut w,
+                &mut settings,
+                vec![egui::Event::PointerMoved(p), button(p, true, none)],
+            );
+            frame(&ctx, &mut w, &mut settings, vec![button(p, false, none)]);
+        }
+        assert_eq!(w.selected_text().as_deref(), Some("five"));
+
+        w.select_all();
+        assert_eq!(
+            w.selected_text().as_deref(),
+            Some("one\n\ttwo three\nfour five\nsix\n")
+        );
     }
 
     fn folds(w: &DiffWindow) -> usize {
