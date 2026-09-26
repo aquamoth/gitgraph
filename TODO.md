@@ -175,6 +175,21 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 
 ## Planned
 
+- [ ] Show log window, as planned in the map *Revision-graph node menu: roadmap to TortoiseGit
+      parity* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
+      from TortoiseGit (decided in #28): when the second of two selected nodes is an ancestor
+      of the first, the two are swapped instead of showing an empty list.
+- [ ] Wayland freeze, to be fixed along with the log window. On Wayland the whole app freezes
+      when one of its windows is minimized while another is open. It already happens with
+      Settings today. Workaround (see `docs/research/wayland-viewport-freeze.md` on the branch
+      `research/wayland-viewport-freeze`): on Wayland only, vsync off and frames capped at about
+      8 ms.
+  - [ ] **Check regularly, and on every eframe upgrade, whether the upstream fix has shipped:**
+        <https://github.com/emilk/egui/pull/8631> (bug:
+        <https://github.com/emilk/egui/issues/5145>). Once it is in a released eframe, remove
+        the frame cap and turn vsync back on.
+- [ ] Settings window without minimize and maximize buttons. It is a dialog, and maximizing it
+      breaks its layout.
 - [ ] Toolbar merged into the title bar, with ☰, the repository name and the window buttons in
       one row (wanted 2026-09-26, postponed as too big a change for now). Native on macOS
       (content under a transparent title bar, the traffic lights stay). Elsewhere parterre
