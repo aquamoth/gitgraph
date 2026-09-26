@@ -418,6 +418,20 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
         the fork's own PRs into its parent) whose base branch is visible. No fetching.
   - [ ] Slice 2: fetch other PR heads commits-only into a private cache; greyed-out nodes,
         dashed edges.
+  - [ ] Low priority: check slice 1 by hand on macOS and Windows (only Linux was tried).
+        What is drawn is the same everywhere (egui draws it all); what runs outside it isn't:
+    - **macOS, likely a bug:** started from the Dock or Finder, parterre doesn't get the
+      shell's `PATH`, so a Homebrew `gh` (`/opt/homebrew/bin`, `/usr/local/bin` on Intel)
+      isn't found and pull requests say "GitHub CLI not found". Likely fix: also look in
+      those folders, as `git/program.rs` does for Git for Windows. Check: start from the
+      Dock with `gh` signed in, see the labels.
+    - **Windows:** no console window flashing when `gh auth token` runs (`CREATE_NO_WINDOW`
+      is set); a parterre started before `gh` was installed keeps the old `PATH` (the same
+      case `git/program.rs` handles for git); started from the Start menu and from Explorer's
+      *Revision Graph*.
+    - **Both:** clicking a number opens the browser (`open`, `explorer.exe`), and GitHub's
+      certificate is accepted through the system's store (Keychain, schannel) by
+      `rustls-platform-verifier`.
   - [ ] Later, only when requested: pull requests of Azure DevOps origins. Findings and
         estimate (about the core half of slice 1, no new crates; sign in through Git
         Credential Manager with `git credential fill`): the research doc, §15.
