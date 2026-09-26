@@ -84,7 +84,6 @@ pub struct Palette {
     pub other_ref: Color32,
     pub selection: Color32,
     pub search_hit: Color32,
-    pub moved_marker: Color32,
     /// Colours by branch name, first match first; they override the ref-kind colours.
     pub branch_colors: Vec<(BranchPatterns, Color32)>,
 }
@@ -122,7 +121,6 @@ impl Palette {
             other_ref: Color32::from_rgb(224, 224, 224),
             selection: Color32::from_rgb(0, 120, 215),
             search_hit: Color32::from_rgb(255, 140, 0),
-            moved_marker: Color32::from_rgb(0, 120, 215),
             branch_colors: Vec::new(),
         }
     }
@@ -144,7 +142,6 @@ impl Palette {
             other_ref: invert_lightness(l.other_ref),
             selection: Color32::from_rgb(80, 170, 255),
             search_hit: Color32::from_rgb(255, 160, 40),
-            moved_marker: Color32::from_rgb(80, 170, 255),
             branch_colors: Vec::new(),
         }
     }

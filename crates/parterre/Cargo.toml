@@ -7,6 +7,11 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["git", "revision-graph", "tortoisegit", "gui", "visualization"]
+categories = ["development-tools", "visualization"]
 
 [[bin]]
 name = "parterre"
@@ -20,8 +25,16 @@ eframe.workspace = true
 image.workspace = true
 serde.workspace = true
 
+# Only to turn on a feature of eframe's winit: on Wayland desktops that leave the title bar to
+# the app (GNOME), draw an Adwaita-style one with the window title, instead of a plain grey bar.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
+
 [dev-dependencies]
 tempfile.workspace = true
+
+[build-dependencies]
+embed-resource = "3"
 
 [lints]
 workspace = true

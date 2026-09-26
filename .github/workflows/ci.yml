@@ -23,9 +23,21 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          # Linux runs in Ubuntu 22.04, like the release build (see release.yml).
+          - { os: ubuntu-latest, container: "ubuntu:22.04" }
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     steps:
+      - name: Prepare container
+        if: matrix.container
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ca-certificates curl git
       - uses: actions/checkout@v4
+      - name: Trust the checkout
+        if: matrix.container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -49,6 +61,15 @@ jobs:
           cp target/release/parterre${{ runner.os == 'Windows' && '.exe' || '' }} LICENSE NOTICE dist/
           cargo about generate --locked -c packaging/about.toml packaging/about.hbs \
             -o dist/THIRD-PARTY-NOTICES.html
+      # The installer from the same files, so every PR has one to try
+      # (packaging/windows/build-msi.ps1).
+      - name: Windows installer
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          dotnet tool install --global wix --version 7.0.0
+          PATH="$USERPROFILE/.dotnet/tools:$PATH" \
+            pwsh packaging/windows/build-msi.ps1 -Stage dist -Out dist/parterre.msi
       - uses: actions/upload-artifact@v4
         with:
           name: parterre-${{ matrix.os }}

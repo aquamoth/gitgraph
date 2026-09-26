@@ -19,13 +19,29 @@ no longer need and go around nodes that are now in the way.
 _(Made with `scripts/make-demo-repo.sh`: local branches green, remote branches orange, tags
 yellow, the current branch red.)_
 
+## Installing
+
+Download the archive for your system from the
+[releases page](https://github.com/aquamoth/parterre/releases) and put `parterre` on your
+`PATH`. On Windows the `.msi` next to it does that for you, and adds a Start menu entry; it
+installs for the current user without asking for admin rights. The Linux build needs glibc 2.35 or newer (Debian 12, Ubuntu 22.04 and later). With a
+Rust toolchain you can also install it from crates.io:
+
+```sh
+cargo install --locked parterre    # build from source; installs only the binary
+cargo binstall parterre            # or download the release binary with cargo-binstall
+```
+
+parterre also needs `git`. Packages for winget, Chocolatey and Linux are on their way; see
+[docs/distribution.md](docs/distribution.md).
+
 ## Usage
 
 ```sh
 parterre [PATH]                    # open the repository containing PATH (default: .)
 parterre --mode branches           # also show every fork point and merge
 parterre --mode all --no-remotes   # every commit, local branches and tags only
-parterre --look classic            # straight, unbundled edges exactly like TortoiseGit
+parterre --look classic            # straight, unbundled edges like TortoiseGit
 parterre --hide 'pipeline/*,release/*'        # leave out build and release branches
 parterre --branch-color 'feature/*=#9b59b6'   # colour branches by name (repeatable)
 parterre --export graph.svg        # write an SVG without opening a window
@@ -36,10 +52,11 @@ In the window:
 
 | Do | To |
 |---|---|
-| Drag a node | Move it, with the rest of the selection it belongs to. It gets a blue dot. |
+| Drag a node | Move it, with the rest of the selection it belongs to. In *Adapt*, the graph gives way and keeps children above their parents. |
 | `1` / `2` / `3` | Drag mode *Adapt* (the graph gives way) / *Free* (nothing else moves) / *Subtree* (take along everything that grows out of it) |
 | Click, `Ctrl`+click, `Shift`+click a node | Select it / toggle it / add it to the selection |
 | `Shift`+drag the background | Select the nodes in a rectangle |
+| Hover / click an edge | List the commits collapsed into it / keep it highlighted while you look around |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo a move |
 | Drag the background, wheel, Shift+wheel | Pan |
 | Ctrl+wheel, pinch, `+` `-` `0` | Zoom |
@@ -48,10 +65,13 @@ In the window:
 | `Ctrl+F`, then `Enter` / `F3` | Find branches, tags, hashes, subjects or authors |
 | Right-click a node | Copy its hash, ref names or subject; select its subtree; return it to the layout |
 | `R` | Return all nodes to the layout |
+| `Esc` | Clear the selection |
 | `F5` | Reload the repository |
+| `Ctrl+,` | Settings |
 
-The toolbar and the *Graph*, *View* and *Drag* menus hold the options. TortoiseGit's
-options are all there:
+The toolbar holds what you use every day, the ☰ menu has all of that and more, and
+*Settings* (`Ctrl+,`) the rest; the graph shows every change while the settings stay open.
+TortoiseGit's options are all there:
 - show branchings and merges
 - local or remote branches
 - tags, and "show all tags"
@@ -62,9 +82,9 @@ parterre adds:
 - four directions and three vertical placements
 - edge bundling, row splitting and curved edges
 - first-parent-only view, and stash or other refs
-- hiding branches by wildcard, e.g. `pipeline/*` (*Graph → Hide branches*). A hidden branch
+- hiding branches by wildcard, e.g. `pipeline/*` (the toolbar's filter options, or *Settings → Filters*). A hidden branch
   still shows where the history of a shown branch contains it, so only leaves vanish.
-- colours by branch name, e.g. `feature/*` purple (*View → Branch colours…*)
+- colours by branch name, e.g. `feature/*` purple (*Settings → Branch colours*)
 - light and dark themes
 - rearranging by hand: drag modes, multi-selection, undo
 
@@ -105,6 +125,7 @@ needed to build. See [docs/building.md](docs/building.md) for Windows and macOS 
 | `crates/parterre` | The `parterre` binary: egui/eframe window, rendering, interaction |
 | `docs/research/` | Notes on how TortoiseGit's revision graph works, with source links |
 | `docs/architecture.md` | How the pieces fit together |
+| `docs/distribution.md` | Where parterre is published, under which names, and why |
 | `TODO.md` | Open questions and planned work |
 
 ## License

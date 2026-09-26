@@ -13,6 +13,8 @@ use std::process::{Command, Output, Stdio};
 use crate::oid::Oid;
 use crate::repo::{Commit, CommitIx, GitRef, Head, RefKind, Repo};
 
+mod program;
+
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
     #[error("could not run git ({0}); is git installed and on PATH?")]
@@ -49,7 +51,7 @@ impl Git {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let mut cmd = Command::new("git");
+        let mut cmd = Command::new(program::git());
         cmd.arg("-C")
             .arg(&self.dir)
             .args(["-c", "core.quotepath=off"])
@@ -283,17 +285,15 @@ fn parse_log(log: &str) -> Result<(Vec<Commit>, HashMap<Oid, CommitIx>), GitErro
     if tokens.last() == Some(&"") && tokens.len() % LOG_FIELDS == 1 {
         tokens.pop();
     }
-    if tokens.len() % LOG_FIELDS != 0 {
+    if !tokens.len().is_multiple_of(LOG_FIELDS) {
         return Err(GitError::Parse(format!(
             "log output has {} fields, not a multiple of {LOG_FIELDS}",
             tokens.len()
         )));
     }
     let mut raw = Vec::with_capacity(tokens.len() / LOG_FIELDS);
-    for record in tokens.chunks_exact(LOG_FIELDS) {
-        let [hash, parents, tree, an, ae, at, ad, ct, subject] = record else {
-            unreachable!("chunks have LOG_FIELDS items");
-        };
+    let (records, _) = tokens.as_chunks::<LOG_FIELDS>();
+    for [hash, parents, tree, an, ae, at, ad, ct, subject] in records {
         let hash = hash.trim_start_matches('\n');
         raw.push(Raw {
             oid: Oid::from_hex(hash)

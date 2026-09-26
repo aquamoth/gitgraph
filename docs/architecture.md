@@ -8,6 +8,7 @@ crates/parterre-core   GUI-free; everything testable lives here
   repo.rs              Repo snapshot: commits (with parent indices), refs, HEAD
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
   pattern.rs           branch-name wildcards, for hiding and colouring branches
+  glyphs.rs            toolbar and menu icons as SVG path data, and a path flattener
   layout/              layered (Sugiyama) layout
     rank.rs            layer assignment (network simplex / longest path / chronological),
                        plus splitting of over-wide layers
@@ -22,13 +23,18 @@ crates/parterre        the binary (eframe/egui)
   build.rs             asks git for the commit and sets the version string
   main.rs              CLI (clap), window setup
   version.rs           release/dev version strings (runs in build.rs; see docs/releasing.md)
-  app.rs               menus, toolbar, canvas interaction, search, status bar
+  app.rs               canvas interaction, search, status bar, windows
+    toolbar.rs         the toolbar, its popovers and the ☰ menu
+    settings_window.rs the settings: pages of rows, applied as you change them
   scene.rs             node contents and sizes + layout + physics net, hit testing
   render.rs            painting nodes, edges, arrows, overview
   view.rs              pan/zoom transform
   theme.rs             TortoiseGit colours (light, and dark via lightness inversion)
+  system_theme.rs      light or dark desktop preference on Linux (XDG portal)
+  menu.rs              the look of menus and popovers, menu items
+  widgets.rs           icon buttons, segmented buttons, switches, text fields
   settings.rs          persisted settings and the Classic/Modern looks
-  automation.rs        --screenshot / --demo-drag scripted runs
+  automation.rs        --screenshot / --demo-drag / --demo-menu / --demo-open scripted runs
 ```
 
 ## Data flow
@@ -62,7 +68,10 @@ crates/parterre        the binary (eframe/egui)
      only the dragged nodes (Subtree adds their first-parent descendants) and stretch the
      edges to them.
    - **Shape:** each frame of an adaptive drag, the target shape is relaxed with Gauss-Seidel
-     over displacements.
+     over displacements. Between sweeps, edge segments are put back in history order
+     (children above parents, with a gap) by one pass along the flow and one against it, and
+     overlapping boxes are pushed apart. Only the dragged nodes, and edges left reversed at
+     rest, can break the order.
    - **Motion:** particles follow the target through damped springs.
    - **Drop:** whatever moved rests where it is from then on, so moved nodes keep giving way
      to later drags instead of being pinned. Drops, resets and returns to the layout are
@@ -73,10 +82,14 @@ crates/parterre        the binary (eframe/egui)
      That means edges at nodes moved by hand, edges pulled far out of shape, and edges a moved
      node covers. The router groups the boxes in between into rows, picks a gap in each so
      that sideways moves happen where there is room, and pulls the route taut through them
-     (funnel algorithm). Anything still in the way is walked around corner by corner.
+     (funnel algorithm). Anything still in the way is walked around corner by corner. An
+     edge whose parent has been moved before its child is routed round both nodes, from just
+     below the child to just above the parent.
 6. **Paint** (`render.rs`): edges then nodes, culled to the viewport; text is skipped below
-   4 px. Straight edges are clipped to box borders (TortoiseGit); curved edges leave and
-   enter along the history direction.
+   4 px. Edges leave a node from the side facing its parents and enter from the side facing
+   its children (bottom and top, newest on top), unlike TortoiseGit, which clips them to the
+   box border wherever they hit it. An edge turned around therefore shows as a loop: it
+   follows its route round the nodes, or else detours round the side of the boxes.
 
 ## Testing
 
@@ -89,6 +102,7 @@ crates/parterre        the binary (eframe/egui)
   - network simplex is optimal on tiny graphs (checked by brute force)
   - every edge ends on a node
   - the net comes to rest and stays there; it returns home after a reset
+  - after an adaptive drag, every child is still above its parents
 - `cargo test --release -p parterre-core --test properties_layout -- --ignored --nocapture`
   prints timings for large, awkward inputs.
 
