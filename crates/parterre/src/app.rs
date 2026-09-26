@@ -257,6 +257,7 @@ impl ParterreApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         repo: Option<Repo>,
+        open_error: Option<String>,
         overrides: impl FnOnce(&mut Settings),
         automation: Automation,
         vsync: bool,
@@ -331,7 +332,7 @@ impl ParterreApp {
             pending_select: Vec::new(),
             drag: None,
             search: Search::default(),
-            status: None,
+            status: open_error.map(|e| (e, true)),
             show_shortcuts: false,
             show_legend: false,
             show_settings: demo_settings.is_some(),
