@@ -10,7 +10,9 @@ crates/parterre-core   GUI-free; everything testable lives here
                        length
   log.rs               log query: tips and exclusions → commits in `git log --date-order`
                        order, from the snapshot alone
-  changed_files.rs     changed-file types, `diff-tree -z` parser, files-before-folders order
+  changed_files.rs     changed-file types, `diff-tree -z` parser, files-before-folders order,
+                       the log window's file filter and column sort
+  text.rs              URLs in commit messages, paths cut at the start, thousands separators
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
   pattern.rs           branch-name wildcards, for hiding and colouring branches
   glyphs.rs            toolbar and menu icons as SVG path data, and a path flattener
@@ -31,6 +33,9 @@ crates/parterre        the binary (eframe/egui)
   app.rs               canvas interaction, search, status bar, windows
     toolbar.rs         the toolbar, its popovers and the ☰ menu
     settings_window.rs the settings: pages of rows, applied as you change them
+    log_window.rs      the log window (Show log): an immediate viewport with three panes
+                       (commits, details, changed files) that a layout arranges (stacked
+                       only, so far); changed files come from git on a worker thread
   scene.rs             node contents and sizes + layout + physics net, hit testing
   render.rs            painting nodes, edges, arrows, overview
   view.rs              pan/zoom transform
@@ -39,7 +44,8 @@ crates/parterre        the binary (eframe/egui)
   menu.rs              the look of menus and popovers, menu items
   widgets.rs           icon buttons, segmented buttons, switches, text fields
   settings.rs          persisted settings and the Classic/Modern looks
-  automation.rs        --screenshot / --demo-drag / --demo-menu / --demo-open scripted runs
+  automation.rs        --screenshot / --demo-drag / --demo-menu / --demo-open / --demo-log
+                       scripted runs
 ```
 
 ## Data flow

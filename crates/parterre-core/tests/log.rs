@@ -160,6 +160,29 @@ fn two_nodes_swap_when_second_is_an_ancestor_of_first() {
 }
 
 #[test]
+fn names_resolve_and_label_the_range() {
+    let (r, [a, _, c, _, e]) = feature_branch();
+    let repo = r.load();
+    assert_eq!(repo.resolve("main"), Some(ix(&repo, &c)));
+    assert_eq!(repo.resolve("refs/heads/feature"), Some(ix(&repo, &e)));
+    assert_eq!(repo.resolve("HEAD"), Some(ix(&repo, &c)));
+    assert_eq!(repo.resolve(&a[..10]), Some(ix(&repo, &a)));
+    assert_eq!(repo.resolve("nothing"), None);
+
+    let refs = repo.refs_by_commit();
+    let all = |_: &parterre_core::GitRef| true;
+    let q = LogQuery::for_selection(&repo, &[ix(&repo, &c), ix(&repo, &e)]).unwrap();
+    assert_eq!(q.label(&repo, &refs, all).to_string(), "main..feature");
+    // No ref on A: its short hash, as long as git makes them.
+    let q = LogQuery::for_selection(&repo, &[ix(&repo, &e), ix(&repo, &a)]).unwrap();
+    let short = &a[..repo.abbrev_len];
+    assert_eq!(
+        q.label(&repo, &refs, all).to_string(),
+        format!("{short}..feature")
+    );
+}
+
+#[test]
 fn two_nodes_from_unrelated_histories_list_all_of_second() {
     let mut r = TestRepo::new();
     let a1 = r.commit("A1");

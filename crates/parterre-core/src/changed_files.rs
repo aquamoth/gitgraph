@@ -111,6 +111,99 @@ pub fn compare_paths(a: &str, b: &str) -> Ordering {
     }
 }
 
+/// A column of the changed-files table.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FileColumn {
+    #[default]
+    Path,
+    Extension,
+    Status,
+    Added,
+    Removed,
+}
+
+impl FileColumn {
+    pub const ALL: [FileColumn; 5] = [
+        FileColumn::Path,
+        FileColumn::Extension,
+        FileColumn::Status,
+        FileColumn::Added,
+        FileColumn::Removed,
+    ];
+
+    /// The column's heading.
+    pub fn title(self) -> &'static str {
+        match self {
+            FileColumn::Path => "Path",
+            FileColumn::Extension => "Extension",
+            FileColumn::Status => "Status",
+            FileColumn::Added => "Lines added",
+            FileColumn::Removed => "Lines removed",
+        }
+    }
+}
+
+/// How the changed-files table is sorted. The default is the first view: path order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FileOrder {
+    pub column: FileColumn,
+    pub descending: bool,
+}
+
+impl FileOrder {
+    /// A click on `column`'s heading: sorts by it, or reverses it if it is already the sort.
+    pub fn click(&mut self, column: FileColumn) {
+        if self.column == column {
+            self.descending = !self.descending;
+        } else {
+            *self = FileOrder {
+                column,
+                descending: false,
+            };
+        }
+    }
+
+    /// Orders two files: by the column, ties by [`compare_paths`] (always ascending). Binary
+    /// files, which have no line counts, sort below 0 lines.
+    pub fn compare(self, a: &ChangedFile, b: &ChangedFile) -> Ordering {
+        let by_column = match self.column {
+            FileColumn::Path => Ordering::Equal,
+            FileColumn::Extension => cmp_case_insensitive(a.extension(), b.extension()),
+            FileColumn::Status => a.status.name().cmp(b.status.name()),
+            FileColumn::Added => a.added.cmp(&b.added),
+            FileColumn::Removed => a.removed.cmp(&b.removed),
+        };
+        let paths = compare_paths(&a.path, &b.path);
+        if self.column == FileColumn::Path {
+            if self.descending {
+                paths.reverse()
+            } else {
+                paths
+            }
+        } else if self.descending {
+            by_column.reverse().then(paths)
+        } else {
+            by_column.then(paths)
+        }
+    }
+}
+
+/// The indices of the files whose path (or old path) contains `filter`, ignoring case, in
+/// `order`.
+pub fn filter_and_sort(files: &[ChangedFile], filter: &str, order: FileOrder) -> Vec<usize> {
+    let filter = filter.to_lowercase();
+    let matches = |f: &ChangedFile| {
+        filter.is_empty()
+            || f.path.to_lowercase().contains(&filter)
+            || f.old_path
+                .as_ref()
+                .is_some_and(|p| p.to_lowercase().contains(&filter))
+    };
+    let mut shown: Vec<usize> = (0..files.len()).filter(|&i| matches(&files[i])).collect();
+    shown.sort_by(|&a, &b| order.compare(&files[a], &files[b]));
+    shown
+}
+
 fn cmp_case_insensitive(a: &str, b: &str) -> Ordering {
     a.chars()
         .flat_map(char::to_lowercase)
@@ -296,6 +389,113 @@ mod tests {
             ]
         );
         assert!(files[1].is_binary());
+    }
+
+    fn file(path: &str, status: FileStatus, lines: Option<(u32, u32)>) -> ChangedFile {
+        ChangedFile {
+            path: path.into(),
+            old_path: None,
+            status,
+            added: lines.map(|l| l.0),
+            removed: lines.map(|l| l.1),
+        }
+    }
+
+    fn table() -> Vec<ChangedFile> {
+        let mut renamed = file("src/New.rs", FileStatus::Renamed, Some((1, 1)));
+        renamed.old_path = Some("lib/old.rs".into());
+        vec![
+            file("README.md", FileStatus::Modified, Some((3, 1))),
+            file("img/logo.PNG", FileStatus::Added, None),
+            file("src/main.rs", FileStatus::Modified, Some((10, 0))),
+            renamed,
+            file("src/sub/a.md", FileStatus::Deleted, Some((0, 7))),
+        ]
+    }
+
+    fn paths(files: &[ChangedFile], shown: &[usize]) -> Vec<String> {
+        shown.iter().map(|&i| files[i].path.clone()).collect()
+    }
+
+    #[test]
+    fn sorting_by_a_column_breaks_ties_by_path_and_clicking_again_reverses() {
+        let files = table();
+        let mut order = FileOrder::default();
+        let sorted = |order| paths(&files, &filter_and_sort(&files, "", order));
+        assert_eq!(
+            sorted(order),
+            [
+                "README.md",
+                "img/logo.PNG",
+                "src/main.rs",
+                "src/New.rs",
+                "src/sub/a.md"
+            ]
+        );
+        order.click(FileColumn::Path);
+        assert_eq!(sorted(order)[0], "src/sub/a.md");
+
+        order.click(FileColumn::Extension);
+        assert!(!order.descending);
+        // "md" twice (tie by path), then "png" ignoring case, then "rs" twice.
+        assert_eq!(
+            sorted(order),
+            [
+                "README.md",
+                "src/sub/a.md",
+                "img/logo.PNG",
+                "src/main.rs",
+                "src/New.rs"
+            ]
+        );
+        order.click(FileColumn::Extension);
+        // Reversed by extension; ties still in path order.
+        assert_eq!(
+            sorted(order),
+            [
+                "src/main.rs",
+                "src/New.rs",
+                "img/logo.PNG",
+                "README.md",
+                "src/sub/a.md"
+            ]
+        );
+
+        order.click(FileColumn::Added);
+        // The binary file has no count and sorts lowest.
+        assert_eq!(
+            sorted(order),
+            [
+                "img/logo.PNG",
+                "src/sub/a.md",
+                "src/New.rs",
+                "README.md",
+                "src/main.rs"
+            ]
+        );
+        order.click(FileColumn::Status);
+        assert_eq!(
+            sorted(order),
+            [
+                "img/logo.PNG",
+                "src/sub/a.md",
+                "README.md",
+                "src/main.rs",
+                "src/New.rs"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_filter_matches_path_or_old_path_ignoring_case() {
+        let files = table();
+        let order = FileOrder::default();
+        let shown = |filter| paths(&files, &filter_and_sort(&files, filter, order));
+        assert_eq!(shown("SRC/"), ["src/main.rs", "src/New.rs", "src/sub/a.md"]);
+        assert_eq!(shown("old"), ["src/New.rs"]);
+        assert_eq!(shown("png"), ["img/logo.PNG"]);
+        assert!(shown("nothing").is_empty());
+        assert_eq!(shown("").len(), files.len());
     }
 
     #[test]

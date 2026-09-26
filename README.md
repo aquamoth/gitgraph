@@ -63,7 +63,8 @@ In the window:
 | `F`, double-click the background | Fit the whole graph |
 | `Home` / `H` | Go to HEAD |
 | `Ctrl+F`, then `Enter` / `F3` | Find branches, tags, hashes, subjects or authors |
-| Right-click a node | Copy its hash, ref names or subject; select its subtree; return it to the layout |
+| `L`, double-click a node | Show log: the node's history, or with two nodes selected the commits between them (first..second) |
+| Right-click a node | Show log; copy its hash, ref names or subject; select its subtree; return it to the layout |
 | `R` | Return all nodes to the layout |
 | `Esc` | Clear the selection |
 | `F5` | Reload the repository |
@@ -87,6 +88,11 @@ parterre adds:
 - colours by branch name, e.g. `feature/*` purple (*Settings → Branch colours*)
 - light and dark themes
 - rearranging by hand: drag modes, multi-selection, undo
+
+*Show log* opens a window listing a node's history, or the commits between two selected
+nodes, like TortoiseGit's log: the selected commit's message and the files it changed, which
+you can sort and filter. In it, the arrow keys move through the commits, `F5` reloads and
+`Esc` closes it.
 
 Colours follow TortoiseGit:
 
