@@ -341,6 +341,31 @@ impl Git {
         ])?;
         parse_diff_tree(&out).map_err(GitError::Parse)
     }
+
+    /// The files that differ between the trees of two commits, `old` against `new`, as
+    /// `git diff-tree <old> <new>` lists them (TortoiseGit's "Compare revisions").
+    pub fn changed_between(&self, old: &Oid, new: &Oid) -> Result<Vec<ChangedFile>, GitError> {
+        let out = self.run(&[
+            "diff-tree",
+            "-r",
+            "-M",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-z",
+            "--raw",
+            "--numstat",
+            &old.to_hex(),
+            &new.to_hex(),
+        ])?;
+        parse_diff_tree(&out).map_err(GitError::Parse)
+    }
+
+    /// The common ancestor git picks for two commits (`git merge-base`), or `None` for
+    /// unrelated histories.
+    pub fn merge_base(&self, a: &Oid, b: &Oid) -> Result<Option<Oid>, GitError> {
+        let out = self.query(&["merge-base", &a.to_hex(), &b.to_hex()])?;
+        Ok(out.and_then(|hex| Oid::from_hex(&hex)))
+    }
 }
 
 impl Git {
