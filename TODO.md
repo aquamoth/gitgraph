@@ -243,10 +243,11 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     - **Size on first open:** 1100 × 760; after that, the size it last had.
     - **No keyboard focus for the list:** the arrow keys, Page Up/Down, Home and End move the
       selected commit whenever the filter field doesn't have the keyboard.
-21. **Explorer context menu** (#11). *Revision graph (parterre)* on a folder and on the
+21. **Explorer context menu** (#11). *Revision Graph* on a folder and on the
     background of an open one, registered by the MSI. Clicked through in Explorer on a folder
     (it opened the graph); on a folder's background only its keys and command were checked.
-    Calls #11 didn't settle:
+    Named *Revision Graph*, without the "(parterre)" #11 had, on your call of 2026-09-26: the
+    icon says whose it is. Calls #11 didn't settle:
     - **Windows 11 shows it under *Show more options*.** At the top level it would need an
       `IExplorerCommand` handler and package identity (MSIX or a sparse package), as #11 said.
     - **Every folder gets the entry**, in or out of a repository: a plain registry verb

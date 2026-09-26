@@ -24,7 +24,7 @@ yellow, the current branch red.)_
 Download the archive for your system from the
 [releases page](https://github.com/aquamoth/parterre/releases) and put `parterre` on your
 `PATH`. On Windows the `.msi` next to it does that for you, and adds a Start menu entry and
-*Revision graph (parterre)* to Explorer's context menu for folders; it installs for the
+*Revision Graph* to Explorer's context menu for folders; it installs for the
 current user without asking for admin rights. The Linux build needs glibc 2.35 or newer (Debian 12, Ubuntu 22.04 and later). With a
 Rust toolchain you can also install it from crates.io:
 

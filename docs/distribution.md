@@ -77,7 +77,7 @@ release. Switching to a git library (gitoxide) would be a large rewrite; see
 - **Scope:** dual-purpose, per-user by default and machine-wide with `ALLUSERS=1`, which
   Chocolatey passes.
 - **What it installs:** a Start menu shortcut and `parterre` on PATH, with no desktop
-  shortcut, and *Revision graph (parterre)* in Explorer's context menu for folders (#11).
+  shortcut, and *Revision Graph* in Explorer's context menu for folders (#11).
 - **winget:** unsigned installers are accepted. Every new package is reviewed by a moderator,
   typically in 1–3 weeks. Updates can be automated with komac, which needs a classic
   `public_repo` token. Fine-grained tokens don't work, so the token belongs to a machine

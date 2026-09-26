@@ -107,7 +107,7 @@ One MSI installs either way:
 | Explorer entry | `HKCU\Software\Classes\Directory\…` | `HKLM\Software\Classes\Directory\…` |
 | Registry (component key paths only) | `HKCU\Software\Trustfall AB\parterre` | `HKLM\Software\Trustfall AB\parterre` |
 
-The Explorer entry, *Revision graph (parterre)*, is a shell verb under `Directory\shell` (a
+The Explorer entry, *Revision Graph*, is a shell verb under `Directory\shell` (a
 folder) and `Directory\Background\shell` (the background of an open one), running
 `parterre.exe "%V"`; Windows 11 lists it under *Show more options*. Started that way parterre
 has no terminal, so a folder outside any repository opens the window with the error rather

@@ -71,7 +71,7 @@
                   Target="[INSTALLFOLDER]parterre.exe" WorkingDirectory="INSTALLFOLDER" />
       </Component>
 
-      <!-- "Revision graph (parterre)" in Explorer's context menu, on a folder and on the
+      <!-- "Revision Graph" in Explorer's context menu, on a folder and on the
            background of an open one, as TortoiseGit offers its revision graph. Plain shell verbs
            under HKMU\Software\Classes: the user's classes for a per-user install, the machine's
            for a machine-wide one. Windows 11 lists them under "Show more options"; a top-level
@@ -89,7 +89,7 @@
                        Type="integer" Value="1" KeyPath="yes" />
         <RegistryKey Root="HKMU" Key="Software\Classes\Directory\shell\parterre"
                      ForceDeleteOnUninstall="yes">
-          <RegistryValue Type="string" Value="Revision graph (parterre)" />
+          <RegistryValue Type="string" Value="Revision Graph" />
           <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]parterre.exe" />
           <RegistryValue Name="NoWorkingDirectory" Type="string" Value="" />
           <RegistryValue Name="MultiSelectModel" Type="string" Value="Single" />
@@ -98,7 +98,7 @@
         </RegistryKey>
         <RegistryKey Root="HKMU" Key="Software\Classes\Directory\Background\shell\parterre"
                      ForceDeleteOnUninstall="yes">
-          <RegistryValue Type="string" Value="Revision graph (parterre)" />
+          <RegistryValue Type="string" Value="Revision Graph" />
           <RegistryValue Name="Icon" Type="string" Value="[INSTALLFOLDER]parterre.exe" />
           <RegistryValue Name="NoWorkingDirectory" Type="string" Value="" />
           <RegistryValue Key="command" Type="string"
