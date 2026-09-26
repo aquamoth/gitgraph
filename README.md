@@ -47,6 +47,7 @@ parterre --look classic            # straight, unbundled edges like TortoiseGit
 parterre --hide 'pipeline/*,release/*'        # leave out build and release branches
 parterre --branch-color 'feature/*=#9b59b6'   # colour branches by name (repeatable)
 parterre --export graph.svg        # write an SVG without opening a window
+parterre --export graph.png --zoom 2   # or a PNG (or .webp), here at 200%
 parterre --help                    # all options
 ```
 
@@ -69,7 +70,7 @@ In the window:
 | Right-click a node | Show log; copy its hash, ref names or subject; select its subtree; return it to the layout |
 | `R` | Return all nodes to the layout |
 | `Esc` | Clear the selection |
-| `F5` | Reload the repository |
+| `F5` | Reload the repository (it also reloads by itself when branches, tags or HEAD change) |
 | `Ctrl+O` / `Ctrl+W` | Open / close a folder; the ☰ menu also lists the recent ones |
 | `Ctrl+,` | Settings |
 

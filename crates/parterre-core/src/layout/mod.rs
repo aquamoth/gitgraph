@@ -236,7 +236,7 @@ pub fn layout(input: &LayoutInput, options: &LayoutOptions) -> Layout {
     }
     let mut span_below = vec![0.0f32; layer_count];
     for (i, item) in graph.items.iter().enumerate() {
-        for &(below, _) in &item.down {
+        for &(below, _) in graph.down(i) {
             let dx = (u[i] - u[below as usize]).abs();
             span_below[item.layer as usize] = span_below[item.layer as usize].max(dx);
         }

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use parterre_core::recent::Recent;
 use parterre_core::{Oid, Repo};
 
+mod auto_reload;
 mod log_window;
 mod settings_window;
 mod toolbar;
@@ -23,6 +24,8 @@ pub use toolbar::popup_id;
 use settings_window::SettingsPage;
 
 use crate::automation::Automation;
+use crate::export::{self, Format};
+use crate::file_dialog::Pending;
 use crate::frame_pacing::FrameLimiter;
 use crate::menu;
 use crate::render::{self, Marks};
@@ -31,6 +34,13 @@ use crate::settings::{MOVES_KEY, RECENT_KEY, RememberedMoves, STORAGE_KEY, Setti
 use crate::system_theme::SystemTheme;
 use crate::theme::{Palette, ThemeChoice};
 use crate::view::View;
+
+/// What a file dialog is picking for.
+#[derive(Clone, Copy, Debug)]
+enum Picked {
+    Folder,
+    Export(Format),
+}
 
 #[derive(Clone, Copy, Debug)]
 enum Drag {
@@ -192,6 +202,8 @@ pub struct ParterreApp {
     recent: Recent,
     /// Show the folder picker at the end of this frame.
     pick_folder: bool,
+    /// The file dialog that is open, if any.
+    file_dialog: Option<Pending<Picked>>,
     /// The window title last set.
     title: String,
     settings: Settings,
@@ -223,8 +235,10 @@ pub struct ParterreApp {
     show_settings: bool,
     settings_page: SettingsPage,
     show_about: bool,
-    /// Path being edited in the "Export as SVG" dialog, when open.
-    export_path: Option<String>,
+    /// Show the save dialog for exporting in this format at the end of this frame.
+    export: Option<Format>,
+    /// The folder exported to last, where the save dialog starts next time.
+    export_dir: Option<PathBuf>,
     messages: Messages,
     /// The log window (Show log), and what it keeps while closed.
     log: log_window::LogWindow,
@@ -232,6 +246,11 @@ pub struct ParterreApp {
     focus_log: bool,
     /// Dragged nodes of every repository, kept when `remember_moves` is on.
     moves: RememberedMoves,
+    /// Moved nodes to put back in the next scene: after a reload, when `remember_moves` is
+    /// off.
+    carried_moves: Option<std::collections::HashMap<String, (f32, f32, bool)>>,
+    /// Reloads when the refs change, if `settings.auto_reload` is on.
+    watcher: Option<auto_reload::Watcher>,
     system_theme: SystemTheme,
     /// The theme last given to the window (its title bar), if any.
     window_theme: Option<egui::SystemTheme>,
@@ -315,6 +334,7 @@ impl ParterreApp {
             repo: repo.map(Arc::new),
             recent,
             pick_folder: false,
+            file_dialog: None,
             settings,
             persist,
             scene: None,
@@ -338,11 +358,14 @@ impl ParterreApp {
             show_settings: demo_settings.is_some(),
             settings_page: demo_settings.unwrap_or_default(),
             show_about: false,
-            export_path: None,
+            export: None,
+            export_dir: None,
             messages: Messages::default(),
             log: log_window::LogWindow::default(),
             focus_log: false,
             moves,
+            carried_moves: None,
+            watcher: None,
             system_theme: SystemTheme::watch(&cc.egui_ctx),
             window_theme: None,
             settings_window_theme: None,
@@ -446,14 +469,17 @@ impl ParterreApp {
         Some(self.repo.as_ref()?.path.display().to_string())
     }
 
-    /// Puts remembered nodes back where they were in a freshly laid-out scene.
+    /// Puts remembered nodes, or those carried over a reload, back where they were in a
+    /// freshly laid-out scene.
     fn restore_moves(&mut self) {
-        if !self.settings.remember_moves {
-            return;
-        }
-        let Some(moves) = self.repo_key().and_then(|key| self.moves.get(&key)) else {
-            return;
+        let carried = self.carried_moves.take();
+        let moves = if self.settings.remember_moves {
+            self.repo_key()
+                .and_then(|key| self.moves.get(&key).cloned())
+        } else {
+            carried
         };
+        let Some(moves) = moves else { return };
         let Some(scene) = &mut self.scene else { return };
         let saved: Vec<_> = moves
             .iter()
@@ -471,13 +497,10 @@ impl ParterreApp {
         scene.net.restore(saved);
     }
 
-    /// Records where the current scene's nodes rest, for this repository.
-    fn record_moves(&mut self) {
-        if !self.settings.remember_moves {
-            return;
-        }
-        let Some(scene) = &self.scene else { return };
-        let offsets: std::collections::HashMap<String, (f32, f32, bool)> = scene
+    /// Where the current scene's moved nodes rest, by commit.
+    fn rest_offsets(&self) -> Option<std::collections::HashMap<String, (f32, f32, bool)>> {
+        let scene = self.scene.as_ref()?;
+        let offsets = scene
             .net
             .rest_offsets()
             .map(|(node, d, by_hand)| {
@@ -491,6 +514,17 @@ impl ParterreApp {
                 )
             })
             .collect();
+        Some(offsets)
+    }
+
+    /// Records where the current scene's nodes rest, for this repository.
+    fn record_moves(&mut self) {
+        if !self.settings.remember_moves {
+            return;
+        }
+        let Some(offsets) = self.rest_offsets() else {
+            return;
+        };
         let Some(key) = self.repo_key() else { return };
         if offsets.is_empty() {
             self.moves.remove(&key);
@@ -560,12 +594,57 @@ impl ParterreApp {
         Some((oid(edge.child), oid(edge.parent)))
     }
 
-    fn open_export(&mut self) {
-        let Some(repo) = &self.repo else { return };
-        let default = std::env::current_dir()
-            .unwrap_or_default()
-            .join(format!("{}-parterre.svg", repo.display_name()));
-        self.export_path = Some(default.display().to_string());
+    /// The save dialog for exporting the whole graph in `format`, as TortoiseGit's "Save graph
+    /// as" does; `None` if there is nothing to export yet.
+    fn export_dialog(
+        &mut self,
+        format: Format,
+        frame: &eframe::Frame,
+    ) -> Option<rfd::AsyncFileDialog> {
+        let (Some(repo), Some(_)) = (&self.repo, &self.scene) else {
+            self.status = Some(("Nothing to export yet".into(), true));
+            return None;
+        };
+        let ext = format.extension();
+        let kind = format.name();
+        let mut dialog = rfd::AsyncFileDialog::new()
+            .set_title(format!("Export the graph as {kind}"))
+            .set_parent(frame)
+            .add_filter(format!("{kind} image"), &[ext])
+            .set_file_name(format!("{}.{ext}", repo.display_name()));
+        // Start where the last export went, or next to the repository.
+        if let Some(dir) = self.export_dir.as_deref().or_else(|| repo.path.parent()) {
+            dialog = dialog.set_directory(dir);
+        }
+        Some(dialog)
+    }
+
+    /// Writes the whole graph to `path` in `format`. PNG is drawn at the current zoom, as in
+    /// TortoiseGit, and with the display's pixels per point, so it looks as on screen.
+    fn export(&mut self, format: Format, mut path: PathBuf, ctx: &egui::Context) {
+        let Some(scene) = &self.scene else { return };
+        // A name typed without the extension, or with another one, gets it added.
+        if path.extension().is_none() || Format::from_path(&path) != Some(format) {
+            let mut name = path.file_name().unwrap_or_default().to_owned();
+            name.push(format!(".{}", format.extension()));
+            path.set_file_name(name);
+        }
+        self.export_dir = path.parent().map(Path::to_owned);
+        let zoom = match format {
+            Format::Svg => 1.0,
+            Format::Png | Format::WebP => self.view.zoom,
+        };
+        let palette = Palette::new(
+            ctx.global_style().visuals.dark_mode,
+            &self.settings.branch_colors,
+        );
+        let ppp = ctx.pixels_per_point();
+        self.status = Some(
+            match export::write(&path, scene, &self.settings, &palette, zoom, ppp) {
+                Ok(what) => (format!("Saved {} ({what})", path.display()), false),
+                Err(e) => (format!("Could not save {}: {e}", path.display()), true),
+            },
+        );
     }
 
     /// Opens the repository containing `dir` in place of the one shown. On failure the one
@@ -606,16 +685,16 @@ impl ParterreApp {
         self.search.hits.clear();
         self.search.current = None;
         self.status = None;
-        self.export_path = None;
+        self.export = None;
         // Its worker thread asks the old repository's git; dropping it ends the thread.
         self.messages = Messages::default();
         // The log shows the old repository's history.
         self.log.close();
     }
 
-    /// Shows the folder picker, then opens what was picked. It blocks until closed.
-    fn pick_folder(&mut self, frame: &eframe::Frame) {
-        let mut dialog = rfd::FileDialog::new()
+    /// The folder picker for opening a repository.
+    fn folder_dialog(&self, frame: &eframe::Frame) -> rfd::AsyncFileDialog {
+        let mut dialog = rfd::AsyncFileDialog::new()
             .set_title("Open a git repository")
             .set_parent(frame);
         // Start next to the repository shown, or the one opened last.
@@ -627,8 +706,34 @@ impl ParterreApp {
         if let Some(dir) = near.and_then(Path::parent) {
             dialog = dialog.set_directory(dir);
         }
-        if let Some(dir) = dialog.pick_folder() {
-            self.open_folder(&dir);
+        dialog
+    }
+
+    /// Opens a requested file dialog, and acts on the answer of the one that was open. Only
+    /// one is open at a time; requests made meanwhile are dropped.
+    fn file_dialogs(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        let (folder, export) = (std::mem::take(&mut self.pick_folder), self.export.take());
+        if let Some(pending) = &self.file_dialog {
+            let Some(answer) = pending.answer() else {
+                return;
+            };
+            let what = pending.what;
+            self.file_dialog = None;
+            match (what, answer) {
+                (Picked::Folder, Some(dir)) => self.open_folder(&dir),
+                (Picked::Export(format), Some(path)) => self.export(format, path, ctx),
+                (_, None) => {}
+            }
+            return;
+        }
+        if folder {
+            let dialog = self.folder_dialog(frame).pick_folder();
+            self.file_dialog = Some(Pending::start(Picked::Folder, dialog, ctx));
+        } else if let Some(format) = export
+            && let Some(dialog) = self.export_dialog(format, frame)
+        {
+            let what = Picked::Export(format);
+            self.file_dialog = Some(Pending::start(what, dialog.save_file(), ctx));
         }
     }
 
@@ -638,16 +743,54 @@ impl ParterreApp {
         };
         match parterre_core::git::load_repo(&path) {
             Ok(repo) => {
-                // The scene on screen keeps its own snapshot until the new layout replaces it;
-                // the selection is carried over by commit id.
-                self.pending_select = self.selected_commits();
-                let repo = Arc::new(repo);
-                self.log.reload(&repo);
-                self.repo = Some(repo);
-                self.requested = None;
-                self.status = Some(("Reloaded".into(), false));
+                self.install_reloaded(repo, "Reloaded");
+                // Anything the watcher has loaded meanwhile may be older than this.
+                self.watcher = None;
             }
             Err(e) => self.status = Some((format!("Reload failed: {e}"), true)),
+        }
+    }
+
+    /// Shows a newer snapshot of the same repository. The scene on screen keeps its own
+    /// snapshot until the new layout replaces it; the selection and moved nodes are carried
+    /// over by commit id.
+    fn install_reloaded(&mut self, repo: Repo, status: &str) {
+        self.pending_select = self.selected_commits();
+        if !self.settings.remember_moves {
+            self.carried_moves = self.rest_offsets();
+        }
+        let repo = Arc::new(repo);
+        self.log.reload(&repo);
+        self.repo = Some(repo);
+        self.requested = None;
+        self.status = Some((status.into(), false));
+    }
+
+    /// Starts or stops watching the repository shown, and shows what the watcher loaded once
+    /// no drag is going on.
+    fn auto_reload(&mut self, ctx: &egui::Context) {
+        let path = match &self.repo {
+            Some(repo) if self.settings.auto_reload => repo.path.clone(),
+            _ => {
+                self.watcher = None;
+                return;
+            }
+        };
+        if self.watcher.as_ref().is_none_or(|w| w.path() != path) {
+            self.watcher = Some(auto_reload::Watcher::start(&path, ctx));
+        }
+        if self.drag.is_some() {
+            return;
+        }
+        let Some(repo) = self.watcher.as_ref().and_then(auto_reload::Watcher::take) else {
+            return;
+        };
+        if !self
+            .repo
+            .as_ref()
+            .is_some_and(|shown| shown.same_refs(&repo))
+        {
+            self.install_reloaded(repo, "Reloaded: the refs changed");
         }
     }
 
@@ -880,7 +1023,7 @@ impl ParterreApp {
                 }
                 if let Some(sel) = self.selection.current() {
                     let commit = scene.repo.commit(scene.graph.nodes[sel].commit);
-                    ui.monospace(commit.oid.short(10));
+                    ui.monospace(commit.oid.short(scene.repo.abbrev_len));
                     ui.label(format!(
                         "{} — {}, {}",
                         commit.subject, commit.author_name, commit.author_date
@@ -1284,7 +1427,7 @@ impl ParterreApp {
                 for c in &hidden {
                     let commit = scene.repo.commit(*c);
                     ui.horizontal(|ui| {
-                        ui.monospace(commit.oid.short(8));
+                        ui.monospace(commit.oid.short(scene.repo.abbrev_len));
                         ui.label(&commit.subject);
                     });
                 }
@@ -1438,45 +1581,6 @@ impl ParterreApp {
         {
             let target = world.center() + (p - rect.center()) / scale;
             self.view.show_at(canvas, target, vec2(0.5, 0.5));
-        }
-    }
-
-    fn export_window(&mut self, ctx: &egui::Context) {
-        let Some(path) = &mut self.export_path else {
-            return;
-        };
-        let mut open = true;
-        let mut save = false;
-        egui::Window::new("Export as SVG")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.label("The whole graph is written at 100%, as currently arranged.");
-                let resp = ui.add(egui::TextEdit::singleline(path).desired_width(420.0));
-                save = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                save |= ui.button("Save").clicked();
-            });
-        if save {
-            let path = PathBuf::from(path.trim());
-            let palette = Palette::new(
-                ctx.global_style().visuals.dark_mode,
-                &self.settings.branch_colors,
-            );
-            self.status = Some(match &self.scene {
-                Some(scene) => match std::fs::write(
-                    &path,
-                    crate::export::to_svg(scene, &self.settings, &palette),
-                ) {
-                    Ok(()) => (format!("Saved {}", path.display()), false),
-                    Err(e) => (format!("Could not save {}: {e}", path.display()), true),
-                },
-                None => ("Nothing to export yet".into(), true),
-            });
-            open = false;
-        }
-        if !open {
-            self.export_path = None;
         }
     }
 
@@ -1677,7 +1781,11 @@ fn node_name(scene: &Scene, node: u32) -> String {
     let node = &scene.graph.nodes[node as usize];
     match node.refs.first() {
         Some(&r) => scene.repo.refs[r].name.clone(),
-        None => scene.repo.commit(node.commit).oid.short(8),
+        None => scene
+            .repo
+            .commit(node.commit)
+            .oid
+            .short(scene.repo.abbrev_len),
     }
 }
 
@@ -1733,6 +1841,7 @@ impl eframe::App for ParterreApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.title = title;
         }
+        self.auto_reload(&ctx);
         self.ensure_scene(&ctx);
         self.handle_keys(&ctx);
 
@@ -1755,7 +1864,6 @@ impl eframe::App for ParterreApp {
         self.settings_window(&ctx);
         self.log_window(&ctx);
         self.about_window(&ctx);
-        self.export_window(&ctx);
 
         // Scripted runs wait for the graph, unless there is none to wait for.
         if self.scene.is_some() || self.repo.is_none() {
@@ -1768,10 +1876,7 @@ impl eframe::App for ParterreApp {
             );
         }
 
-        // Last, as the dialog holds up the frame until it closes.
-        if std::mem::take(&mut self.pick_folder) {
-            self.pick_folder(frame);
-        }
+        self.file_dialogs(&ctx, frame);
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {

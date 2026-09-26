@@ -6,18 +6,34 @@ use super::LayoutInput;
 /// Upper bound on dummy items; see [`LayeredGraph::build`].
 const MAX_DUMMIES: u64 = 3_000_000;
 
-/// A node or an edge dummy placed in one layer.
-#[derive(Clone, Debug)]
+/// A node or an edge dummy placed in one layer. Its neighbours are
+/// [`LayeredGraph::up`] and [`LayeredGraph::down`].
+#[derive(Clone, Copy, Debug)]
 pub struct Item {
     pub layer: u32,
     /// Extent along the layer.
     pub breadth: f32,
     /// True for a bend point of a long edge rather than a real node.
     pub dummy: bool,
-    /// Neighbours in the layer above (newer) and below (older), with edge weights.
-    pub up: Vec<(u32, f32)>,
-    pub down: Vec<(u32, f32)>,
 }
+
+/// A list per item, stored flat: item `i`'s is `list[start[i]..start[i + 1]]`. All-commits
+/// views of big repositories have millions of dummies; a pair of `Vec`s per item cost 48 bytes
+/// plus two heap blocks each, which the allocator mostly kept after the layout.
+#[derive(Clone, Debug)]
+struct Flat<T> {
+    start: Vec<u32>,
+    list: Vec<T>,
+}
+
+impl<T> Flat<T> {
+    fn get(&self, item: usize) -> &[T] {
+        &self.list[self.start[item] as usize..self.start[item + 1] as usize]
+    }
+}
+
+/// Neighbours of every item in one direction, with edge weights.
+type Adjacency = Flat<(u32, f32)>;
 
 #[derive(Clone, Debug)]
 pub struct LayeredGraph {
@@ -30,6 +46,17 @@ pub struct LayeredGraph {
     pub pos: Vec<u32>,
     /// For every input edge, the dummy items it passes through, from child to parent.
     pub chains: Vec<Vec<u32>>,
+    /// Neighbours in the layer above (newer) and below (older).
+    up: Adjacency,
+    down: Adjacency,
+}
+
+/// One segment of an edge, between items in adjacent layers, with its weight.
+#[derive(Clone, Copy, Debug)]
+struct Segment {
+    upper: u32,
+    lower: u32,
+    weight: f32,
 }
 
 /// Weight of an edge segment in coordinate assignment: long edges (dummy-to-dummy) are kept
@@ -60,11 +87,10 @@ impl LayeredGraph {
                 layer: layers[i],
                 breadth: breadth[i],
                 dummy: false,
-                up: Vec::new(),
-                down: Vec::new(),
             })
             .collect();
         let mut chains = Vec::with_capacity(input.edges.len());
+        let mut segments: Vec<Segment> = Vec::new();
         // Safety valve for pathological inputs: if routing every edge through every layer would
         // need more than MAX_DUMMIES bend points, the longest edges get none and are drawn as
         // direct lines.
@@ -120,8 +146,6 @@ impl LayeredGraph {
                             layer,
                             breadth: edge_gap,
                             dummy: true,
-                            up: Vec::new(),
-                            down: Vec::new(),
                         });
                         if concentrate {
                             shared.insert((p as u32, layer), d);
@@ -129,12 +153,12 @@ impl LayeredGraph {
                         d
                     }
                 };
-                link(&mut items, prev, d, e.first_parent);
+                segments.push(segment(&items, prev, d, e.first_parent));
                 chain.push(d);
                 prev = d;
             }
             if layers[p] > layers[c] {
-                link(&mut items, prev, p as u32, e.first_parent);
+                segments.push(segment(&items, prev, p as u32, e.first_parent));
             }
             chains.push(chain);
         }
@@ -144,15 +168,31 @@ impl LayeredGraph {
         for (i, item) in items.iter().enumerate() {
             by_layer[item.layer as usize].push(i as u32);
         }
+        merge_repeats(&mut segments, items.len());
+        let down = compress(items.len(), &segments, |s| (s.upper, s.lower));
+        let up = compress(items.len(), &segments, |s| (s.lower, s.upper));
+        drop(segments);
         let mut g = LayeredGraph {
             pos: vec![0; items.len()],
             items,
             node_count: n,
             layers: by_layer,
             chains,
+            up,
+            down,
         };
         g.update_positions();
         g
+    }
+
+    /// Neighbours of `item` in the layer above (newer), with edge weights.
+    pub fn up(&self, item: usize) -> &[(u32, f32)] {
+        self.up.get(item)
+    }
+
+    /// Neighbours of `item` in the layer below (older), with edge weights.
+    pub fn down(&self, item: usize) -> &[(u32, f32)] {
+        self.down.get(item)
     }
 
     /// Recomputes `pos` from `layers`.
@@ -165,36 +205,82 @@ impl LayeredGraph {
     }
 }
 
-fn link(items: &mut [Item], upper: u32, lower: u32, first_parent: bool) {
-    // Concentrated edges share segments; link each pair only once (keeping the heavier weight).
-    if let Some(existing) = items[upper as usize]
-        .down
-        .iter()
-        .position(|&(d, _)| d == lower)
-    {
-        let w = segment_weight(
+fn segment(items: &[Item], upper: u32, lower: u32, first_parent: bool) -> Segment {
+    Segment {
+        upper,
+        lower,
+        weight: segment_weight(
             first_parent,
             items[upper as usize].dummy,
             items[lower as usize].dummy,
-        );
-        let (_, old) = items[upper as usize].down[existing];
-        if w > old {
-            items[upper as usize].down[existing].1 = w;
-            if let Some(u) = items[lower as usize]
-                .up
-                .iter_mut()
-                .find(|(u, _)| *u == upper)
+        ),
+    }
+}
+
+/// Concentrated edges share segments, and parallel edges their only one: keeps the first of
+/// every repeated (upper, lower) pair, with the heaviest weight, and drops the rest.
+fn merge_repeats(segments: &mut Vec<Segment>, item_count: usize) {
+    // Segment indices grouped by upper item, in order.
+    let by_upper = compress_with(item_count, segments.len(), |emit| {
+        for (k, s) in segments.iter().enumerate() {
+            emit(s.upper, k as u32);
+        }
+    });
+    let mut keep = vec![true; segments.len()];
+    for item in 0..item_count {
+        let group = by_upper.get(item);
+        for (j, &k) in group.iter().enumerate() {
+            let lower = segments[k as usize].lower;
+            if let Some(&first) = group[..j]
+                .iter()
+                .find(|&&f| keep[f as usize] && segments[f as usize].lower == lower)
             {
-                u.1 = w;
+                let w = segments[k as usize].weight;
+                let kept = &mut segments[first as usize];
+                if w > kept.weight {
+                    kept.weight = w;
+                }
+                keep[k as usize] = false;
             }
         }
-        return;
     }
-    let w = segment_weight(
-        first_parent,
-        items[upper as usize].dummy,
-        items[lower as usize].dummy,
-    );
-    items[upper as usize].down.push((lower, w));
-    items[lower as usize].up.push((upper, w));
+    let mut keep = keep.into_iter();
+    segments.retain(|_| keep.next() == Some(true));
+}
+
+/// Neighbour lists from segments: `ends` gives (item, neighbour) of each. Every list keeps
+/// the segments' order.
+fn compress(
+    item_count: usize,
+    segments: &[Segment],
+    ends: impl Fn(&Segment) -> (u32, u32),
+) -> Adjacency {
+    compress_with(item_count, segments.len(), |emit| {
+        for s in segments {
+            let (item, neighbour) = ends(s);
+            emit(item, (neighbour, s.weight));
+        }
+    })
+}
+
+/// Stable counting sort of the entries that `each` emits (twice: once to count them, once to
+/// place them) by item.
+fn compress_with<T: Copy + Default>(
+    item_count: usize,
+    len: usize,
+    each: impl Fn(&mut dyn FnMut(u32, T)),
+) -> Flat<T> {
+    let mut start = vec![0u32; item_count + 1];
+    each(&mut |item, _| start[item as usize + 1] += 1);
+    for i in 0..item_count {
+        start[i + 1] += start[i];
+    }
+    let mut next = start.clone();
+    let mut list = vec![T::default(); len];
+    each(&mut |item, value| {
+        let slot = &mut next[item as usize];
+        list[*slot as usize] = value;
+        *slot += 1;
+    });
+    Flat { start, list }
 }

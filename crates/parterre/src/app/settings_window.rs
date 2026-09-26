@@ -242,6 +242,12 @@ impl ParterreApp {
                      parallel.",
                     &mut s.layout.concentrate_edges,
                 );
+                rows.switch(
+                    "Reload automatically",
+                    "Reload when a commit, checkout or fetch outside parterre changes the \
+                     branches, tags or HEAD. F5 reloads by hand.",
+                    &mut s.auto_reload,
+                );
                 rows.switch("Stash", STASH_TIP, &mut s.graph.show_stash);
                 rows.switch(
                     "Other refs",

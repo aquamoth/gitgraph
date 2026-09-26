@@ -15,6 +15,7 @@ use parterre_core::recent::same_path;
 use parterre_core::revgraph::Simplification;
 
 use super::{ParterreApp, SettingsPage};
+use crate::export::Format;
 use crate::menu::{self, Mark};
 use crate::widgets::{self, tip, tip_explained};
 
@@ -391,12 +392,22 @@ impl ParterreApp {
         if reload.inner.clicked() {
             self.reload();
         }
-        let export = ui.add_enabled_ui(has_repo, |ui| {
-            menu::item(ui, "Export as SVG…", "", Mark::None)
-        });
-        if export.inner.clicked() {
-            self.open_export();
+        let auto = self.settings.auto_reload;
+        if menu::item(ui, "Reload automatically", "", Mark::Check(auto)).clicked() {
+            self.settings.auto_reload = !auto;
         }
+        // One item per format rather than a file-type list in the save dialog: rfd doesn't say
+        // which type was picked, and macOS shows no list at all.
+        ui.add_enabled_ui(has_repo, |ui| {
+            menu::submenu(ui, "Export", |ui| {
+                for format in Format::ALL {
+                    let label = format!("{}…", format.name());
+                    if menu::item(ui, &label, "", Mark::None).clicked() {
+                        self.export = Some(format);
+                    }
+                }
+            });
+        });
         menu::separator(ui);
 
         // In the toolbar's order.

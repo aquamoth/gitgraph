@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 22._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 24._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -105,12 +105,14 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     - Loading takes 0.6 s.
     - "Labelled commits" (3.6k nodes) lays out in 0.15 s, "Branchings and merges" (7.3k nodes)
       in 0.2 s.
-    - "All commits" takes 2.8 s on a background thread, because long-lived branches create
-      1.5M bend points. Peak memory is then about 880 MB.
+    - "All commits" takes 1.5–2 s on a background thread, because long-lived branches create
+      1.5M bend points. Peak memory is then about 740 MB (was 2.8 s and 900 MB before the
+      layout and the drag net stored their neighbour lists flat, 2026-09-26). About 200 MB of
+      that is the window itself, as for any repository; most of the rest is the drag net.
     - Dragging runs at 8 ms per frame.
 
-    Is 2.8 s and 880 MB for the all-commits view of a 100k repo acceptable, or worth more
-    work? (Apps, at 15k commits, needs 0.2 s.)
+    Is 2 s and 740 MB for the all-commits view of a 100k repo acceptable, or worth more
+    work? (Apps, at 15k commits, needs 0.2 s and about 210 MB, 150 MB in "Labelled commits".)
 12. **Releases** (`docs/releasing.md`). Decisions you may want to overrule:
     - **Version in the UI:** besides `--version`, the ☰ menu ends with a greyed
       `parterre 0.3.0 (a1b2c3d)` line, for users who start parterre from a file manager or
@@ -267,46 +269,62 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       parterre under *Open With* for folders, but some desktops then make it the default
       folder handler (VS Code had that bug), so it needs trying on GNOME and KDE first.
 
+22. **Reloading automatically** (from the planned list, 2026-09-26). TortoiseGit reloads
+    only on F5; parterre now also reloads by itself when the branches, tags or HEAD change, as
+    after a commit, checkout or fetch in another program. Decisions you may want to overrule:
+    - **On by default.** ☰ → *Reload automatically* and *Settings → Graph* turn it off.
+    - **How it notices:** every second it looks at the files git keeps refs in (`HEAD`,
+      `packed-refs`, `refs/`, reftable), without running git and without a file-watching
+      crate. Only when they change, and have stayed unchanged for 0.3 s (so a rebase is loaded
+      once, at its end), is the repository loaded again, on a worker thread. If refs and HEAD
+      turn out the same (`git gc`, `git pack-refs`), nothing happens.
+    - **Not during a drag:** a reload waits until the node is dropped.
+    - **Moved nodes survive a reload,** also on F5, even with *Remember moved nodes* off. Before,
+      F5 put every node back into the layout. Undo history does not survive.
+    - The status bar says "Reloaded: the refs changed".
+
+23. **PNG export.** ☰ → *Export* → *SVG…* or *PNG…* opens the system's save dialog, as
+    TortoiseGit's "Save graph as..." does. Calls you may want to overrule:
+    - **A submenu** rather than a file-type list in the save dialog (your request of
+      2026-09-26: not two *Export* items). Such a list only works on Windows: rfd merges the
+      types into one allowed list on macOS, which shows no list, and on Linux it never says
+      which type was picked, while GNOME doesn't change the name's extension to match. A name
+      without the right extension gets it added. The dialog starts in the folder exported to
+      last, else next to the repository.
+    - **Current zoom,** as in TortoiseGit, times the display scale (2 on a HiDPI screen), so
+      the PNG looks as the window does. Zoomed out, labels under 4 px are left out, as on
+      screen. SVG stays at 100%. `--export out.png` draws at 100%, or at `--zoom`. The status
+      bar says the size and zoom after saving.
+    - **Limits:** at most 100 megapixels and 65,535 px a side. A bigger graph is scaled down
+      to fit, and the status bar says so, instead of failing (TortoiseGit says "not enough
+      memory" when Windows can't make the bitmap). On Apps, "Labelled commits" fits at 100%
+      in both looks (Classic: 24,232 × 3,745 px, 2.4 s); "Branchings and merges" comes out at
+      61%, and "All commits" at 10%, too small to read. Drawing holds the whole image in
+      memory (300 MB at the limit). Writing the PNG in bands would lift the limit, but needs
+      the `png` crate directly (already built, as `image` uses it).
+    - **Background:** the theme's, opaque. No transparent PNG.
+    - **WebP** too (your request of 2026-09-26), which TortoiseGit doesn't write: lossless
+      only (the encoder has no lossy mode), the same pixels as PNG in a file about 40%
+      smaller (Apps: 1.0 against 1.8 MB). WebP allows at most 16,383 px a side, so Apps in
+      the Classic look comes out at 68%. Adds the `image-webp` crate, +320 KB.
+    - **Other formats:** no JPEG (+255 KB; blurry fringes round the labels, often bigger
+      than the PNG), BMP or GIF, which TortoiseGit also writes. `--export` refuses other
+      extensions; before, it wrote SVG whatever the name. A name without an extension still
+      gets SVG.
+
 ## Planned
 
-- [x] Show log window, as planned in the map *Revision-graph node menu: roadmap to TortoiseGit
-      parity* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
-      from TortoiseGit (decided in #28): when the second of two selected nodes is an ancestor
-      of the first, the two are swapped instead of showing an empty list.
-  - [x] Layout A (stacked) and its entry points: *Show log* first in the node menu, `L` and
-        double-click ([#39](https://github.com/aquamoth/parterre/issues/39); see question 20).
-  - [x] Layouts B, C and D, the layout picker (in the window's header and in *Settings →
-        Appearance*) and reset, and the layout and divider positions per layout saved with the
-        settings ([#40](https://github.com/aquamoth/parterre/issues/40); see question 19).
-- [x] Wayland freeze ([#38](https://github.com/aquamoth/parterre/issues/38)). On Wayland the
-      whole app froze when one of its windows was minimized while another was open; it
-      happened with Settings already. Worked around (see `frame_pacing.rs`, and
-      `docs/research/wayland-viewport-freeze.md` on the branch
-      `research/wayland-viewport-freeze`): on Wayland only, vsync off and frames capped at about
-      8 ms. Not verified on Wayland after the change (no headless Wayland to test with).
-  - [ ] **Check regularly, and on every eframe upgrade, whether the upstream fix has shipped:**
-        <https://github.com/emilk/egui/pull/8631> (bug:
-        <https://github.com/emilk/egui/issues/5145>). Once it is in a released eframe, remove
-        the frame cap and turn vsync back on.
-- [ ] Short hashes in the graph as long as git makes them for the repository (`core.abbrev`
-      auto: 9 on Apps), as the log window will. Today the graph uses a fixed 8, and 10 in one
-      place.
-- [x] Settings window without minimize and maximize buttons. It is a dialog, and maximizing it
-      breaks its layout. Asked of winit, which (0.30) does this on Windows and macOS only. On
-      Linux it ignores the request: there the window loses only its maximize button, because it
-      can't be resized (winit's own Wayland title bar, as on GNOME, leaves maximize out, and X11
-      window managers get a "not maximizable" hint), and minimize stays. Not checked by hand on
-      any platform.
+- [ ] Wayland freeze workaround (#38, see Done). **Check regularly, and on every eframe
+      upgrade, whether the upstream fix has shipped:**
+      <https://github.com/emilk/egui/pull/8631> (bug:
+      <https://github.com/emilk/egui/issues/5145>). Once it is in a released eframe, remove
+      the frame cap and turn vsync back on.
 - [ ] Toolbar merged into the title bar, with ☰, the repository name and the window buttons in
       one row (wanted 2026-09-26, postponed as too big a change for now). Native on macOS
       (content under a transparent title bar, the traffic lights stay). Elsewhere parterre
       would draw its own title bar: moving, resizing and double-click to maximise by hand; no
       Windows 11 snap-layout popup; on GNOME no compositor shadow. See the "Title bar: merged"
       toggle in the prototype on the branch `prototype/menus`.
-- [ ] PNG export: SVG exists; TortoiseGit also offers raster formats.
-- [ ] Reload automatically when refs change; TortoiseGit only reloads on F5.
-- [ ] Tooltip on edges showing the collapsed commits.
-- [ ] Less memory for all-commits views of huge repositories (compact adjacency).
 - [ ] Distribution, as decided in `docs/distribution.md`: crates.io (#13), Windows MSI (#15),
       winget (#16), Chocolatey (#17), .deb and .rpm (#18), Snap (#19), publishing behind one
       approval (#20), Flathub later (#21). The MSI (#15) is built by CI and attached to
@@ -314,9 +332,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] Explorer context menu (#11; see question 21).
 - [ ] macOS `.app` bundle, so the Dock shows `packaging/icon/parterre.icns`; the release ships
       a bare binary, which gets the generic icon.
-- [ ] After some sequences of drags, undo and redo, a reset leaves an edge with a route of
-      its own. `physics_random_drags` finds one with seed 31337 (iteration 247), on main before
-      the child-above-parent ordering was merged too.
 - [ ] Open GitHub PRs in the graph (`docs/research/github-forks-and-pull-requests.md`, §12,
       §14). TortoiseGit has no such feature.
   - [ ] Slice 1: PR-icon tags on nodes whose commit is a PR head, opening the PR in the browser;
@@ -424,3 +439,43 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] A menu or popover taller than the window scrolls, with a visible thin scroll bar, instead
       of being cut off at the bottom; one that fits but not below its button slides up to the
       window's bottom edge, as before.
+- [x] Show log window, as planned in the map *Revision-graph node menu: roadmap to TortoiseGit
+      parity* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
+      from TortoiseGit (decided in #28): when the second of two selected nodes is an ancestor
+      of the first, the two are swapped instead of showing an empty list.
+  - [x] Layout A (stacked) and its entry points: *Show log* first in the node menu, `L` and
+        double-click ([#39](https://github.com/aquamoth/parterre/issues/39); see question 20).
+  - [x] Layouts B, C and D, the layout picker (in the window's header and in *Settings →
+        Appearance*) and reset, and the layout and divider positions per layout saved with the
+        settings ([#40](https://github.com/aquamoth/parterre/issues/40); see question 19).
+- [x] Wayland freeze ([#38](https://github.com/aquamoth/parterre/issues/38)). On Wayland the
+      whole app froze when one of its windows was minimized while another was open; it
+      happened with Settings already. Worked around (see `frame_pacing.rs`, and
+      `docs/research/wayland-viewport-freeze.md` on the branch
+      `research/wayland-viewport-freeze`): on Wayland only, vsync off and frames capped at about
+      8 ms. Not verified on Wayland after the change (no headless Wayland to test with).
+- [x] Settings window without minimize and maximize buttons. It is a dialog, and maximizing it
+      breaks its layout. Asked of winit, which (0.30) does this on Windows and macOS only. On
+      Linux it ignores the request: there the window loses only its maximize button, because it
+      can't be resized (winit's own Wayland title bar, as on GNOME, leaves maximize out, and X11
+      window managers get a "not maximizable" hint), and minimize stays. Not checked by hand on
+      any platform.
+- [x] Reloading automatically when a commit, checkout or fetch outside parterre changes the
+      refs or HEAD (question 22); TortoiseGit reloads only on F5. The ref files are looked at
+      every second, without running git; moved nodes and the selection survive a reload.
+- [x] Short hashes in the graph as long as git makes them for the repository (`core.abbrev`,
+      9 on Apps), like the log window: node labels, tooltips, the status bar and the SVG
+      export. Deliberate deviation from TortoiseGit, which always shows 8.
+- [x] A reset no longer leaves an edge with a route of its own. An edge re-routed round a node
+      was looked at again only when the node's new place touched the new route, so a node that
+      jumped clear in one frame, or that covered the layout route away from the new one, left
+      it routed. Now the node's old place counts too, and the layout route as well as the new
+      one. `physics_random_drags` takes `PHYSICS_SEED` and `PHYSICS_ITERS`.
+- [x] Less memory for all-commits views of huge repositories (compact adjacency): the layout's
+      and the drag net's neighbour lists are stored flat, which took the 100k-commit
+      all-commits view from 900 to 740 MB and its layout from about 3 s to 2 s. What is left
+      is mostly the drag net (about 170 bytes for each of 1.6M particles); question 11.
+- [x] PNG and WebP export (question 23): ☰ → *Export* → *PNG…* or *WebP…*, and
+      `--export out.png` or `out.webp` (with `--zoom`). Drawn by the window's own painting
+      code, rasterised without a GPU, so labels look as on screen. Every export now uses the
+      system's save dialog instead of a path field.
