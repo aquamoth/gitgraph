@@ -276,6 +276,18 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
   - [ ] Optional: honour git's `encoding` attribute (the one gitk uses) to decode non-UTF-8
         files, e.g. with `encoding_rs` (+191 KiB, 4 crates). Until then, invalid UTF-8 shows
         as `\xNN` ([#44](https://github.com/aquamoth/parterre/issues/44)).
+  - [x] File diff core, diff window, selection and copying lines
+        ([#51](https://github.com/aquamoth/parterre/issues/51),
+        [#52](https://github.com/aquamoth/parterre/issues/52),
+        [#53](https://github.com/aquamoth/parterre/issues/53)). Deliberate deviations from
+        TortoiseGit (TortoiseGitMerge), decided in #45 and #46:
+    - unchanged stretches are folded by default (TortoiseGitMerge's "Collapse" is off);
+    - line endings count by default, and "Ignore whitespace changes" ignores them too, with a
+      note saying so (TortoiseGitMerge ignores line endings by default, silently);
+    - changed words pair each removed line with the most similar added line, and the
+      pairing can be switched (TortoiseGitMerge compares lines by position only);
+    - the change marks live in an overview strip on the right, not a locator bar on the
+      left; it scrolls on click, as the locator bar does.
   - [ ] Stretch goal: wrap long lines, as a toggle in the diff window's toolbar. Until then
         long lines scroll sideways ([#45](https://github.com/aquamoth/parterre/issues/45)).
   - [ ] Optional: find in a diff window (Ctrl+F), and free text selection. The first version

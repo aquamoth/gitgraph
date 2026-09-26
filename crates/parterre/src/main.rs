@@ -29,6 +29,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, ValueEnum};
 use eframe::egui;
+use parterre_core::file_diff::{Whitespace, WordMode};
 use parterre_core::layout::Direction;
 use parterre_core::log_layout::LogLayout;
 use parterre_core::physics::DragModel;
@@ -142,6 +143,27 @@ struct Cli {
     #[arg(long, value_name = "REF[..REF]", hide = true)]
     demo_log: Option<String>,
 
+    /// Open a diff window before taking the screenshot: of PATH as COMMIT changed it (a ref or
+    /// hash prefix), against the commit's first parent.
+    #[arg(long, value_name = "COMMIT:PATH", hide = true)]
+    demo_diff: Option<String>,
+
+    /// The diff window's form (for --demo-diff).
+    #[arg(long, value_enum, hide = true)]
+    diff_form: Option<DiffFormArg>,
+
+    /// How the diff window finds changed words (for --demo-diff).
+    #[arg(long, value_enum, hide = true)]
+    diff_words: Option<DiffWordsArg>,
+
+    /// What whitespace counts in the diff window (for --demo-diff).
+    #[arg(long, value_enum, hide = true)]
+    diff_whitespace: Option<DiffWhitespaceArg>,
+
+    /// Show the whole file in the diff window instead of folding unchanged stretches.
+    #[arg(long, hide = true)]
+    diff_unfolded: bool,
+
     /// The log window's layout (for --demo-log): stacked, side-by-side, details-below or
     /// files-right, or a, b, c or d.
     #[arg(long, value_enum, hide = true)]
@@ -150,6 +172,27 @@ struct Cli {
     /// What moves when dragging (for --demo-drag).
     #[arg(long, value_enum, hide = true)]
     drag_mode: Option<DragModeArg>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DiffFormArg {
+    Side,
+    Unified,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DiffWordsArg {
+    Similar,
+    Position,
+    Block,
+    Off,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DiffWhitespaceArg {
+    Compare,
+    IgnoreChanges,
+    IgnoreAll,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -284,6 +327,7 @@ fn main() -> ExitCode {
     automation.demo_node = cli.demo_node.clone();
     automation.demo_open = cli.demo_open.clone();
     automation.demo_log = cli.demo_log.clone();
+    automation.demo_diff = cli.demo_diff.clone();
     automation.demo_menu = cli.demo_menu.map(|m| match m {
         DemoMenuArg::Node => automation::DemoMenu::Node,
         DemoMenuArg::Canvas => automation::DemoMenu::Canvas,
@@ -368,6 +412,30 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
             LogLayoutArg::DetailsBelow => LogLayout::DetailsBelow,
             LogLayoutArg::FilesRight => LogLayout::FilesRight,
         };
+    }
+    if let Some(form) = cli.diff_form {
+        s.diff_window.form = match form {
+            DiffFormArg::Side => settings::DiffForm::SideBySide,
+            DiffFormArg::Unified => settings::DiffForm::Unified,
+        };
+    }
+    if let Some(words) = cli.diff_words {
+        s.diff_window.words = match words {
+            DiffWordsArg::Similar => WordMode::Similar,
+            DiffWordsArg::Position => WordMode::Position,
+            DiffWordsArg::Block => WordMode::Block,
+            DiffWordsArg::Off => WordMode::Off,
+        };
+    }
+    if let Some(ws) = cli.diff_whitespace {
+        s.diff_window.whitespace = match ws {
+            DiffWhitespaceArg::Compare => Whitespace::Compare,
+            DiffWhitespaceArg::IgnoreChanges => Whitespace::IgnoreChanges,
+            DiffWhitespaceArg::IgnoreAll => Whitespace::IgnoreAll,
+        };
+    }
+    if cli.diff_unfolded {
+        s.diff_window.fold = false;
     }
     if let Some(theme) = cli.theme {
         s.theme = match theme {

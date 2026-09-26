@@ -98,6 +98,15 @@ you can sort and filter. In it, the arrow keys move through the commits, `F5` re
 details and files below, or files on the right. Pick one in the window's header or in
 *Settings → Appearance*; the dividers between the panes are remembered for each layout.
 
+Double-click a changed file, or select some (`Ctrl`+click, `Shift`+click) and press `Enter`, to
+see its **file diff** in a window of its own; several can be open at once. The diff is
+side by side or unified (`Ctrl+D`), with changed words marked, unchanged stretches folded
+(click a fold to open it), an overview of the changes on the right, and long lines that
+scroll sideways. `Ctrl+Down` / `Ctrl+Up` (or `F7` / `Shift+F7`) move between changes. The
+toolbar also picks how changed words are found and whether whitespace counts. Click a line
+number (`Shift`+click for more) and press `Ctrl+C` to copy lines. Files go through git's
+textconv filters, as `git show` does; binary files and submodules say what changed instead.
+
 Colours follow TortoiseGit:
 
 | Label | Colour |

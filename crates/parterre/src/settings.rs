@@ -1,5 +1,6 @@
 //! User-adjustable settings, persisted between runs by eframe.
 
+use parterre_core::file_diff::{Whitespace, WordMode};
 use parterre_core::layout::LayoutOptions;
 use parterre_core::log_layout::{Dividers, LogLayout};
 use parterre_core::physics::NetParams;
@@ -172,6 +173,7 @@ pub struct Settings {
     /// Colours for branches by name; the first matching rule wins.
     pub branch_colors: Vec<BranchColor>,
     pub log_window: LogWindowSettings,
+    pub diff_window: DiffWindowSettings,
 }
 
 /// What the log window remembers across runs.
@@ -196,6 +198,41 @@ impl Default for LogWindowSettings {
     }
 }
 
+/// A diff window's two forms.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DiffForm {
+    /// The old version on the left, the new on the right.
+    #[default]
+    SideBySide,
+    /// One column: a change's removed lines, then its added lines.
+    Unified,
+}
+
+/// The choices last made in a diff window, which the next one starts with.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DiffWindowSettings {
+    /// Inner size in points.
+    pub size: [f32; 2],
+    pub form: DiffForm,
+    pub words: WordMode,
+    pub whitespace: Whitespace,
+    /// Fold unchanged stretches away.
+    pub fold: bool,
+}
+
+impl Default for DiffWindowSettings {
+    fn default() -> Self {
+        DiffWindowSettings {
+            size: [1200.0, 800.0],
+            form: DiffForm::default(),
+            words: WordMode::default(),
+            whitespace: Whitespace::default(),
+            fold: true,
+        }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         let mut s = Settings {
@@ -212,6 +249,7 @@ impl Default for Settings {
             remember_moves: false,
             branch_colors: Vec::new(),
             log_window: LogWindowSettings::default(),
+            diff_window: DiffWindowSettings::default(),
         };
         Look::Modern.apply(&mut s);
         s
@@ -257,6 +295,21 @@ mod tests {
         assert_eq!(partial.layout, LogLayout::FilesRight);
         assert_eq!(partial.dividers.side_by_side, [0.3, 0.5]);
         assert_eq!(partial.dividers.stacked, Dividers::default().stacked);
+    }
+
+    #[test]
+    fn settings_saved_before_diff_windows_start_with_the_defaults() {
+        let old: Settings = ron::from_str("(log_window: (size: (900.0, 600.0)))").unwrap();
+        assert_eq!(old.diff_window, DiffWindowSettings::default());
+        assert!(old.diff_window.fold);
+
+        let mut s = Settings::default();
+        s.diff_window.form = DiffForm::Unified;
+        s.diff_window.words = WordMode::Block;
+        s.diff_window.whitespace = Whitespace::IgnoreAll;
+        s.diff_window.fold = false;
+        let back: Settings = ron::from_str(&ron::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.diff_window, s.diff_window);
     }
 
     #[test]
