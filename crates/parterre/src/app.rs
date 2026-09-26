@@ -338,6 +338,9 @@ impl ParterreApp {
                     })
                     .collect()
             });
+        // Pull requests on at startup (the default) were not turned on by the user: whatever
+        // comes of loading them, nothing is said.
+        let pull_requests_setting = settings.graph.show_pull_requests;
         let mut app = ParterreApp {
             title: window_title(repo.as_ref()),
             repo: repo.map(Arc::new),
@@ -376,7 +379,7 @@ impl ParterreApp {
             carried_moves: None,
             watcher: None,
             pull_requests: pull_requests::PullRequestLoader::default(),
-            pull_requests_setting: false,
+            pull_requests_setting,
             pull_requests_error: None,
             refresh_pull_requests: false,
             system_theme: SystemTheme::watch(&cc.egui_ctx),
@@ -871,41 +874,14 @@ impl ParterreApp {
         let Some(error) = &self.pull_requests_error else {
             return;
         };
-        let mut open = true;
-        let mut close = false;
-        egui::Window::new("Pull requests")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_max_width(380.0);
-                ui.label(RichText::new(capitalise(&format!("{error}."))).strong());
-                if let Some(advice) = error.advice() {
-                    ui.add_space(4.0);
-                    ui.label(advice);
+        match pull_requests::dialog(ctx, error) {
+            pull_requests::DialogAnswer::Open => {}
+            pull_requests::DialogAnswer::Close => self.pull_requests_error = None,
+            pull_requests::DialogAnswer::Install => {
+                if let Err(e) = crate::browser::open(GH_INSTALL) {
+                    self.status = Some((e, true));
                 }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    use parterre_core::forge::ForgeError;
-                    if matches!(error, ForgeError::NoGh)
-                        && ui.button("Install the GitHub CLI…").clicked()
-                        && let Err(e) = crate::browser::open(GH_INSTALL)
-                    {
-                        self.status = Some((e, true));
-                    }
-                    if error.needs_sign_in() && ui.button("Copy `gh auth login`").clicked() {
-                        ui.ctx().copy_text("gh auth login".to_owned());
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("OK").clicked() {
-                            close = true;
-                        }
-                    });
-                });
-            });
-        if !open || close {
-            self.pull_requests_error = None;
+            }
         }
     }
 
@@ -2031,15 +2007,6 @@ impl ParterreApp {
 
 /// Where the GitHub CLI's installation is explained.
 const GH_INSTALL: &str = "https://github.com/cli/cli#installation";
-
-/// `text` with its first letter in upper case.
-fn capitalise(text: &str) -> String {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
-}
 
 /// How many recent folders the welcome screen lists; the menu has them all.
 const WELCOME_RECENT: usize = 5;

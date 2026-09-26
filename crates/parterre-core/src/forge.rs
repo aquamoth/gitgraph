@@ -151,33 +151,6 @@ impl ForgeError {
         )
     }
 
-    /// What the user can do about it, if anything.
-    pub fn advice(&self) -> Option<&'static str> {
-        Some(match self {
-            ForgeError::NoGh => {
-                "parterre asks GitHub for pull requests signed in as the GitHub CLI is. Install \
-                 it, run `gh auth login` in a terminal, and turn pull requests on again."
-            }
-            ForgeError::NotSignedIn => {
-                "parterre asks GitHub for pull requests signed in as the GitHub CLI is. Run \
-                 `gh auth login` in a terminal, and turn pull requests on again."
-            }
-            ForgeError::TokenRejected => {
-                "Sign in again: run `gh auth login` in a terminal, and turn pull requests on \
-                 again."
-            }
-            ForgeError::RateLimited { .. } => {
-                "parterre keeps a tenth of the GitHub CLI's hourly allowance for other tools. \
-                 Pull requests come back by themselves once it resets."
-            }
-            ForgeError::NotFound { .. } => {
-                "If the repository is private, check that `gh auth status` shows an account \
-                 that can see it."
-            }
-            _ => return None,
-        })
-    }
-
     /// How long GitHub asked to be left alone, if it did.
     pub fn wait(&self) -> Option<Duration> {
         match self {
@@ -185,6 +158,89 @@ impl ForgeError {
             _ => None,
         }
     }
+
+    /// How to tell the user, in a dialog.
+    pub fn explain(&self) -> Explanation {
+        const SIGN_IN: &str = "gh auth login";
+        let (title, body, command) = match self {
+            ForgeError::NoGh => (
+                "GitHub CLI not found",
+                "parterre gets pull requests from GitHub through the GitHub CLI (gh), which \
+                 isn't installed. Install it, sign in with this command in a terminal, and \
+                 turn pull requests on again."
+                    .to_owned(),
+                Some(SIGN_IN),
+            ),
+            ForgeError::NotSignedIn => (
+                "Not signed in to GitHub",
+                "parterre gets pull requests from GitHub through the GitHub CLI (gh), which \
+                 isn't signed in. Sign in with this command in a terminal, and turn pull \
+                 requests on again."
+                    .to_owned(),
+                Some(SIGN_IN),
+            ),
+            ForgeError::TokenRejected => (
+                "GitHub didn't accept the sign-in",
+                "The GitHub CLI's sign-in may have expired. Sign in again with this command in \
+                 a terminal, and turn pull requests on again."
+                    .to_owned(),
+                Some(SIGN_IN),
+            ),
+            ForgeError::RateLimited { minutes } => (
+                "GitHub's hourly limit is nearly used up",
+                format!(
+                    "parterre stops asking GitHub while less than a tenth of your hourly \
+                     allowance is left, so that your other tools keep working. Pull requests \
+                     appear by themselves in about {minutes} min."
+                ),
+                None,
+            ),
+            ForgeError::NotFound { repo } => (
+                "Repository not found on GitHub",
+                format!(
+                    "GitHub has no repository {repo}, or your account can't see it. For a \
+                     private repository, check which account the GitHub CLI is signed in as:"
+                ),
+                Some("gh auth status"),
+            ),
+            ForgeError::Network(why) => (
+                "Couldn't reach GitHub",
+                format!(
+                    "{}. Check the network connection, and turn pull requests on again.",
+                    capitalised(why)
+                ),
+                None,
+            ),
+            other => (
+                "Couldn't show pull requests",
+                format!("{}.", capitalised(&other.to_string())),
+                None,
+            ),
+        };
+        Explanation {
+            title,
+            body,
+            command,
+        }
+    }
+}
+
+/// What a dialog says about a [`ForgeError`]: a short title, a sentence or two, and a command
+/// to run in a terminal, if one helps.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Explanation {
+    pub title: &'static str,
+    pub body: String,
+    pub command: Option<&'static str>,
+}
+
+/// `text` with its first letter in upper case.
+fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// How long a loaded list is used before GitHub is asked again, as in t3code: a minute if it
@@ -354,6 +410,22 @@ mod tests {
         assert_eq!(pr.head_label(), "them:feature");
         pr.head_repo = None;
         assert_eq!(pr.head_label(), "feature (deleted fork)");
+    }
+
+    #[test]
+    fn errors_are_explained_plainly() {
+        let e = ForgeError::NotSignedIn.explain();
+        assert_eq!(e.title, "Not signed in to GitHub");
+        assert_eq!(e.command, Some("gh auth login"));
+        assert!(e.body.ends_with("turn pull requests on again."));
+        assert_eq!(ForgeError::NoGh.explain().command, Some("gh auth login"));
+        let e = ForgeError::RateLimited { minutes: 12 }.explain();
+        assert!(e.body.contains("in about 12 min"), "{}", e.body);
+        assert_eq!(e.command, None);
+        let e = ForgeError::Network("connection refused".into()).explain();
+        assert!(e.body.starts_with("Connection refused. "), "{}", e.body);
+        let e = ForgeError::Parse("bad JSON".into()).explain();
+        assert_eq!(e.body, "Unexpected answer from GitHub: bad JSON.");
     }
 
     #[test]

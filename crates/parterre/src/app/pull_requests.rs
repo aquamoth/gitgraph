@@ -18,6 +18,9 @@ use eframe::egui;
 use parterre_core::forge::github::{self, GithubRepo};
 use parterre_core::forge::{self, ForgeError, PullRequests};
 use parterre_core::git::Git;
+use parterre_core::glyphs;
+
+use crate::widgets;
 
 /// What a finished load brought, and whether the user asked for it ([`PullRequestLoader::ask`])
 /// rather than parterre loading by itself: only then is it worth telling them.
@@ -204,6 +207,110 @@ impl PullRequestLoader {
             rx,
         });
     }
+}
+
+/// What the user did with the dialog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialogAnswer {
+    Open,
+    Close,
+    /// Asked for the GitHub CLI's installation page.
+    Install,
+}
+
+/// The dialog saying why pull requests the user turned on can't be shown: a modal in the
+/// look of the menus and popovers, with the command that helps, if one does, ready to copy.
+pub fn dialog(ctx: &egui::Context, error: &ForgeError) -> DialogAnswer {
+    use egui::{Align, Frame, Layout, Margin, RichText, Vec2};
+
+    let explanation = error.explain();
+    let style = {
+        let mut style = (*ctx.global_style()).clone();
+        crate::menu::popover_style(&mut style);
+        style
+    };
+    let frame = Frame::popup(&style)
+        .inner_margin(Margin::same(20))
+        .corner_radius(12);
+    let mut answer = DialogAnswer::Open;
+    let modal = egui::Modal::new(egui::Id::new("pull-requests-error"))
+        .frame(frame)
+        .backdrop_color(egui::Color32::from_black_alpha(
+            if style.visuals.dark_mode { 90 } else { 40 },
+        ))
+        .show(ctx, |ui| {
+            ui.set_style(style.clone());
+            ui.set_width(380.0);
+            ui.spacing_mut().item_spacing.y = 10.0;
+            let t = widgets::tones(ui);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                let (badge, _) = ui.allocate_exact_size(Vec2::splat(32.0), egui::Sense::hover());
+                ui.painter().circle_filled(badge.center(), 16.0, t.on_bg);
+                let icon = egui::Rect::from_center_size(badge.center(), Vec2::splat(18.0));
+                widgets::paint_glyph(ui.painter(), icon, glyphs::PULL_REQUEST, t.on_fg);
+                ui.label(RichText::new(explanation.title).size(16.0).strong());
+            });
+            ui.label(&explanation.body);
+            if let Some(command) = explanation.command {
+                command_box(ui, command);
+            }
+            ui.add_space(4.0);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if widgets::primary_button(ui, "OK", 80.0).clicked() {
+                    answer = DialogAnswer::Close;
+                }
+                if matches!(error, ForgeError::NoGh)
+                    && widgets::text_button(ui, "Install the GitHub CLI…").clicked()
+                {
+                    answer = DialogAnswer::Install;
+                }
+            });
+        });
+    let keys = ctx.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Enter));
+    if modal.should_close() || keys {
+        answer = DialogAnswer::Close;
+    }
+    answer
+}
+
+/// A command to run in a terminal, in a field of its own, with a button copying it.
+fn command_box(ui: &mut egui::Ui, command: &str) {
+    let t = widgets::tones(ui);
+    egui::Frame::new()
+        .fill(t.seg_bg)
+        .corner_radius(8)
+        .inner_margin(egui::Margin {
+            left: 12,
+            right: 4,
+            top: 4,
+            bottom: 4,
+        })
+        .show(ui, |ui| {
+            // One row as high as the button, the command centred beside it.
+            let row = egui::vec2(ui.available_width(), 28.0);
+            let layout = egui::Layout::left_to_right(egui::Align::Center);
+            ui.allocate_ui_with_layout(row, layout, |ui| {
+                ui.label(egui::RichText::new(command).monospace().size(14.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // "Copied" for a moment after a click.
+                    let id = egui::Id::new("copied").with(command);
+                    let now = ui.input(|i| i.time);
+                    let copied_at: Option<f64> = ui.data(|d| d.get_temp(id));
+                    let copied = copied_at.is_some_and(|at| now - at < 1.5);
+                    if copied {
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(300));
+                    }
+                    let label = if copied { "Copied" } else { "Copy" };
+                    if widgets::text_button(ui, label).clicked() {
+                        ui.ctx().copy_text(command.to_owned());
+                        ui.data_mut(|d| d.insert_temp(id, now));
+                    }
+                });
+            });
+        });
 }
 
 /// What the status bar says once `count` open pull requests have loaded, of which `here` have
