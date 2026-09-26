@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 21._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 22._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -96,10 +96,12 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 8. **Other refs** (`refs/t3/*` in Apps) are hidden by default; ☰ → Show → Other refs shows them.
 9. **HEAD marker.** Like TortoiseGit, only the current branch's row is highlighted (red). A
    detached HEAD gets its own red "HEAD" row, which TortoiseGit doesn't have.
-10. **No git actions.** Answered 2026-09-26: yes, towards parity with TortoiseGit's node menu.
-    The roadmap, its boundary rule and the open decisions live in the map *Revision-graph node
-    menu: roadmap to TortoiseGit parity* ([#25](https://github.com/aquamoth/parterre/issues/25)).
-    Show log comes first; *Browse repository* and the menu-bar Git menu are out.
+10. **No git actions.** Answered 2026-09-26: yes, towards functional parity with TortoiseGit's
+    workflows from the revision graph and the log (its node menu was the starting inventory).
+    The roadmap, its boundary rules and the open decisions live in the map *Roadmap to
+    TortoiseGit parity: revision graph and log*
+    ([#25](https://github.com/aquamoth/parterre/issues/25)). Show log came first, diffs come
+    next; *Browse repository* and the menu-bar Git menu are out.
 11. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
     commits, 2,490 refs and 1,846 merges:
     - Loading takes 0.6 s.
@@ -243,11 +245,16 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     - **Size on first open:** 1100 × 760; after that, the size it last had.
     - **No keyboard focus for the list:** the arrow keys, Page Up/Down, Home and End move the
       selected commit whenever the filter field doesn't have the keyboard.
+21. **Log search** (wanted 2026-09-26, "super-useful"; to discuss, not decided yet). Filters in
+    the log window by date range, author and text, and perhaps a log of the whole repository
+    opened without a node. Ruled out of the first log window
+    ([#27](https://github.com/aquamoth/parterre/issues/27)); the log query is shaped so these
+    can be added as new fields and callers. Which searches, and when?
 
 ## Planned
 
-- [x] Show log window, as planned in the map *Revision-graph node menu: roadmap to TortoiseGit
-      parity* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
+- [x] Show log window, as planned in the map *Roadmap to TortoiseGit parity: revision graph
+      and log* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
       from TortoiseGit (decided in #28): when the second of two selected nodes is an ancestor
       of the first, the two are swapped instead of showing an empty list.
   - [x] Layout A (stacked) and its entry points: *Show log* first in the node menu, `L` and
@@ -255,6 +262,27 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
   - [x] Layouts B, C and D, the layout picker (in the window's header and in *Settings →
         Appearance*) and reset, and the layout and divider positions per layout saved with the
         settings ([#40](https://github.com/aquamoth/parterre/issues/40); see question 19).
+- [ ] File diffs from the log window, being charted in the map *Roadmap to TortoiseGit
+      parity: revision graph and log* ([#25](https://github.com/aquamoth/parterre/issues/25)):
+      read-only, one diff window per file, diffed by `imara-diff` (lines and words; decided in
+      [#44](https://github.com/aquamoth/parterre/issues/44); what the window shows and does in
+      [#45](https://github.com/aquamoth/parterre/issues/45)). Blame is a stretch goal.
+  - [ ] Optional, deferred: *Open in external diff tool*, handing both versions to the user's
+        configured diff tool, as TortoiseGit does by default. Not behind the built-in view;
+        decided in [#44](https://github.com/aquamoth/parterre/issues/44).
+  - [ ] Optional, if users ask: a choice of diff engine, e.g. git's own patch (honouring
+        `diff.algorithm`) beside the default `imara-diff`
+        ([#44](https://github.com/aquamoth/parterre/issues/44)).
+  - [ ] Optional: honour git's `encoding` attribute (the one gitk uses) to decode non-UTF-8
+        files, e.g. with `encoding_rs` (+191 KiB, 4 crates). Until then, invalid UTF-8 shows
+        as `\xNN` ([#44](https://github.com/aquamoth/parterre/issues/44)).
+  - [ ] Stretch goal: wrap long lines, as a toggle in the diff window's toolbar. Until then
+        long lines scroll sideways ([#45](https://github.com/aquamoth/parterre/issues/45)).
+  - [ ] Optional: find in a diff window (Ctrl+F), and free text selection. The first version
+        copies whole lines only ([#45](https://github.com/aquamoth/parterre/issues/45)).
+  - [ ] Another day: open a diff from outside parterre, e.g. right-click an edited file in the
+        file manager and diff it with its previous commit
+        ([#45](https://github.com/aquamoth/parterre/issues/45)).
 - [x] Wayland freeze ([#38](https://github.com/aquamoth/parterre/issues/38)). On Wayland the
       whole app froze when one of its windows was minimized while another was open; it
       happened with Settings already. Worked around (see `frame_pacing.rs`, and
