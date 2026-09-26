@@ -142,6 +142,9 @@ fn textconv_filters_apply_and_are_named() {
     let mut r = base();
     r.write(".gitattributes", b"*.up diff=upper\n");
     r.git(&["config", "diff.upper.textconv", "tr a-z A-Z <"]);
+    // Textconv is given the working-tree form of the file, and Git for Windows' own config
+    // turns on core.autocrlf, which would give CRLF there. (Both versions get the same.)
+    r.git(&["config", "core.autocrlf", "false"]);
     r.write("note.up", b"shout\n");
     r.commit_all("base note");
     r.write("note.up", b"shout louder\n");
