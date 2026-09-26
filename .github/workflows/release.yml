@@ -45,7 +45,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends build-essential ca-certificates curl git
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # The checkout belongs to the runner's user and the container runs as root; git ignores
       # such repositories unless they are marked safe.
       - name: Trust the checkout
@@ -99,7 +99,7 @@ jobs:
           name="parterre-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
           PATH="$USERPROFILE/.dotnet/tools:$PATH" \
             pwsh packaging/windows/build-msi.ps1 -Stage "$name" -Out "dist/$name.msi"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: dist/*
@@ -112,7 +112,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true

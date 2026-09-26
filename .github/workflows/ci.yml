@@ -66,7 +66,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends build-essential ca-certificates curl git
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: env.BUILD == 'true'
       - name: Trust the checkout
         if: env.BUILD == 'true' && matrix.container
@@ -111,7 +111,7 @@ jobs:
           dotnet tool install --global wix --version 7.0.0
           PATH="$USERPROFILE/.dotnet/tools:$PATH" \
             pwsh packaging/windows/build-msi.ps1 -Stage dist -Out dist/parterre.msi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: env.BUILD == 'true'
         with:
           name: parterre-${{ matrix.os }}
