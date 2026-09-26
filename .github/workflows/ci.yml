@@ -34,7 +34,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends build-essential ca-certificates curl git
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Trust the checkout
         if: matrix.container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -61,7 +61,7 @@ jobs:
           cp target/release/parterre${{ runner.os == 'Windows' && '.exe' || '' }} LICENSE NOTICE dist/
           cargo about generate --locked -c packaging/about.toml packaging/about.hbs \
             -o dist/THIRD-PARTY-NOTICES.html
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: parterre-${{ matrix.os }}
           path: dist/
