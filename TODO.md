@@ -15,7 +15,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 
    On Apps, ~160 remote branches hang off a few commits. In Classic that gives rows many
    thousands of pixels wide with fans of near-horizontal lines. Modern reads like a tree.
-   Which do you want by default?
+   Which do you want by default? Answered 2026-09-26: Modern.
 2. **Rearranging by hand.** Reworked from your notes of 2026-09-24:
    - A dropped node is no longer pinned. Wherever things come to rest becomes their new
      resting shape, so moved nodes keep giving way to later drags like any other node.
@@ -74,7 +74,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
      another modifier (such as holding Space) could give a one-off Free drag.
    - **Remembering moves.** *Remember moved nodes* (in the drag options, off by default) keeps
      nodes where they rest, per repository, across runs and relayouts. Should it be on by
-     default?
+     default? Answered 2026-09-26: no, off.
 3. **Fidelity quirks in "Labelled commits" (TortoiseGit's default mode).** TortoiseGit uses
    `git log --simplify-by-decoration` and inherits git's simplifications:
    - A `--no-ff` merge whose first parent is an ancestor of its second is folded away.
@@ -85,7 +85,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
    "Branchings and merges" and "All commits" show the real topology. Keep the fidelity?
 4. **Initial view.** As in TortoiseGit, the window opens at 100% with HEAD near the top. On
    big graphs that shows only a small area. Would fit-to-window, or a fixed zoom such as 60%,
-   be better?
+   be better? Answered 2026-09-26: keep 100% on the current branch, but reopen at the zoom and
+   position last stored for the repository (planned).
 5. **Layer spacing.** Gaps between rows grow when long sideways edges cross them. TortoiseGit
    (OGDF) does the same, capped at 300 px. This keeps edges steep but makes the graph taller.
    Tune it under *Settings → Advanced*. Happy with the default?
@@ -274,7 +275,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 22. **Reloading automatically** (from the planned list, 2026-09-26). TortoiseGit reloads
     only on F5; parterre now also reloads by itself when the branches, tags or HEAD change, as
     after a commit, checkout or fetch in another program. Decisions you may want to overrule:
-    - **On by default.** ☰ → *Reload automatically* and *Settings → Graph* turn it off.
+    - **On by default** (confirmed 2026-09-26). ☰ → *Reload automatically* and
+      *Settings → Graph* turn it off.
     - **How it notices:** every second it looks at the files git keeps refs in (`HEAD`,
       `packed-refs`, `refs/`, reftable), without running git and without a file-watching
       crate. Only when they change, and have stayed unchanged for 0.3 s (so a rebase is loaded
@@ -322,6 +324,9 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 
 ## Planned
 
+- [ ] Reopen a repository at the zoom and position it last had, stored per repository like
+      the remembered moves; without a stored view, 100% with the current branch near the top,
+      as today (question 4, decided 2026-09-26).
 - [ ] Text size with `Ctrl`+wheel in every window besides the graph: the log window, the
       diff windows and the settings, as the graph zooms with it (wanted 2026-09-26). Probably
       also `Ctrl`+`+`/`-`/`0`. Open: one size shared by all these windows or one each, and
@@ -499,7 +504,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       happened with Settings already. Worked around (see `frame_pacing.rs`, and
       `docs/research/wayland-viewport-freeze.md` on the branch
       `research/wayland-viewport-freeze`): on Wayland only, vsync off and frames capped at about
-      8 ms. Not verified on Wayland after the change (no headless Wayland to test with).
+      8 ms. Verified by hand on GNOME Wayland on 2026-09-26, with the log and diff windows.
 - [x] Settings window without minimize and maximize buttons. It is a dialog, and maximizing it
       breaks its layout. Asked of winit, which (0.30) does this on Windows and macOS only. On
       Linux it ignores the request: there the window loses only its maximize button, because it
