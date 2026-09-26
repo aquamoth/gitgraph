@@ -199,11 +199,12 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       parity* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
       from TortoiseGit (decided in #28): when the second of two selected nodes is an ancestor
       of the first, the two are swapped instead of showing an empty list.
-- [ ] Wayland freeze, to be fixed along with the log window. On Wayland the whole app freezes
-      when one of its windows is minimized while another is open. It already happens with
-      Settings today. Workaround (see `docs/research/wayland-viewport-freeze.md` on the branch
+- [x] Wayland freeze ([#38](https://github.com/aquamoth/parterre/issues/38)). On Wayland the
+      whole app froze when one of its windows was minimized while another was open; it
+      happened with Settings already. Worked around (see `frame_pacing.rs`, and
+      `docs/research/wayland-viewport-freeze.md` on the branch
       `research/wayland-viewport-freeze`): on Wayland only, vsync off and frames capped at about
-      8 ms.
+      8 ms. Not verified on Wayland after the change (no headless Wayland to test with).
   - [ ] **Check regularly, and on every eframe upgrade, whether the upstream fix has shipped:**
         <https://github.com/emilk/egui/pull/8631> (bug:
         <https://github.com/emilk/egui/issues/5145>). Once it is in a released eframe, remove
