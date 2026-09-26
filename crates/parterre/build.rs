@@ -1,8 +1,8 @@
 //! Sets `PARTERRE_VERSION`, the version string `--version` and Help show (see `src/version.rs`),
 //! and gives the Windows executable its icon and version information (see `src/win_resource.rs`).
 //!
-//! The release workflow sets `PARTERRE_RELEASE_TAG` to the pushed tag; the build then fails
-//! unless that tag matches `Cargo.toml` and the commit being built.
+//! The release workflow sets `PARTERRE_RELEASE_TAG` to the pushed tag; the build uses its version
+//! and fails unless that tag points at the clean commit being built.
 //!
 //! The sources are either a git checkout of the workspace, or a crate packaged by `cargo
 //! package` (e.g. downloaded from crates.io by `cargo install`), which has no `.git` but records
@@ -87,21 +87,20 @@ fn main() {
 fn windows_resources(ico: &Path, notice: &Path, version: &str) {
     println!("cargo:rerun-if-changed={}", ico.display());
     println!("cargo:rerun-if-changed={}", notice.display());
-    let env = |name| std::env::var(name).unwrap();
-    let part = |name| {
-        env(name)
+    let numbers = version.split(['-', ' ']).next().unwrap();
+    let mut parts = numbers.split('.');
+    let mut part = || {
+        parts
+            .next()
+            .unwrap()
             .parse()
-            .unwrap_or_else(|_| panic!("{name} doesn't fit a Windows version number"))
+            .unwrap_or_else(|_| panic!("{numbers} doesn't fit a Windows version number"))
     };
     let script = win_resource::script(&win_resource::Resources {
         icon: &ico.display().to_string(),
-        numeric_version: [
-            part("CARGO_PKG_VERSION_MAJOR"),
-            part("CARGO_PKG_VERSION_MINOR"),
-            part("CARGO_PKG_VERSION_PATCH"),
-        ],
+        numeric_version: [part(), part(), part()],
         version,
-        description: &env("CARGO_PKG_DESCRIPTION"),
+        description: &std::env::var("CARGO_PKG_DESCRIPTION").unwrap(),
         notice: &std::fs::read_to_string(notice).unwrap(),
     });
     let rc = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("parterre.rc");
