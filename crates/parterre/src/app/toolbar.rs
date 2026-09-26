@@ -164,13 +164,12 @@ impl ParterreApp {
             })
             .inner;
         let verb = if *on { "Hide" } else { "Show" };
-        let response = tip_explained(
-            response,
-            &format!("{verb} pull requests"),
-            "",
-            PULL_REQUESTS_TIP,
-        )
-        .on_disabled_hover_text("Pull requests: origin is not a GitHub repository");
+        let explained = match self.pull_requests.error() {
+            Some(error) => format!("{PULL_REQUESTS_TIP}\n\nLast try: {error}."),
+            None => PULL_REQUESTS_TIP.to_owned(),
+        };
+        let response = tip_explained(response, &format!("{verb} pull requests"), "", &explained)
+            .on_disabled_hover_text("Pull requests: origin is not a GitHub repository");
         if response.clicked() {
             *on = !*on;
         }
@@ -633,9 +632,9 @@ pub(super) const HIDE_TIP: &str = "Leave out branches matching these comma-separ
     (* is any text, ? one character; origin/release/1 matches release/*), with the history only \
     they lead to. Branches that a shown branch's history contains stay, and so does the current \
     branch.";
-pub(super) const PULL_REQUESTS_TIP: &str = "Open pull requests of origin on GitHub, as labels \
-    on the commits they propose, where those have been fetched. Click one to open it. Asks \
-    GitHub, signed in as gh is if gh is installed.";
+pub(super) const PULL_REQUESTS_TIP: &str = "Open pull requests of origin on GitHub, and a \
+    fork's into its parent, as labels on the commits they propose, where those have been \
+    fetched. Click one to open it. Asks GitHub only when gh is signed in (gh auth login).";
 pub(super) const REMEMBER_TIP: &str =
     "Keep nodes where you moved them, per repository, across runs and relayouts.";
 

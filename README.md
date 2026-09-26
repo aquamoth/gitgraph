@@ -46,7 +46,7 @@ parterre --mode all --no-remotes   # every commit, local branches and tags only
 parterre --look classic            # straight, unbundled edges like TortoiseGit
 parterre --hide 'pipeline/*,release/*'        # leave out build and release branches
 parterre --branch-color 'feature/*=#9b59b6'   # colour branches by name (repeatable)
-parterre --pull-requests           # label commits with origin's open GitHub pull requests
+parterre --pull-requests           # show GitHub pull requests even if turned off in settings
 parterre --export graph.svg        # write an SVG without opening a window
 parterre --export graph.png --zoom 2   # or a PNG (or .webp), here at 200%
 parterre --help                    # all options
@@ -92,11 +92,11 @@ parterre adds:
 - hiding branches by wildcard, e.g. `pipeline/*` (the toolbar's filter options, or *Settings → Filters*). A hidden branch
   still shows where the history of a shown branch contains it, so only leaves vanish.
 - colours by branch name, e.g. `feature/*` purple (*Settings → Branch colours*)
-- open pull requests on GitHub, as labels on the commits they propose (the toolbar's
-  pull-request button, when `origin` is on GitHub). Click one to open it in the browser. A
-  pull request shows once its head commit has been fetched and its base branch is shown.
-  parterre asks GitHub only while they are shown, signed in as `gh` is if `gh` is installed
-  (needed for private repositories), and otherwise without signing in (60 requests an hour).
+- open pull requests on GitHub, as labels on the commits they propose, when `origin` is on
+  GitHub and [`gh`](https://cli.github.com) is signed in (`gh auth login`). Click one to open
+  it in the browser; the toolbar's pull-request button hides them. A pull request shows once
+  its branch has been fetched and its base branch is shown. parterre asks GitHub about the
+  fetched branches only, at most once a minute per repository, and never without signing in.
 - light and dark themes
 - rearranging by hand: drag modes, multi-selection, undo
 

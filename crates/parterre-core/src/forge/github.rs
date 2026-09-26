@@ -1,31 +1,39 @@
-//! Open pull requests from GitHub's REST API (github.com only; no GitHub Enterprise yet).
+//! Open pull requests from GitHub (github.com only; no GitHub Enterprise yet), asked for the
+//! way t3code does: per branch, signed in, cached, and within a budget.
 //!
-//! The pull requests shown are those the user can act on: the open pull requests of the
-//! repository `origin` points at and, if that is a fork, the fork's own pull requests into its
-//! parent (research §12).
-//!
-//! Signing in is optional: if the `gh` program is installed and signed in, its token is used,
-//! which raises the limit from 60 to 5000 requests an hour and reaches private repositories.
-//! Without it, requests go unauthenticated. Tokens from `GH_TOKEN` and git's credential helpers
-//! (research §6) can be added later.
+//! - **Which:** the pull requests the user can act on: those of the repository `origin` points
+//!   at and, if that is a fork, the fork's own ones into its parent (research §12). Only those
+//!   whose head branch is a branch of `origin` fetched here are asked for, since only they can
+//!   be shown; asking the parent for all of its open pull requests took 23 s for
+//!   pingdotgg/t3code.
+//! - **How:** one GraphQL request per 100 such branches, with a `pullRequests(headRefName:)`
+//!   connection per branch, for `origin` and its parent at once, and only the fields shown.
+//!   As t3code's `gh pr list --head <branch>`, the branch name is matched on GitHub and the
+//!   head repository here: another fork's `main` is not ours.
+//! - **Signed in only:** with the token of a signed-in `gh` (`gh auth token`), or not at all.
+//!   GitHub is never asked without one. `GH_TOKEN` and git's credential helpers (research §6)
+//!   can come later.
+//! - **Within a budget:** once fewer than a tenth of the hour's points are left, as t3code
+//!   keeps in reserve, or GitHub says to wait, nothing is asked until the limit resets
+//!   ([`pause`]). How often a repository is asked again is up to the caller:
+//!   [`super::fresh_for`] and [`super::retry_after`].
 
 use std::fmt;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::{ForgeError, PullRequest, PullRequests, Remote};
 use crate::git::Git;
 
-/// Where the REST API is. Tokens are only ever sent here.
-const API: &str = "https://api.github.com/";
+/// GitHub's GraphQL endpoint. Tokens are only ever sent here.
+#[cfg_attr(not(feature = "github"), allow(dead_code))]
+const GRAPHQL: &str = "https://api.github.com/graphql";
 const WEB: &str = "https://github.com/";
-/// Pages of 100 pull requests fetched at most per repository: a guard against a server that
-/// keeps linking to a next page, not a cap (no repository has 10,000 open pull requests).
-const MAX_PAGES: usize = 100;
-/// A fork with at most this many branches on `origin` has its pull requests into its parent
-/// asked for branch by branch, rather than picked out of all of the parent's. Either finds
-/// every one this slice can show, as a pull request is shown only if its branch has been
-/// fetched. A busy parent's full list takes long: pingdotgg/t3code's 15 pages of 2 MB took 20 s,
-/// where one branch takes a third of a second.
-const MAX_BRANCH_QUERIES: usize = 10;
+/// Branches asked about in one request.
+const BRANCHES_PER_REQUEST: usize = 100;
+/// Open pull requests asked for per branch. As t3code: GitHub prices a connection of 100 like
+/// one of 1, and a name such as `main` can have many other forks' pull requests.
+const PER_BRANCH: usize = 100;
 
 /// A repository on github.com.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,8 +113,9 @@ pub fn origin(git: &Git) -> Option<GithubRepo> {
     GithubRepo::from_url(&url)
 }
 
-/// Loads the open pull requests for the repository `git` works on (see the module docs). Takes
-/// a request per 100 pull requests, plus one; run it on a worker thread.
+/// Loads the open pull requests for the repository `git` works on (see the module docs): no
+/// request if no branch of `origin` has been fetched, otherwise one per 100 of them, signed in
+/// with `gh`'s token. Run it on a worker thread.
 pub fn load(git: &Git) -> Result<PullRequests, ForgeError> {
     let urls = super::remote_urls(git)?;
     let origin = urls
@@ -116,15 +125,25 @@ pub fn load(git: &Git) -> Result<PullRequests, ForgeError> {
         .ok_or(ForgeError::NoForge)?;
     let upstreams = super::upstreams(git)?;
     let branches = remote_branches(git, "origin")?;
-    let branches = (branches.len() <= MAX_BRANCH_QUERIES).then_some(branches.as_slice());
-    let (canonical, list) = with_api(|api| open_pull_requests(api, &origin, branches))?;
+    let found = if branches.is_empty() {
+        Found {
+            name: origin.full_name(),
+            list: Vec::new(),
+            pause_until: None,
+        }
+    } else {
+        with_api(|api| open_pull_requests(api, &origin, &branches))?
+    };
+    if let Some(until) = found.pause_until {
+        pause(until);
+    }
     let remotes = urls
         .iter()
         .filter_map(|(name, url)| {
             let repo = GithubRepo::from_url(url)?;
             // A renamed repository answers under its new name; remotes may still use the old.
             let repo = if repo.full_name().eq_ignore_ascii_case(&origin.full_name()) {
-                canonical.clone()
+                found.name.clone()
             } else {
                 repo.full_name()
             };
@@ -135,23 +154,10 @@ pub fn load(git: &Git) -> Result<PullRequests, ForgeError> {
         })
         .collect();
     Ok(PullRequests {
-        list,
+        list: found.list,
         remotes,
         upstreams,
     })
-}
-
-/// One page of an API answer: its body, and the URL of the next page if there is one.
-#[derive(Debug)]
-#[cfg_attr(not(feature = "github"), allow(dead_code))]
-pub(crate) struct Page {
-    pub body: String,
-    pub next: Option<String>,
-}
-
-/// GET requests against the REST API; a trait so that tests can answer them.
-pub(crate) trait Api {
-    fn get(&self, url: &str) -> Result<Page, ForgeError>;
 }
 
 /// The branches of the remote `remote` (`refs/remotes/<remote>/*`, without `HEAD`).
@@ -171,164 +177,277 @@ fn remote_branches(git: &Git, remote: &str) -> Result<Vec<String>, crate::git::G
         .collect())
 }
 
-/// The repository's `owner/name` as GitHub has it now, and the pull requests of `origin`,
-/// plus its own ones into its parent if it is a fork. Newest first, `origin`'s first. A fork's
-/// ones are asked for by `branches` if given (see [`MAX_BRANCH_QUERIES`]), else picked out of
-/// all of the parent's.
+/// Unix time until which GitHub is not asked, process-wide: the budget is the user's, whatever
+/// the repository.
+static PAUSED_UNTIL: Mutex<u64> = Mutex::new(0);
+
+#[cfg_attr(not(feature = "github"), allow(dead_code))]
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Asks GitHub nothing until `until` (Unix time).
+fn pause(until: u64) {
+    let mut paused = PAUSED_UNTIL.lock().unwrap_or_else(|e| e.into_inner());
+    *paused = (*paused).max(until);
+}
+
+/// How long GitHub is not to be asked yet, if at all.
+#[cfg_attr(not(feature = "github"), allow(dead_code))]
+fn paused_for() -> Option<Duration> {
+    let until = *PAUSED_UNTIL.lock().unwrap_or_else(|e| e.into_inner());
+    let now = now();
+    (until > now).then(|| Duration::from_secs(until - now))
+}
+
+/// What GitHub's rate-limit headers said: points left of the hour's, and when they reset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Quota {
+    pub remaining: u64,
+    pub limit: u64,
+    /// Unix time.
+    pub reset: u64,
+}
+
+impl Quota {
+    /// Until when to ask nothing more: the reset, once less than a tenth is left.
+    fn pause_until(self) -> Option<u64> {
+        (self.remaining * 10 < self.limit).then_some(self.reset)
+    }
+}
+
+/// An answer's body, and the rate limit it reported.
+#[derive(Debug)]
+pub(crate) struct Answer {
+    pub body: String,
+    pub quota: Option<Quota>,
+}
+
+/// GraphQL requests; a trait so that tests can answer them.
+pub(crate) trait Api {
+    fn post(&self, body: &str) -> Result<Answer, ForgeError>;
+}
+
+/// What [`open_pull_requests`] found.
+#[derive(Debug)]
+pub(crate) struct Found {
+    /// `origin`'s `owner/name` as GitHub has it now.
+    pub name: String,
+    /// Newest first.
+    pub list: Vec<PullRequest>,
+    /// Ask nothing more until then (Unix time): the budget is nearly used up.
+    pub pause_until: Option<u64>,
+}
+
+/// The open pull requests whose head is one of `branches` of `origin`: into `origin`, and into
+/// its parent if it is a fork.
 pub(crate) fn open_pull_requests(
     api: &dyn Api,
     origin: &GithubRepo,
-    branches: Option<&[String]>,
-) -> Result<(String, Vec<PullRequest>), ForgeError> {
-    let info: json::Repository = parse(&api.get(&format!("{API}repos/{}", origin.full_name()))?)?;
-    let mut list = pull_requests(api, &info.full_name, "")?;
-    if let Some(parent) = &info.parent {
-        let ours = match branches {
-            Some(branches) => {
-                let owner = info.full_name.split('/').next().unwrap_or_default();
-                let mut ours = Vec::new();
-                for branch in branches {
-                    let head = query_value(&format!("{owner}:{branch}"));
-                    ours.extend(pull_requests(
-                        api,
-                        &parent.full_name,
-                        &format!("&head={head}"),
-                    )?);
-                }
-                ours
-            }
-            None => pull_requests(api, &parent.full_name, "")?,
+    branches: &[String],
+) -> Result<Found, ForgeError> {
+    let mut found = Found {
+        name: origin.full_name(),
+        list: Vec::new(),
+        pause_until: None,
+    };
+    for chunk in branches.chunks(BRANCHES_PER_REQUEST) {
+        let answer = api.post(&request(origin, chunk))?;
+        found.pause_until = found
+            .pause_until
+            .max(answer.quota.and_then(Quota::pause_until));
+        let repo = repository(&answer.body, origin)?;
+        found.name = repo.name_with_owner.clone();
+        let ours = |pr: &json::PullRequest| {
+            pr.head_repository.as_ref().is_some_and(|r| {
+                r.name_with_owner
+                    .eq_ignore_ascii_case(&repo.name_with_owner)
+            })
         };
-        list.extend(ours.into_iter().filter(|pr| {
-            pr.head_repo
-                .as_deref()
-                .is_some_and(|r| r.eq_ignore_ascii_case(&info.full_name))
-        }));
-    }
-    Ok((info.full_name, list))
-}
-
-/// Percent-encodes a query parameter's value: everything but letters, digits and `-._~`.
-fn query_value(value: &str) -> String {
-    value
-        .bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                (b as char).to_string()
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
-}
-
-/// Every open pull request of the repository `full_name` (narrowed by `filter`, extra query
-/// parameters such as `&head=owner:branch`), newest first.
-fn pull_requests(
-    api: &dyn Api,
-    full_name: &str,
-    filter: &str,
-) -> Result<Vec<PullRequest>, ForgeError> {
-    let repo = GithubRepo::from_full_name(full_name)
-        .ok_or_else(|| ForgeError::Parse(format!("odd repository name {full_name:?}")))?;
-    let mut url = format!(
-        "{API}repos/{}/pulls?state=open&per_page=100{filter}",
-        repo.full_name()
-    );
-    let mut list = Vec::new();
-    for _ in 0..MAX_PAGES {
-        let page = api.get(&url)?;
-        let prs: Vec<json::PullRequest> = parse(&page)?;
-        list.extend(prs.into_iter().filter_map(|pr| pr.into_pull_request(&repo)));
-        match page.next {
-            // Only ever to the API: a token must not follow a link elsewhere.
-            Some(next) if next.starts_with(API) => url = next,
-            _ => break,
+        let into =
+            |base: &str, connections: &std::collections::HashMap<String, json::Connection>| {
+                let base = GithubRepo::from_full_name(base)?;
+                Some(
+                    connections
+                        .values()
+                        .flat_map(|c| &c.nodes)
+                        .filter(|pr| ours(pr))
+                        .filter_map(|pr| pr.to_pull_request(&base))
+                        .collect::<Vec<_>>(),
+                )
+            };
+        found
+            .list
+            .extend(into(&repo.name_with_owner, &repo.connections).unwrap_or_default());
+        if let Some(parent) = &repo.parent {
+            found
+                .list
+                .extend(into(&parent.name_with_owner, &parent.connections).unwrap_or_default());
         }
     }
-    Ok(list)
+    found.list.sort_by(|a, b| {
+        (&a.base_repo, std::cmp::Reverse(a.number))
+            .cmp(&(&b.base_repo, std::cmp::Reverse(b.number)))
+    });
+    found
+        .list
+        .dedup_by(|a, b| a.base_repo == b.base_repo && a.number == b.number);
+    Ok(found)
 }
 
-#[cfg(feature = "github")]
-fn parse<T: serde::de::DeserializeOwned>(page: &Page) -> Result<T, ForgeError> {
-    serde_json::from_str(&page.body).map_err(|e| ForgeError::Parse(e.to_string()))
+/// The GraphQL request, as JSON, for the pull requests of `branches`: a connection `b<i>` per
+/// branch, on `origin` and on its parent. Branch names go in as variables, never into the
+/// query text.
+fn request(origin: &GithubRepo, branches: &[String]) -> String {
+    let connections: String = (0..branches.len())
+        .map(|i| {
+            format!(
+                "b{i}:pullRequests(states:OPEN,headRefName:$b{i},first:{PER_BRANCH}){{nodes{{...pr}}}}"
+            )
+        })
+        .collect();
+    let params: String = (0..branches.len())
+        .map(|i| format!(",$b{i}:String!"))
+        .collect();
+    let query = format!(
+        "query($owner:String!,$name:String!{params}){{repository(owner:$owner,name:$name){{\
+         nameWithOwner parent{{nameWithOwner {connections}}}{connections}}}}}\
+         fragment pr on PullRequest{{number title isDraft headRefOid headRefName \
+         headRepository{{nameWithOwner}} baseRefName author{{login}}}}"
+    );
+    let mut variables = serde_json::Map::new();
+    variables.insert("owner".into(), origin.owner.clone().into());
+    variables.insert("name".into(), origin.name.clone().into());
+    for (i, branch) in branches.iter().enumerate() {
+        variables.insert(format!("b{i}"), branch.clone().into());
+    }
+    serde_json::json!({ "query": query, "variables": variables }).to_string()
 }
 
-#[cfg(not(feature = "github"))]
-fn parse<T>(_: &Page) -> Result<T, ForgeError> {
-    Err(ForgeError::Unsupported)
-}
-
-/// The `rel="next"` URL of a `Link` header.
-#[cfg_attr(not(feature = "github"), allow(dead_code))]
-fn next_link(link: &str) -> Option<String> {
-    link.split(',').find_map(|part| {
-        let (url, params) = part.split_once(';')?;
-        let next = params
-            .split(';')
-            .any(|p| p.trim().replace(' ', "") == "rel=\"next\"");
-        let url = url.trim().strip_prefix('<')?.strip_suffix('>')?;
-        next.then(|| url.to_owned())
+/// The repository in an answer, or why there is none.
+fn repository(body: &str, origin: &GithubRepo) -> Result<json::Repository, ForgeError> {
+    let answer: json::Answer =
+        serde_json::from_str(body).map_err(|e| ForgeError::Parse(e.to_string()))?;
+    if let Some(repo) = answer.data.and_then(|d| d.repository) {
+        return Ok(repo);
+    }
+    let error = answer.errors.into_iter().next();
+    Err(match error {
+        Some(e) if e.kind.as_deref() == Some("NOT_FOUND") => ForgeError::NotFound {
+            repo: origin.full_name(),
+        },
+        Some(e) if e.kind.as_deref() == Some("RATE_LIMITED") => {
+            ForgeError::RateLimited { minutes: 60 }
+        }
+        Some(e) => ForgeError::Status {
+            status: 200,
+            message: e.message,
+        },
+        None => ForgeError::Parse("no repository in the answer".into()),
     })
 }
 
 /// The API's JSON, as far as it is read.
 mod json {
+    use std::collections::HashMap;
+
     use serde::Deserialize;
 
     use super::{GithubRepo, WEB};
     use crate::oid::Oid;
 
     #[derive(Debug, Deserialize)]
+    pub struct Answer {
+        pub data: Option<Data>,
+        #[serde(default)]
+        pub errors: Vec<Error>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct Data {
+        pub repository: Option<Repository>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct Error {
+        #[serde(rename = "type")]
+        pub kind: Option<String>,
+        pub message: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct Repository {
-        pub full_name: String,
-        /// Present when the repository is a fork.
+        pub name_with_owner: String,
+        #[serde(default)]
         pub parent: Option<Parent>,
+        /// `b0`, `b1`, …: the pull requests of each branch asked about.
+        #[serde(flatten)]
+        pub connections: HashMap<String, Connection>,
     }
 
     #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct Parent {
-        pub full_name: String,
+        pub name_with_owner: String,
+        #[serde(flatten)]
+        pub connections: HashMap<String, Connection>,
     }
 
     #[derive(Debug, Deserialize)]
+    pub struct Connection {
+        pub nodes: Vec<PullRequest>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct PullRequest {
         number: u64,
         title: String,
         #[serde(default)]
-        draft: bool,
-        user: Option<User>,
-        head: Branch,
-        base: Branch,
+        is_draft: bool,
+        head_ref_oid: String,
+        head_ref_name: String,
+        pub head_repository: Option<Named>,
+        base_ref_name: String,
+        author: Option<Login>,
     }
 
     #[derive(Debug, Deserialize)]
-    struct User {
+    #[serde(rename_all = "camelCase")]
+    pub struct Named {
+        pub name_with_owner: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct Login {
         login: String,
     }
 
-    #[derive(Debug, Deserialize)]
-    struct Branch {
-        #[serde(rename = "ref")]
-        name: String,
-        sha: String,
-        repo: Option<Parent>,
-    }
-
     impl PullRequest {
-        /// The pull request of the repository `repo`, if its head is a commit id. Its page is
-        /// built here, not taken from the answer, so that only github.com is ever opened.
-        pub fn into_pull_request(self, repo: &GithubRepo) -> Option<crate::forge::PullRequest> {
+        /// The pull request, into `base`, if its head is a commit id. Its page is built here,
+        /// not taken from the answer, so that only github.com is ever opened.
+        pub fn to_pull_request(&self, base: &GithubRepo) -> Option<crate::forge::PullRequest> {
             Some(crate::forge::PullRequest {
                 number: self.number,
-                title: self.title,
-                author: self.user.map(|u| u.login).unwrap_or_default(),
-                draft: self.draft,
-                head: Oid::from_hex(&self.head.sha)?,
-                head_branch: self.head.name,
-                head_repo: self.head.repo.map(|r| r.full_name),
-                base_branch: self.base.name,
-                base_repo: repo.full_name(),
-                url: format!("{WEB}{}/pull/{}", repo.full_name(), self.number),
+                title: self.title.clone(),
+                author: self
+                    .author
+                    .as_ref()
+                    .map(|a| a.login.clone())
+                    .unwrap_or_default(),
+                draft: self.is_draft,
+                head: Oid::from_hex(&self.head_ref_oid)?,
+                head_branch: self.head_ref_name.clone(),
+                head_repo: self
+                    .head_repository
+                    .as_ref()
+                    .map(|r| r.name_with_owner.clone()),
+                base_branch: self.base_ref_name.clone(),
+                base_repo: base.full_name(),
+                url: format!("{WEB}{}/pull/{}", base.full_name(), self.number),
             })
         }
     }
@@ -389,19 +508,17 @@ fn gh_token() -> Option<Token> {
     plausible.then(|| Token(token.to_owned()))
 }
 
-/// Runs `calls` against the API, with `gh`'s token if there is one. If GitHub turns the token
-/// down (401), or refuses it for a repository (403, e.g. an organisation that requires single
-/// sign-on), runs them again without it.
+/// Runs `calls` against the API, signed in with `gh`'s token; without one, or while the
+/// budget is paused, GitHub is not asked.
 #[cfg(feature = "github")]
 fn with_api<T>(calls: impl Fn(&dyn Api) -> Result<T, ForgeError>) -> Result<T, ForgeError> {
-    let token = gh_token();
-    let signed_in = Http::new(token.clone());
-    match calls(&signed_in) {
-        Err(ForgeError::Status {
-            status: 401 | 403, ..
-        }) if token.is_some() => calls(&Http::new(None)),
-        result => result,
+    if let Some(wait) = paused_for() {
+        return Err(ForgeError::RateLimited {
+            minutes: wait.as_secs().div_ceil(60),
+        });
     }
+    let token = gh_token().ok_or(ForgeError::NotSignedIn)?;
+    calls(&Http::new(token))
 }
 
 #[cfg(not(feature = "github"))]
@@ -413,13 +530,12 @@ fn with_api<T>(_: impl Fn(&dyn Api) -> Result<T, ForgeError>) -> Result<T, Forge
 #[cfg(feature = "github")]
 struct Http {
     agent: ureq::Agent,
-    token: Option<Token>,
+    token: Token,
 }
 
 #[cfg(feature = "github")]
 impl Http {
-    fn new(token: Option<Token>) -> Http {
-        use std::time::Duration;
+    fn new(token: Token) -> Http {
         use ureq::tls::{RootCerts, TlsConfig};
         // The system's certificate authorities, including any a company adds.
         let tls = TlsConfig::builder()
@@ -430,7 +546,7 @@ impl Http {
             .timeout_global(Some(Duration::from_secs(30)))
             // Error answers carry the reason, and the rate limit in their headers.
             .http_status_as_error(false)
-            .redirect_auth_headers(ureq::config::RedirectAuthHeaders::SameHost)
+            .max_redirects(0)
             .user_agent(concat!("parterre/", env!("CARGO_PKG_VERSION")))
             .build()
             .into();
@@ -449,60 +565,57 @@ impl fmt::Debug for Http {
 
 #[cfg(feature = "github")]
 impl Api for Http {
-    fn get(&self, url: &str) -> Result<Page, ForgeError> {
-        let mut request = self
+    fn post(&self, body: &str) -> Result<Answer, ForgeError> {
+        let Token(token) = &self.token;
+        let mut response = self
             .agent
-            .get(url)
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28");
-        if let Some(Token(token)) = &self.token
-            && url.starts_with(API)
-        {
-            request = request.header("Authorization", &format!("Bearer {token}"));
-        }
-        let mut response = request
-            .call()
+            .post(GRAPHQL)
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .send(body)
             .map_err(|e| ForgeError::Network(e.to_string()))?;
-        let header = |name: &str| {
+        let header = |name: &str| -> Option<u64> {
             response
                 .headers()
                 .get(name)
                 .and_then(|v| v.to_str().ok())
-                .map(str::to_owned)
+                .and_then(|v| v.trim().parse().ok())
         };
+        let quota = match (
+            header("x-ratelimit-remaining"),
+            header("x-ratelimit-limit"),
+            header("x-ratelimit-reset"),
+        ) {
+            (Some(remaining), Some(limit), Some(reset)) => Some(Quota {
+                remaining,
+                limit,
+                reset,
+            }),
+            _ => None,
+        };
+        // GitHub's secondary limits say how long to wait.
+        let retry_after = header("retry-after");
         let status = response.status().as_u16();
-        let next = header("link").as_deref().and_then(next_link);
-        let remaining = header("x-ratelimit-remaining");
-        let limit = header("x-ratelimit-limit").and_then(|l| l.parse().ok());
-        let reset = header("x-ratelimit-reset").and_then(|r| r.parse::<u64>().ok());
         let body = response
             .body_mut()
             .with_config()
             .limit(64 * 1024 * 1024)
             .read_to_string()
             .map_err(|e| ForgeError::Network(e.to_string()))?;
-        let authenticated = self.token.is_some();
         match status {
-            200..=299 => Ok(Page { body, next }),
-            403 | 429 if remaining.as_deref() == Some("0") => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_secs());
+            200..=299 => Ok(Answer { body, quota }),
+            401 => Err(ForgeError::TokenRejected),
+            403 | 429 if retry_after.is_some() || quota.is_some_and(|q| q.remaining == 0) => {
+                let until = match (retry_after, quota) {
+                    (Some(secs), _) => now() + secs,
+                    (None, Some(q)) => q.reset,
+                    (None, None) => now() + 60,
+                };
+                pause(until);
                 Err(ForgeError::RateLimited {
-                    limit: limit.unwrap_or(60),
-                    minutes: reset.map_or(60, |r| r.saturating_sub(now).div_ceil(60)),
-                    authenticated,
+                    minutes: until.saturating_sub(now()).div_ceil(60),
                 })
             }
-            404 => Err(ForgeError::NotFound {
-                repo: url
-                    .strip_prefix(API)
-                    .and_then(|p| p.strip_prefix("repos/"))
-                    .map_or(url, |p| p.split(['?']).next().unwrap_or(p))
-                    .trim_end_matches("/pulls")
-                    .to_owned(),
-                authenticated,
-            }),
             _ => {
                 #[derive(serde::Deserialize)]
                 struct Message {
@@ -584,207 +697,166 @@ mod tests {
     }
 
     #[test]
-    fn next_links() {
-        let link = "<https://api.github.com/repositories/1/pulls?page=2>; rel=\"next\", \
-                    <https://api.github.com/repositories/1/pulls?page=5>; rel=\"last\"";
-        assert_eq!(
-            next_link(link).as_deref(),
-            Some("https://api.github.com/repositories/1/pulls?page=2")
-        );
-        let last = "<https://api.github.com/repositories/1/pulls?page=4>; rel=\"prev\", \
-                    <https://api.github.com/repositories/1/pulls?page=1>; rel=\"first\"";
-        assert_eq!(next_link(last), None);
-        assert_eq!(next_link(""), None);
-    }
-
-    #[test]
     fn tokens_are_not_printed() {
         let token = Token("gho_secret".into());
         assert_eq!(format!("{token:?}"), "Token(***)");
         assert!(!format!("{:?}", Some(token)).contains("secret"));
     }
 
-    /// Answers from a map of URL → (body, next page).
-    #[cfg(feature = "github")]
+    /// Answers every request with the next of `answers`, and keeps the requests.
     struct Fake {
-        pages: std::collections::HashMap<String, (String, Option<String>)>,
-        asked: std::cell::RefCell<Vec<String>>,
+        answers: std::cell::RefCell<Vec<Answer>>,
+        asked: std::cell::RefCell<Vec<serde_json::Value>>,
     }
 
-    #[cfg(feature = "github")]
     impl Fake {
-        fn new(pages: &[(&str, &str, Option<&str>)]) -> Fake {
+        fn new(bodies: &[&str], quota: Option<Quota>) -> Fake {
             Fake {
-                pages: pages
-                    .iter()
-                    .map(|(url, body, next)| {
-                        (
-                            (*url).to_owned(),
-                            ((*body).to_owned(), next.map(str::to_owned)),
-                        )
-                    })
-                    .collect(),
+                answers: std::cell::RefCell::new(
+                    bodies
+                        .iter()
+                        .rev()
+                        .map(|b| Answer {
+                            body: (*b).to_owned(),
+                            quota,
+                        })
+                        .collect(),
+                ),
                 asked: std::cell::RefCell::new(Vec::new()),
             }
         }
     }
 
-    #[cfg(feature = "github")]
     impl Api for Fake {
-        fn get(&self, url: &str) -> Result<Page, ForgeError> {
-            self.asked.borrow_mut().push(url.to_owned());
-            let (body, next) = self.pages.get(url).cloned().ok_or(ForgeError::NotFound {
-                repo: url.into(),
-                authenticated: false,
-            })?;
-            Ok(Page { body, next })
+        fn post(&self, body: &str) -> Result<Answer, ForgeError> {
+            self.asked
+                .borrow_mut()
+                .push(serde_json::from_str(body).expect("requests are JSON"));
+            self.answers
+                .borrow_mut()
+                .pop()
+                .ok_or_else(|| ForgeError::Network("no more answers".into()))
         }
     }
 
-    #[cfg(feature = "github")]
-    fn pr_json(number: u64, head_repo: &str, head: char, draft: bool) -> String {
+    fn pr(number: u64, head_repo: Option<&str>, head: char) -> String {
+        let repo = head_repo.map_or("null".to_owned(), |r| {
+            format!(r#"{{"nameWithOwner":"{r}"}}"#)
+        });
         format!(
-            r#"{{"number":{number},"title":"PR {number}","draft":{draft},
-                "html_url":"https://evil.example/{number}","user":{{"login":"someone"}},
-                "head":{{"ref":"topic-{number}","sha":"{sha}","repo":{{"full_name":"{head_repo}"}}}},
-                "base":{{"ref":"main","sha":"{base}","repo":{{"full_name":"x/y"}}}},
-                "unknown":[1,2,3]}}"#,
+            r#"{{"number":{number},"title":"PR {number}","isDraft":{draft},
+                "headRefOid":"{sha}","headRefName":"topic","headRepository":{repo},
+                "baseRefName":"main","author":{author}}}"#,
+            draft = number.is_multiple_of(2),
             sha = head.to_string().repeat(40),
-            base = "0".repeat(40),
+            author = if number == 3 {
+                "null"
+            } else {
+                r#"{"login":"someone"}"#
+            },
         )
     }
 
-    #[cfg(feature = "github")]
-    #[test]
-    fn lists_open_pull_requests_page_by_page() {
-        let page1 = format!(
-            "[{},{}]",
-            pr_json(12, "me/repo", 'a', false),
-            pr_json(11, "someone/fork", 'b', true)
-        );
-        let page2 = format!("[{}]", pr_json(3, "me/repo", 'c', false));
-        let api = Fake::new(&[
-            (
-                "https://api.github.com/repos/Me/Repo",
-                r#"{"full_name":"me/repo","fork":false,"parent":null}"#,
-                None,
-            ),
-            (
-                "https://api.github.com/repos/me/repo/pulls?state=open&per_page=100",
-                &page1,
-                Some("https://api.github.com/repositories/7/pulls?page=2"),
-            ),
-            (
-                "https://api.github.com/repositories/7/pulls?page=2",
-                &page2,
-                // Never followed off the API.
-                Some("https://evil.example/pulls?page=3"),
-            ),
-        ]);
-        let (name, list) = open_pull_requests(&api, &repo("Me", "Repo").unwrap(), None).unwrap();
-        assert_eq!(name, "me/repo");
-        let numbers: Vec<u64> = list.iter().map(|pr| pr.number).collect();
-        assert_eq!(numbers, [12, 11, 3]);
-        let pr = &list[1];
-        assert_eq!(pr.title, "PR 11");
-        assert_eq!(pr.author, "someone");
-        assert!(pr.draft);
-        assert_eq!(pr.head.to_hex(), "b".repeat(40));
-        assert_eq!(pr.head_branch, "topic-11");
-        assert_eq!(pr.head_repo.as_deref(), Some("someone/fork"));
-        assert_eq!(pr.base_branch, "main");
-        assert_eq!(pr.base_repo, "me/repo");
-        // Built from the repository, not the answer's html_url.
-        assert_eq!(pr.url, "https://github.com/me/repo/pull/11");
-        assert_eq!(api.asked.borrow().len(), 3);
+    fn branches(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("topic-{i}")).collect()
     }
 
-    #[cfg(feature = "github")]
     #[test]
-    fn a_fork_gets_its_own_pull_requests_into_its_parent() {
-        let own = format!("[{}]", pr_json(2, "me/fork", 'a', false));
-        let parent = format!(
-            "[{},{},{}]",
-            pr_json(40, "other/fork", 'b', false),
-            pr_json(39, "Me/Fork", 'c', false),
-            // Its fork was deleted.
-            pr_json(38, "", 'd', false).replace(r#"{"full_name":""}"#, "null"),
+    fn asks_for_each_branch_on_origin_and_its_parent() {
+        let body = format!(
+            r#"{{"data":{{"repository":{{"nameWithOwner":"Me/Fork",
+                "b0":{{"nodes":[{}, {}]}},
+                "b1":{{"nodes":[]}},
+                "parent":{{"nameWithOwner":"up/stream",
+                    "b0":{{"nodes":[{}, {}]}},
+                    "b1":{{"nodes":[{}]}}}}}}}}}}"#,
+            pr(7, Some("me/fork"), 'a'),
+            // Someone else's fork of the same repository, with a branch of the same name.
+            pr(8, Some("other/fork"), 'b'),
+            pr(40, Some("other/fork"), 'c'),
+            pr(39, Some("me/fork"), 'd'),
+            pr(3, None, 'e'),
         );
-        let api = Fake::new(&[
-            (
-                "https://api.github.com/repos/me/fork",
-                r#"{"full_name":"me/fork","fork":true,"parent":{"full_name":"up/stream"}}"#,
-                None,
-            ),
-            (
-                "https://api.github.com/repos/me/fork/pulls?state=open&per_page=100",
-                &own,
-                None,
-            ),
-            (
-                "https://api.github.com/repos/up/stream/pulls?state=open&per_page=100",
-                &parent,
-                None,
-            ),
-        ]);
-        let (_, list) = open_pull_requests(&api, &repo("me", "fork").unwrap(), None).unwrap();
-        let found: Vec<(u64, &str)> = list
+        let api = Fake::new(&[&body], None);
+        let origin = repo("me", "fork").unwrap();
+        let found = open_pull_requests(&api, &origin, &["topic".into(), "a\"b".into()]).unwrap();
+        assert_eq!(found.name, "Me/Fork");
+        let got: Vec<(u64, &str, &str)> = found
+            .list
             .iter()
-            .map(|pr| (pr.number, pr.base_repo.as_str()))
+            .map(|p| (p.number, p.base_repo.as_str(), p.url.as_str()))
             .collect();
-        assert_eq!(found, [(2, "me/fork"), (39, "up/stream")]);
-        assert_eq!(list[1].url, "https://github.com/up/stream/pull/39");
+        assert_eq!(
+            got,
+            [
+                (7, "Me/Fork", "https://github.com/Me/Fork/pull/7"),
+                (39, "up/stream", "https://github.com/up/stream/pull/39"),
+            ]
+        );
+        assert_eq!(found.list[0].head.to_hex(), "a".repeat(40));
+        assert_eq!(found.pause_until, None);
+        // Branch names are variables, never part of the query.
+        let asked = &api.asked.borrow()[0];
+        assert_eq!(asked["variables"]["owner"], "me");
+        assert_eq!(asked["variables"]["b1"], "a\"b");
+        let query = asked["query"].as_str().unwrap();
+        assert!(query.contains("b1:pullRequests(states:OPEN,headRefName:$b1,first:100)"));
+        assert!(!query.contains("a\""));
     }
 
-    #[cfg(feature = "github")]
     #[test]
-    fn a_fork_with_few_branches_asks_for_them_one_by_one() {
-        let topic = format!("[{}]", pr_json(39, "Me/Fork", 'c', false));
-        let api = Fake::new(&[
-            (
-                "https://api.github.com/repos/me/fork",
-                r#"{"full_name":"me/fork","fork":true,"parent":{"full_name":"up/stream"}}"#,
-                None,
-            ),
-            (
-                "https://api.github.com/repos/me/fork/pulls?state=open&per_page=100",
-                "[]",
-                None,
-            ),
-            (
-                "https://api.github.com/repos/up/stream/pulls?state=open&per_page=100\
-                 &head=me%3Atopic%2Fx",
-                &topic,
-                None,
-            ),
-            (
-                "https://api.github.com/repos/up/stream/pulls?state=open&per_page=100\
-                 &head=me%3Aa%26b%23c%2B",
-                "[]",
-                None,
-            ),
-        ]);
-        let branches = ["topic/x".to_owned(), "a&b#c+".to_owned()];
-        let (_, list) =
-            open_pull_requests(&api, &repo("me", "fork").unwrap(), Some(&branches)).unwrap();
-        let numbers: Vec<u64> = list.iter().map(|pr| pr.number).collect();
-        assert_eq!(numbers, [39]);
-        // Not the parent's whole list.
-        assert_eq!(api.asked.borrow().len(), 4);
+    fn asks_about_a_hundred_branches_at_a_time() {
+        let empty = r#"{"data":{"repository":{"nameWithOwner":"o/r","parent":null}}}"#;
+        let api = Fake::new(&[empty, empty, empty], None);
+        open_pull_requests(&api, &repo("o", "r").unwrap(), &branches(250)).unwrap();
+        let sizes: Vec<usize> = api
+            .asked
+            .borrow()
+            .iter()
+            .map(|a| a["variables"].as_object().unwrap().len() - 2)
+            .collect();
+        assert_eq!(sizes, [100, 100, 50]);
     }
 
-    #[cfg(feature = "github")]
+    #[test]
+    fn stops_before_the_last_tenth_of_the_budget() {
+        let empty = r#"{"data":{"repository":{"nameWithOwner":"o/r","parent":null}}}"#;
+        let quota = |remaining| Quota {
+            remaining,
+            limit: 5000,
+            reset: 1_900_000_000,
+        };
+        let found = open_pull_requests(
+            &Fake::new(&[empty], Some(quota(500))),
+            &repo("o", "r").unwrap(),
+            &branches(1),
+        )
+        .unwrap();
+        assert_eq!(found.pause_until, None);
+        let found = open_pull_requests(
+            &Fake::new(&[empty], Some(quota(499))),
+            &repo("o", "r").unwrap(),
+            &branches(1),
+        )
+        .unwrap();
+        assert_eq!(found.pause_until, Some(1_900_000_000));
+    }
+
     #[test]
     fn errors_are_passed_on() {
-        let api = Fake::new(&[]);
+        let origin = repo("me", "gone").unwrap();
+        let missing = r#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND",
+            "message":"Could not resolve to a Repository with the name 'me/gone'."}]}"#;
         assert!(matches!(
-            open_pull_requests(&api, &repo("me", "gone").unwrap(), None),
+            open_pull_requests(&Fake::new(&[missing], None), &origin, &branches(1)),
             Err(ForgeError::NotFound { .. })
         ));
-        let api = Fake::new(&[("https://api.github.com/repos/me/odd", "<html>", None)]);
-        assert!(matches!(
-            open_pull_requests(&api, &repo("me", "odd").unwrap(), None),
-            Err(ForgeError::Parse(_))
-        ));
+        let odd = open_pull_requests(&Fake::new(&["<html>"], None), &origin, &branches(1));
+        assert!(matches!(odd, Err(ForgeError::Parse(_))));
+        let other = r#"{"errors":[{"type":"FORBIDDEN","message":"SAML enforcement"}]}"#;
+        match open_pull_requests(&Fake::new(&[other], None), &origin, &branches(1)) {
+            Err(e) => assert!(e.to_string().contains("SAML enforcement"), "{e}"),
+            Ok(_) => panic!("an error was expected"),
+        }
     }
 }

@@ -94,8 +94,8 @@ struct Cli {
     #[arg(long)]
     no_tags: bool,
 
-    /// Show open pull requests from GitHub on the commits they propose (asks GitHub; not with
-    /// --export).
+    /// Show open pull requests from GitHub on the commits they propose, even if turned off in
+    /// the settings (needs a signed-in gh; not with --export).
     #[arg(long)]
     pull_requests: bool,
 

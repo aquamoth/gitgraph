@@ -104,20 +104,22 @@ fn pull_requests_label_their_heads_in_the_graph() {
     assert!(labelled.contains(&("C".to_owned(), vec![])));
 }
 
-/// Asks GitHub for parterre's own open pull requests. Needs the network, so only on request:
+/// Asks GitHub for parterre's open pull requests from its `main`, signed in as `gh` is.
+/// Needs the network and a signed-in `gh`, so only on request:
 /// `cargo test -p parterre-core --features github --test forge -- --ignored`.
 #[cfg(feature = "github")]
 #[test]
-#[ignore = "needs the network"]
+#[ignore = "needs the network and a signed-in gh"]
 fn loads_parterres_pull_requests_from_github() {
     let mut r = TestRepo::new();
-    r.commit("A");
+    let a = r.commit("A");
     r.git(&[
         "remote",
         "add",
         "origin",
         "https://github.com/aquamoth/parterre.git",
     ]);
+    r.git(&["update-ref", "refs/remotes/origin/main", &a]);
     let prs = github::load(&Git::new(r.path())).expect("GitHub answers");
     assert_eq!(
         prs.remotes,
@@ -131,7 +133,23 @@ fn loads_parterres_pull_requests_from_github() {
             pr.url
                 .starts_with("https://github.com/aquamoth/parterre/pull/")
         );
-        assert_eq!(pr.base_repo, "aquamoth/parterre");
+        assert_eq!(pr.head_branch, "main");
     }
-    eprintln!("{} open pull requests", prs.list.len());
+    eprintln!("{} open pull requests from main", prs.list.len());
+}
+
+#[test]
+fn github_is_not_asked_without_fetched_branches() {
+    let mut r = TestRepo::new();
+    r.commit("A");
+    r.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/aquamoth/parterre.git",
+    ]);
+    // No branch of origin fetched: nothing could be shown, so nothing is asked (not even for
+    // a token), and there is no error.
+    let prs = github::load(&Git::new(r.path())).expect("nothing to ask");
+    assert!(prs.list.is_empty());
 }

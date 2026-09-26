@@ -5,6 +5,7 @@
 //! repository has already, as a label on that commit ([`PullRequests::heads`]).
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use crate::git::{Git, GitError};
 use crate::oid::Oid;
@@ -120,28 +121,51 @@ pub enum ForgeError {
     NoForge,
     #[error("this build of parterre has no GitHub support")]
     Unsupported,
+    /// GitHub is only asked when signed in.
+    #[error("sign in with `gh auth login` to see them")]
+    NotSignedIn,
+    #[error("GitHub turned down gh's sign-in; sign in again with `gh auth login`")]
+    TokenRejected,
     #[error(transparent)]
     Git(#[from] GitError),
     #[error("could not reach GitHub: {0}")]
     Network(String),
-    #[error(
-        "GitHub's limit of {limit} requests an hour is used up; it resets in {minutes} min{}",
-        if *.authenticated { "" } else { " (signing in with `gh auth login` raises the limit)" }
-    )]
-    RateLimited {
-        limit: u32,
-        minutes: u64,
-        authenticated: bool,
-    },
-    #[error(
-        "GitHub has no repository {repo}{}",
-        if *.authenticated { "" } else { ", or it is private (`gh auth login` lets parterre see private repositories)" }
-    )]
-    NotFound { repo: String, authenticated: bool },
+    #[error("GitHub's hourly limit is nearly used up; asking again in {minutes} min")]
+    RateLimited { minutes: u64 },
+    #[error("GitHub has no repository {repo}, or gh's account can't see it")]
+    NotFound { repo: String },
     #[error("GitHub answered {status}: {message}")]
     Status { status: u16, message: String },
     #[error("unexpected answer from GitHub: {0}")]
     Parse(String),
+}
+
+impl ForgeError {
+    /// True if this only says that pull requests need signing in: news, not a failure.
+    pub fn is_sign_in(&self) -> bool {
+        matches!(self, ForgeError::NotSignedIn)
+    }
+
+    /// How long GitHub asked to be left alone, if it did.
+    pub fn wait(&self) -> Option<Duration> {
+        match self {
+            ForgeError::RateLimited { minutes } => Some(Duration::from_secs(minutes * 60)),
+            _ => None,
+        }
+    }
+}
+
+/// How long a loaded list is used before GitHub is asked again, as in t3code: a minute if it
+/// has pull requests (they change), five if not.
+pub fn fresh_for(found_any: bool) -> Duration {
+    Duration::from_secs(if found_any { 60 } else { 5 * 60 })
+}
+
+/// How long to wait after `failures` failed loads in a row, as in t3code: 20 s, doubling, at
+/// most 15 min.
+pub fn retry_after(failures: u32) -> Duration {
+    let doublings = failures.saturating_sub(1).min(6);
+    Duration::from_secs((20u64 << doublings).min(15 * 60))
 }
 
 /// The remotes of the repository `git` works on, with their URLs (`insteadOf` rewrites
@@ -298,6 +322,15 @@ mod tests {
         assert_eq!(pr.head_label(), "them:feature");
         pr.head_repo = None;
         assert_eq!(pr.head_label(), "feature (deleted fork)");
+    }
+
+    #[test]
+    fn asks_again_like_t3code() {
+        assert_eq!(fresh_for(true), Duration::from_secs(60));
+        assert_eq!(fresh_for(false), Duration::from_secs(300));
+        let waits: Vec<u64> = (1..=8).map(|n| retry_after(n).as_secs()).collect();
+        assert_eq!(waits, [20, 40, 80, 160, 320, 640, 900, 900]);
+        assert_eq!(retry_after(0).as_secs(), 20);
     }
 
     #[test]

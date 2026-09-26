@@ -315,27 +315,34 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 24. **Pull requests on GitHub, slice 1** (research §12 and §14). Not in TortoiseGit. Tried on
     a commits-only clone of `cli/cli`: 63 open pull requests, 25 of them from its own branches,
     shown; the 38 from forks need slice 2. Calls you may want to overrule:
-    - **Off by default, and GitHub is asked only while they are shown.** §12 had the button
-      greyed out until the list had loaded, which means asking GitHub for every GitHub
-      repository opened. Instead the button is greyed out only when `origin` isn't on GitHub
-      (git alone tells), and turning it on loads the list. On for one repository is on for all,
-      like the other settings. `--pull-requests` turns it on from the command line;
-      `--export` never asks GitHub.
-    - **When the list loads:** when turned on, when a repository opens with them on, and on F5.
-      Not when parterre reloads by itself because the refs changed (the unauthenticated limit
-      is 60 requests an hour, and a fetch doesn't change what is open on GitHub), nor on a
-      timer. A failed load isn't retried until F5 or turning them off and on.
-    - **Signing in:** `gh auth token`, if `gh` is installed and signed in (5 s at most), then
-      unauthenticated. A token GitHub turns down (401) falls back to unauthenticated.
-      `GH_TOKEN` and `git credential fill` (§6) are left for later. Rate-limit and not-found
-      errors say that `gh auth login` would help.
+    - **Asked for as t3code does** (your call of 2026-09-26, after looking at how t3code
+      gets its pull requests), so that many users don't weigh on GitHub:
+      - **Only signed in.** With the token of a signed-in `gh` (`gh auth token`), or not at
+        all: without one, GitHub is never asked, and the status bar says, in grey, to run
+        `gh auth login`. `GH_TOKEN` and `git credential fill` (§6) are left for later.
+      - **Per branch, only fetched ones.** One GraphQL request per 100 branches of `origin`
+        fetched here, with a `pullRequests(headRefName:)` connection of 100 per branch on
+        `origin` and on its parent at once, and only the fields shown. As in t3code (`gh pr
+        list --head`), the branch name is matched by GitHub and the head repository here,
+        since another fork's `main` isn't ours. Only a fetched branch's pull request can be
+        shown, so nothing showable is missed. No branch fetched: no request. Your fork of
+        t3code: 1 request, 0.6 s, 1 point; asking the parent for all its open pull requests by
+        REST took 15 requests, 30 MB and 23 s. `cli/cli` (255 branches): 3 requests.
+      - **Cached per repository** for a minute when it had pull requests, five when not, as
+        t3code. Asked again only after that, and only when the repository is opened again
+        or its refs change (a fetch, a push). F5 and turning them on always ask. No polling
+        (t3code polls every 30 s).
+      - **Backing off after failures,** 20 s doubling to 15 min, keeping the last list shown.
+        The button's tooltip says what went wrong last.
+      - **A budget:** once fewer than a tenth of the hour's points are left (t3code's
+        reserve), or GitHub says to wait (`Retry-After`), nothing is asked until the limit
+        resets, for any repository.
+    - **On by default,** as t3code shows them whenever it can. §12 had the button greyed out
+      until the list had loaded; it is greyed out only when `origin` isn't on GitHub (git
+      alone tells). Settings saved while they were off by default keep them off. On for one
+      repository is on for all, like the other settings. `--export` never asks GitHub.
     - **Which repository:** `origin` only, as §12 says; gh's `gh-resolved` and remote ranking
       (§7) aren't used. A renamed repository is followed under its new name.
-    - **A fork's pull requests into its parent** are asked for branch by branch
-      (`head=owner:branch`) when `origin` has at most 10 branches fetched here, rather than
-      picked out of all of the parent's: pingdotgg/t3code's 15 pages (2 MB each) took 23 s,
-      the two branches of a fork of it 1.3 s. With more branches, the whole list. Either way
-      every pull request that can be shown is found, as only fetched branches can be.
     - **Base branch shown** means: a remote-tracking branch of the base branch, in any remote
       pointing at the pull request's repository, or a local branch whose upstream that is.
       So with remote branches hidden, `main` tracking `origin/main` still counts.
@@ -360,8 +367,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       glyph included.
     - **Cost:** `ureq` with rustls and ring, plus `serde_json`: 19 crates on Linux (20 on
       Windows, 23 on macOS) and 2.0 MB (the stripped Linux binary goes from 13.4 to 15.5 MB).
-      Behind the `github` cargo feature, on by default; without it the button stays, and
-      loading says the build has no GitHub support. ring compiles C and assembly, so building
+      ureq is behind the `github` cargo feature, on by default; without it the button stays,
+      and loading says the build has no GitHub support. ring compiles C and assembly, so building
       parterre (`cargo install` too) now needs a C compiler for the target: there already on
       the CI runners, and on Linux almost always; the Windows cross-check from Linux needs
       MinGW-w64 or `--no-default-features` (`docs/building.md`).

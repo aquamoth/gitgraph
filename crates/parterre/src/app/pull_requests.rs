@@ -2,17 +2,21 @@
 //! TortoiseGit.
 //!
 //! Whether `origin` is on GitHub is asked of git alone, when a repository is opened. GitHub
-//! itself is asked only while pull requests are shown: when they are turned on, when a
-//! repository is opened with them on, and on F5. Reloads by themselves (when the refs change)
-//! keep the list they have: the unauthenticated limit is 60 requests an hour.
+//! itself is asked only while pull requests are shown and `gh` is signed in, and as t3code
+//! does: a repository's list is kept for a minute (five if it had none) and asked for again
+//! only after that, when the repository is opened again or its refs change. F5 and turning
+//! them on always ask. After a failure the wait doubles from 20 s up to 15 min, and the last
+//! list stays shown. There is no polling.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
+use std::time::Instant;
 
 use eframe::egui;
 use parterre_core::forge::github::{self, GithubRepo};
-use parterre_core::forge::{ForgeError, PullRequests};
+use parterre_core::forge::{self, ForgeError, PullRequests};
 use parterre_core::git::Git;
 
 /// What a finished load brought.
@@ -20,33 +24,49 @@ use parterre_core::git::Git;
 pub enum Loaded {
     /// A list of this many pull requests.
     Found(usize),
-    Failed(String),
+    /// Why there is none; `quiet` if it only says that signing in is needed.
+    Failed { message: String, quiet: bool },
+}
+
+/// What is known about one repository's pull requests.
+#[derive(Debug)]
+struct Entry {
+    /// The last list loaded, kept when a later load fails.
+    list: Option<Arc<PullRequests>>,
+    /// When to ask GitHub again, at the earliest (F5 aside).
+    next: Instant,
+    /// Failed loads in a row.
+    failures: u32,
+    /// Why the last load failed, if it did.
+    error: Option<String>,
 }
 
 #[derive(Debug, Default)]
 pub struct PullRequestLoader {
-    /// The repository everything here is about.
+    /// The repository shown.
     path: Option<PathBuf>,
     /// The GitHub repository its `origin` points at, if any.
     origin: Option<GithubRepo>,
-    list: Option<Arc<PullRequests>>,
-    job: Option<Receiver<Result<PullRequests, ForgeError>>>,
-    /// The last load failed; don't try again by itself.
-    failed: bool,
+    /// Every repository asked about in this run.
+    cache: HashMap<PathBuf, Entry>,
+    /// The load running, and the repository it is for.
+    job: Option<(PathBuf, Receiver<Result<PullRequests, ForgeError>>)>,
+    /// Something happened after which a list that is no longer fresh is loaded again: the
+    /// repository was opened, or its refs changed.
+    due: bool,
+    /// Load whether or not the list is fresh: F5, or pull requests turned on.
+    force: bool,
 }
 
 impl PullRequestLoader {
-    /// Follows the repository shown (`None` for none), forgetting everything about the one
-    /// before when it changes.
+    /// Follows the repository shown (`None` for none).
     pub fn follow(&mut self, path: Option<&Path>) {
         if self.path.as_deref() == path {
             return;
         }
-        *self = PullRequestLoader {
-            path: path.map(Path::to_owned),
-            origin: path.and_then(|p| github::origin(&Git::new(p))),
-            ..PullRequestLoader::default()
-        };
+        self.path = path.map(Path::to_owned);
+        self.origin = path.and_then(|p| github::origin(&Git::new(p)));
+        self.due = true;
     }
 
     /// The GitHub repository `origin` points at: pull requests can be shown only if there is
@@ -55,76 +75,99 @@ impl PullRequestLoader {
         self.origin.as_ref()
     }
 
+    fn entry(&self) -> Option<&Entry> {
+        self.cache.get(self.path.as_ref()?)
+    }
+
+    /// The shown repository's last list.
     pub fn list(&self) -> Option<&Arc<PullRequests>> {
-        self.list.as_ref()
+        self.entry()?.list.as_ref()
+    }
+
+    /// Why the shown repository's last load failed, if it did.
+    pub fn error(&self) -> Option<&str> {
+        self.entry()?.error.as_deref()
     }
 
     pub fn is_loading(&self) -> bool {
         self.job.is_some()
     }
 
-    /// Loads the list if pull requests are `shown` and it hasn't been loaded (or failed to);
-    /// returns what a load that has finished brought.
+    /// The refs changed: load again if the list is no longer fresh.
+    pub fn refs_changed(&mut self) {
+        self.due = true;
+    }
+
+    /// Load again now (F5, or pull requests turned on). The list shown stays until the new
+    /// one is in.
+    pub fn refresh(&mut self) {
+        self.force = true;
+    }
+
+    /// Starts a load if one is due and pull requests are `shown`; returns what a load of the
+    /// shown repository that has finished brought.
     pub fn update(&mut self, shown: bool, ctx: &egui::Context) -> Option<Loaded> {
-        if shown && self.list.is_none() && !self.failed && self.job.is_none() {
-            self.load(ctx);
+        if shown && self.origin.is_some() && self.job.is_none() {
+            let stale = self.entry().is_none_or(|e| Instant::now() >= e.next);
+            if self.force || (self.due && stale) {
+                self.load(ctx);
+            }
+            self.due = false;
+            self.force = false;
         }
-        let job = self.job.as_ref()?;
+        let (path, job) = self.job.as_ref()?;
         let result = match job.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => return None,
-            Err(TryRecvError::Disconnected) => {
-                self.job = None;
-                self.failed = true;
-                return Some(Loaded::Failed("loading them stopped unexpectedly".into()));
-            }
+            Err(TryRecvError::Disconnected) => Err(ForgeError::Network(
+                "loading them stopped unexpectedly".into(),
+            )),
         };
+        let path = path.clone();
         self.job = None;
-        Some(match result {
+        let now = Instant::now();
+        let entry = self.cache.entry(path.clone()).or_insert(Entry {
+            list: None,
+            next: now,
+            failures: 0,
+            error: None,
+        });
+        let loaded = match result {
             Ok(list) => {
                 let count = list.list.len();
-                self.list = Some(Arc::new(list));
-                self.failed = false;
+                entry.next = now + forge::fresh_for(count > 0);
+                entry.list = Some(Arc::new(list));
+                entry.failures = 0;
+                entry.error = None;
                 Loaded::Found(count)
             }
             Err(e) => {
-                self.failed = true;
-                Loaded::Failed(e.to_string())
+                entry.failures += 1;
+                let wait = forge::retry_after(entry.failures).max(e.wait().unwrap_or_default());
+                entry.next = now + wait;
+                entry.error = Some(e.to_string());
+                Loaded::Failed {
+                    message: e.to_string(),
+                    quiet: e.is_sign_in(),
+                }
             }
-        })
-    }
-
-    /// Loads the list again (F5). The list shown stays until the new one is in.
-    pub fn reload(&mut self, ctx: &egui::Context) {
-        self.failed = false;
-        self.load(ctx);
-    }
-
-    /// Pull requests were turned on: try again if the last load failed.
-    pub fn turned_on(&mut self) {
-        self.failed = false;
-    }
-
-    /// Forgets the list (F5 while pull requests are hidden), so that showing them loads it
-    /// afresh.
-    pub fn forget(&mut self) {
-        self.list = None;
-        self.failed = false;
+        };
+        // Another repository has been opened meanwhile: this one's result waits in the cache.
+        (self.path.as_ref() == Some(&path)).then_some(loaded)
     }
 
     fn load(&mut self, ctx: &egui::Context) {
-        let (Some(path), Some(_)) = (&self.path, &self.origin) else {
+        let Some(path) = self.path.clone() else {
             return;
         };
         let (tx, rx) = std::sync::mpsc::channel();
-        let git = Git::new(path);
+        let git = Git::new(&path);
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            // The receiver is gone if another repository was opened meanwhile.
             let _ = tx.send(github::load(&git));
             ctx.request_repaint();
         });
-        self.job = Some(rx);
+        self.job = Some((path, rx));
     }
 }
 

@@ -12,13 +12,14 @@ homepage.workspace = true
 readme = "README.md"
 
 [features]
-# Open pull requests from GitHub's API (`forge::github`). Without it, loading them fails.
-github = ["dep:ureq", "dep:serde_json"]
+# Open pull requests from GitHub's API (`forge::github`): the HTTPS client. Without it, loading
+# them fails.
+github = ["dep:ureq"]
 
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
-serde_json = { workspace = true, optional = true }
+serde_json.workspace = true
 ureq = { workspace = true, optional = true }
 
 # Finding Git for Windows when git.exe isn't on PATH (see src/git/program.rs).

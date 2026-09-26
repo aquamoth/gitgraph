@@ -772,6 +772,7 @@ impl ParterreApp {
             self.carried_moves = self.rest_offsets();
         }
         let repo = Arc::new(repo);
+        self.pull_requests.refs_changed();
         self.log.reload(&repo);
         self.repo = Some(repo);
         self.requested = None;
@@ -811,17 +812,10 @@ impl ParterreApp {
         let loader = &mut self.pull_requests;
         loader.follow(self.repo.as_ref().map(|r| r.path.as_path()));
         let shown = self.settings.graph.show_pull_requests && loader.origin().is_some();
-        if shown && !self.pull_requests_shown {
-            loader.turned_on();
+        if shown && !self.pull_requests_shown || std::mem::take(&mut self.refresh_pull_requests) {
+            loader.refresh();
         }
         self.pull_requests_shown = shown;
-        if std::mem::take(&mut self.refresh_pull_requests) {
-            if shown {
-                loader.reload(ctx);
-            } else {
-                loader.forget();
-            }
-        }
         match loader.update(shown, ctx) {
             Some(pull_requests::Loaded::Found(count)) => {
                 // Those whose head isn't here (another fork's, or pushed since the last fetch)
@@ -835,8 +829,8 @@ impl ParterreApp {
                 // Lay out again, with them.
                 self.requested = None;
             }
-            Some(pull_requests::Loaded::Failed(e)) => {
-                self.status = Some((format!("Pull requests: {e}"), true));
+            Some(pull_requests::Loaded::Failed { message, quiet }) => {
+                self.status = Some((format!("Pull requests: {message}"), !quiet));
             }
             None => {}
         }

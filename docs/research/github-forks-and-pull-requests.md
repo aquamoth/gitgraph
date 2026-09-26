@@ -15,6 +15,9 @@ installed and logged in. "unauth" means no token was sent.
 **Feasible:** yes, and without `gh`, a new remote, or any write to the user's repository.
 
 **Decided scope (2026-09-26):** open PRs only, shown as PR-icon tags on nodes. See §12 and §14.
+**Built (slice 1):** differently from §3, §6 and §12.2, after looking at how t3code does it:
+signed in only, per fetched branch over GraphQL, cached, within a budget. See `TODO.md`,
+question 24.
 The points below cover everything that was investigated.
 
 - **PR heads come through git alone.** GitHub publishes `refs/pull/<N>/head` for every PR, open

@@ -97,7 +97,7 @@ impl Default for GraphOptions {
             current_branch_only: false,
             ref_filter: String::new(),
             hide_branches: String::new(),
-            show_pull_requests: false,
+            show_pull_requests: true,
         }
     }
 }

@@ -18,8 +18,9 @@ crates/parterre-core   GUI-free; everything testable lives here
   pattern.rs           branch-name wildcards, for hiding and colouring branches
   forge.rs             open pull requests: the model, where each is shown (head commit and
                        base-branch refs), remotes and upstreams from git
-    github.rs          github.com remotes, the REST API (paging, forks, rate limits) through
-                       ureq behind the `github` feature, `gh auth token`
+    github.rs          github.com remotes; one GraphQL request per 100 fetched branches of
+                       origin (and its parent), signed in with `gh auth token`, within a
+                       rate-limit budget; HTTPS through ureq behind the `github` feature
   recent.rs            the recently opened repositories
   watch.rs             fingerprint of the files git keeps refs in, for reloading by itself
   glyphs.rs            toolbar and menu icons as SVG path data, and a path flattener
@@ -41,7 +42,8 @@ crates/parterre        the binary (eframe/egui)
     toolbar.rs         the toolbar, its popovers and the ☰ menu
     settings_window.rs the settings: pages of rows, applied as you change them
     auto_reload.rs     a worker thread that reloads when the refs change
-    pull_requests.rs   loads open pull requests on a worker thread while they are shown
+    pull_requests.rs   loads open pull requests on a worker thread while they are shown, cached
+                       per repository, with back-off
     log_window.rs      the log window (Show log): an immediate viewport with three panes
                        (commits, details, changed files) that one of four fixed layouts
                        arranges, picked in its header; changed files come from git on a
