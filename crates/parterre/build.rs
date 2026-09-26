@@ -2,6 +2,10 @@
 //!
 //! The release workflow sets `PARTERRE_RELEASE_TAG` to the pushed tag; the build then fails
 //! unless that tag matches `Cargo.toml` and the commit being built.
+//!
+//! The sources are either a git checkout of the workspace, or a crate packaged by `cargo
+//! package` (e.g. downloaded from crates.io by `cargo install`), which has no `.git` but records
+//! its commit in `.cargo_vcs_info.json`.
 
 #[path = "src/version.rs"]
 mod version;
@@ -9,7 +13,7 @@ mod version;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use version::GitState;
+use version::{GitState, Source};
 
 const RELEASE_TAG: &str = "PARTERRE_RELEASE_TAG";
 
@@ -30,17 +34,43 @@ fn main() {
     println!("cargo:rerun-if-env-changed={RELEASE_TAG}");
     let release_tag = std::env::var(RELEASE_TAG).ok().filter(|t| !t.is_empty());
 
-    let git = git_state(&root);
-    if git.is_some() {
-        watch(&root);
+    let packaged = manifest_dir.join("Cargo.toml.orig").exists();
+
+    // The About dialog shows LICENSE and NOTICE. A packaged crate carries its own copies. In the
+    // workspace the crate's are symlinks to the root's, which Windows checkouts may turn into
+    // text files holding the link's target, so read the root's.
+    let legal_dir = if packaged { &manifest_dir } else { &root };
+    for name in ["LICENSE", "NOTICE"] {
+        let path = legal_dir.join(name);
+        println!("cargo:rustc-env=PARTERRE_{name}={}", path.display());
     }
-    let version = version::describe(&pkg_version, release_tag.as_deref(), git.as_ref())
+
+    let source = if packaged {
+        // Packaged: the workspace around it (if any) isn't what is being built.
+        let info = std::fs::read_to_string(manifest_dir.join(".cargo_vcs_info.json"));
+        Source::Package(
+            info.map(|s| version::parse_vcs_info(&s))
+                .unwrap_or_default(),
+        )
+    } else if let Some(git) = git_state(&root) {
+        watch(&root);
+        Source::Git(git)
+    } else {
+        Source::Unknown
+    };
+    let version = version::describe(&pkg_version, release_tag.as_deref(), &source)
         .unwrap_or_else(|e| panic!("{e}"));
     println!("cargo:rustc-env=PARTERRE_VERSION={version}");
 }
 
 /// `None` if this isn't a git checkout (e.g. a source archive) or git isn't installed.
 fn git_state(dir: &Path) -> Option<GitState> {
+    // Only a repository of our own counts. Unpacked into some other checkout (a packaging
+    // repository, say), git would describe that one instead.
+    let top = git(dir, &["rev-parse", "--show-toplevel"])?;
+    if Path::new(&top).canonicalize().ok()? != dir.canonicalize().ok()? {
+        return None;
+    }
     let commit = git(dir, &["rev-parse", "--short=7", "HEAD"])?;
     // No optional locks: a plain `git status` may refresh the index, and building shouldn't
     // write to the repository.

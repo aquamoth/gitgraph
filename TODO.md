@@ -116,11 +116,12 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       the README, `LICENSE`, `NOTICE` and `THIRD-PARTY-NOTICES.html`, plus `SHA256SUMS`. macOS
       gets both Apple silicon and Intel builds, the Intel one cross-compiled and therefore not
       test-run in the workflow.
-    - **Linux baseline:** built on `ubuntu-latest`, so the binary needs that runner's glibc
-      (2.39) or newer. Building on an older runner would reach older distributions.
+    - **Linux baseline** (your decision of 2026-09-25): built in an Ubuntu 22.04 container, so
+      the binary needs glibc 2.35 or newer (Debian 12, Ubuntu 22.04 and later).
     - **Commit detection** is a `build.rs` running `git`, with no dependencies. Without git it
-      falls back to a bare `X.Y.Z-dev`. Only the release workflow can produce a plain version:
-      a local build of a tagged commit still reads `-dev`.
+      falls back to a bare `X.Y.Z-dev`. A clean build of exactly the released sources shows
+      the plain version (your decision of 2026-09-25): the release workflow, a clean checkout
+      of the tag, or the crate from crates.io, whose commit comes from `.cargo_vcs_info.json`.
     - **Dirty** means uncommitted changes under `crates/`, `.cargo/`, the Cargo files or
       `rust-toolchain.toml`, the files that go into the binary. Edits to docs don't count.
 13. **Hiding and colouring branches by name** (your request of 2026-09-25). Neither is in
@@ -158,7 +159,11 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [ ] Reload automatically when refs change; TortoiseGit only reloads on F5.
 - [ ] Tooltip on edges showing the collapsed commits.
 - [ ] Less memory for all-commits views of huge repositories (compact adjacency).
-- [ ] Windows `.exe` icon resource; try on macOS.
+- [ ] Distribution, as decided in `docs/distribution.md`: crates.io (#13), new icon (#14),
+      Windows MSI (#15), winget (#16), Chocolatey (#17), .deb and .rpm (#18), Snap (#19),
+      publishing behind one approval (#20), Flathub later (#21).
+- [ ] Explorer context menu (#11) and *File → Open repository…* (#12).
+- [ ] Windows `.exe` icon resource (#15); try on macOS.
 - [ ] After some sequences of drags, undo and redo, a reset leaves an edge with a route of
       its own. `physics_random_drags` finds one with seed 31337 (iteration 247), on main before
       the child-above-parent ordering was merged too.

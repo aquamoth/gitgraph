@@ -19,6 +19,21 @@ no longer need and go around nodes that are now in the way.
 _(Made with `scripts/make-demo-repo.sh`: local branches green, remote branches orange, tags
 yellow, the current branch red.)_
 
+## Installing
+
+Download the archive for your system from the
+[releases page](https://github.com/aquamoth/parterre/releases) and put `parterre` on your
+`PATH`. The Linux build needs glibc 2.35 or newer (Debian 12, Ubuntu 22.04 and later). With a
+Rust toolchain you can also install it from crates.io:
+
+```sh
+cargo install --locked parterre    # build from source; installs only the binary
+cargo binstall parterre            # or download the release binary with cargo-binstall
+```
+
+parterre also needs `git`. Installers and packages for Windows and Linux are on their way; see
+[docs/distribution.md](docs/distribution.md).
+
 ## Usage
 
 ```sh
@@ -107,6 +122,7 @@ needed to build. See [docs/building.md](docs/building.md) for Windows and macOS 
 | `crates/parterre` | The `parterre` binary: egui/eframe window, rendering, interaction |
 | `docs/research/` | Notes on how TortoiseGit's revision graph works, with source links |
 | `docs/architecture.md` | How the pieces fit together |
+| `docs/distribution.md` | Where parterre is published, under which names, and why |
 | `TODO.md` | Open questions and planned work |
 
 ## License

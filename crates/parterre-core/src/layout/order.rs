@@ -256,7 +256,7 @@ fn reorder_layer(
         }
     }
     // Alternate the tie-breaking direction between sweeps so equal medians can swap.
-    if sweep % 2 == 0 {
+    if sweep.is_multiple_of(2) {
         s.movable
             .sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
     } else {

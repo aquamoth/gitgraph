@@ -21,7 +21,8 @@ accepted = [
     "Ubuntu-font-1.0",
 ]
 
-# Our own crates (publish = false) are covered by LICENSE and NOTICE.
-private = { ignore = true }
+# Our own crates are covered by LICENSE and NOTICE. cargo-about skips workspace crates that
+# may only be published to the registries listed here, and ours say `publish = ["crates-io"]`.
+private = { ignore = true, registries = ["crates-io"] }
 ignore-dev-dependencies = true
 ignore-build-dependencies = true
