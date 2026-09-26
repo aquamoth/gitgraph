@@ -9,6 +9,8 @@ use crate::scene::{CORNER_RADIUS, FONT_SIZE, MARGIN_X, Row, RowKind, Scene, to_p
 use crate::settings::{Arrows, EdgeStyle, Settings};
 use crate::theme::{Palette, text_on};
 use crate::view::View;
+use crate::widgets;
+use parterre_core::glyphs;
 
 /// Nodes and edges that get special emphasis.
 #[derive(Clone, Debug, Default)]
@@ -120,6 +122,10 @@ pub fn paint_scene(
                     font.clone(),
                     text,
                 );
+                if let RowKind::PullRequest { .. } = row.kind {
+                    let icon = pull_request_icon(row_rect, zoom);
+                    widgets::paint_glyph(painter, icon, glyphs::PULL_REQUEST, text);
+                }
             }
         }
 
@@ -470,14 +476,30 @@ pub fn node_rows(
     })
 }
 
+/// Where the pull-request glyph goes in a pull request's row: in the margin left of its number.
+pub fn pull_request_icon(row: Rect, zoom: f32) -> Rect {
+    let side = FONT_SIZE * zoom;
+    Rect::from_center_size(
+        Pos2::new(row.min.x + MARGIN_X * zoom / 2.0, row.center().y),
+        Vec2::splat(side),
+    )
+}
+
 /// Fill, border and text colour of a row.
 pub fn row_colors(row: &Row, palette: &Palette) -> (Color32, Color32, Color32) {
+    let fill = row_fill(row, palette);
     match &row.kind {
-        RowKind::Hash => (palette.plain_fill, palette.plain_border, palette.plain_text),
-        RowKind::Ref { kind, head } => {
-            let fill = palette.ref_fill(*kind, *head, &row.label);
-            (fill, fill, text_on(fill))
-        }
+        RowKind::Hash => (fill, palette.plain_border, palette.plain_text),
+        RowKind::Ref { .. } | RowKind::PullRequest { .. } => (fill, fill, text_on(fill)),
+    }
+}
+
+fn row_fill(row: &Row, palette: &Palette) -> Color32 {
+    match &row.kind {
+        RowKind::Hash => palette.plain_fill,
+        RowKind::Ref { kind, head } => palette.ref_fill(*kind, *head, &row.label),
+        RowKind::PullRequest { draft: false, .. } => palette.pull_request,
+        RowKind::PullRequest { draft: true, .. } => palette.draft_pull_request,
     }
 }
 
@@ -566,7 +588,7 @@ pub fn paint_overview(
         let row = &v.rows[0];
         let fill = match &row.kind {
             RowKind::Hash => palette.plain_border,
-            RowKind::Ref { kind, head } => palette.ref_fill(*kind, *head, &row.label),
+            _ => row_fill(row, palette),
         };
         painter.rect_filled(r, 0.0, fill);
     }

@@ -16,6 +16,7 @@ use parterre_core::{Oid, Repo};
 
 mod auto_reload;
 mod log_window;
+mod pull_requests;
 mod settings_window;
 mod toolbar;
 
@@ -251,6 +252,12 @@ pub struct ParterreApp {
     carried_moves: Option<std::collections::HashMap<String, (f32, f32, bool)>>,
     /// Reloads when the refs change, if `settings.auto_reload` is on.
     watcher: Option<auto_reload::Watcher>,
+    /// Open pull requests from GitHub, while they are shown.
+    pull_requests: pull_requests::PullRequestLoader,
+    /// Whether pull requests were shown in the last frame.
+    pull_requests_shown: bool,
+    /// Load the pull requests again (F5).
+    refresh_pull_requests: bool,
     system_theme: SystemTheme,
     /// The theme last given to the window (its title bar), if any.
     window_theme: Option<egui::SystemTheme>,
@@ -366,6 +373,9 @@ impl ParterreApp {
             moves,
             carried_moves: None,
             watcher: None,
+            pull_requests: pull_requests::PullRequestLoader::default(),
+            pull_requests_shown: false,
+            refresh_pull_requests: false,
             system_theme: SystemTheme::watch(&cc.egui_ctx),
             window_theme: None,
             settings_window_theme: None,
@@ -395,7 +405,8 @@ impl ParterreApp {
                         .size()
                         .x
                 };
-                Scene::prepare(repo, &self.settings, &mut width, text_height)
+                let pull_requests = self.pull_requests.list().map(|p| &**p);
+                Scene::prepare(repo, &self.settings, pull_requests, &mut width, text_height)
             });
             let (tx, rx) = std::sync::mpsc::channel();
             let repaint = ctx.clone();
@@ -741,6 +752,7 @@ impl ParterreApp {
         let Some(path) = self.repo.as_ref().map(|r| r.path.clone()) else {
             return;
         };
+        self.refresh_pull_requests = true;
         match parterre_core::git::load_repo(&path) {
             Ok(repo) => {
                 self.install_reloaded(repo, "Reloaded");
@@ -791,6 +803,42 @@ impl ParterreApp {
             .is_some_and(|shown| shown.same_refs(&repo))
         {
             self.install_reloaded(repo, "Reloaded: the refs changed");
+        }
+    }
+
+    /// Loads the open pull requests while they are shown, and shows them once they are in.
+    fn update_pull_requests(&mut self, ctx: &egui::Context) {
+        let loader = &mut self.pull_requests;
+        loader.follow(self.repo.as_ref().map(|r| r.path.as_path()));
+        let shown = self.settings.graph.show_pull_requests && loader.origin().is_some();
+        if shown && !self.pull_requests_shown {
+            loader.turned_on();
+        }
+        self.pull_requests_shown = shown;
+        if std::mem::take(&mut self.refresh_pull_requests) {
+            if shown {
+                loader.reload(ctx);
+            } else {
+                loader.forget();
+            }
+        }
+        match loader.update(shown, ctx) {
+            Some(pull_requests::Loaded::Found(count)) => {
+                // Those whose head isn't here (another fork's, or pushed since the last fetch)
+                // can't be shown.
+                let here = match (&self.repo, loader.list()) {
+                    (Some(repo), Some(list)) => list.heads(repo).len(),
+                    _ => 0,
+                };
+                let status = pull_requests::loaded_status(count, here);
+                self.status = Some((status, false));
+                // Lay out again, with them.
+                self.requested = None;
+            }
+            Some(pull_requests::Loaded::Failed(e)) => {
+                self.status = Some((format!("Pull requests: {e}"), true));
+            }
+            None => {}
         }
     }
 
@@ -1017,6 +1065,11 @@ impl ParterreApp {
                 ui.label("Laying out…");
                 ui.separator();
             }
+            if self.pull_requests.is_loading() {
+                ui.spinner();
+                ui.label("Loading pull requests…");
+                ui.separator();
+            }
             if let Some(scene) = &self.scene {
                 if self.selection.len() > 1 {
                     ui.label(format!("{} nodes selected ·", self.selection.len()));
@@ -1155,6 +1208,13 @@ impl ParterreApp {
         // Hover.
         let pointer = response.hover_pos();
         self.hovered = pointer.and_then(|p| scene.node_at(self.view.to_world(canvas, p)));
+        let hovered_pull_request = match (pointer, self.drag) {
+            (Some(p), None) => scene.pull_request_at(self.view.to_world(canvas, p)),
+            _ => None,
+        };
+        if hovered_pull_request.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
         let view = self.view;
         self.hovered_edge = match (pointer, self.hovered, self.drag) {
             (Some(p), None, None) => render::edge_at(
@@ -1234,8 +1294,18 @@ impl ParterreApp {
             self.drag = None;
         }
 
-        // Clicks: select a node; Ctrl toggles it, Shift adds it.
+        let mut action = None;
+        // Clicks: select a node; Ctrl toggles it, Shift adds it. A plain click on a pull
+        // request's number also opens it, once for a double-click.
         if response.clicked() {
+            if let Some(i) = hovered_pull_request
+                && !extend
+                && !response.double_clicked()
+            {
+                action = Some(MenuAction::OpenPullRequest(
+                    scene.pull_requests[i].url.clone(),
+                ));
+            }
             match self.hovered {
                 Some(n) if modifiers.command => self.selection.toggle(n),
                 Some(n) if modifiers.shift => self.selection.add(n),
@@ -1259,12 +1329,13 @@ impl ParterreApp {
             }
         }
         // Double-clicking a node opens its log and selects it alone; the background fits.
-        let mut action = None;
         if response.double_clicked() {
             match self.hovered {
                 Some(n) => {
                     self.selection.set(Some(n));
-                    action = Some(MenuAction::ShowLog(vec![n]));
+                    if hovered_pull_request.is_none() {
+                        action = Some(MenuAction::ShowLog(vec![n]));
+                    }
                 }
                 None => self.view.fit(canvas, scene.bounds(), 1.0),
             }
@@ -1363,8 +1434,26 @@ impl ParterreApp {
             );
         }
 
-        // Tooltip for the hovered node.
-        if let (Some(node), None) = (self.hovered, self.drag) {
+        // Tooltip for the hovered pull request, or node.
+        if let Some(i) = hovered_pull_request {
+            let pr = &scene.pull_requests[i];
+            response.clone().on_hover_ui_at_pointer(|ui| {
+                ui.label(RichText::new(format!("#{} {}", pr.number, pr.title)).strong());
+                // The author is missing if their account was deleted.
+                let draft = pr.draft.then(|| "Draft".to_owned());
+                let author = (!pr.author.is_empty()).then(|| format!("by {}", pr.author));
+                let about: Vec<String> = draft.into_iter().chain(author).collect();
+                if !about.is_empty() {
+                    ui.label(about.join(" · "));
+                }
+                ui.label(
+                    RichText::new(format!("{} into {}", pr.head_label(), pr.base_branch))
+                        .monospace(),
+                );
+                ui.add_space(4.0);
+                ui.label(RichText::new("Click to open it on GitHub").weak());
+            });
+        } else if let (Some(node), None) = (self.hovered, self.drag) {
             let n = &scene.graph.nodes[node];
             let commit = scene.repo.commit(n.commit);
             let hidden: u32 = scene
@@ -1452,6 +1541,7 @@ impl ParterreApp {
             None => Vec::new(),
         };
         let item = |text: &str, shortcut: &str| egui::Button::new(text).shortcut_text(shortcut);
+        let pull_requests_shown = self.pull_requests_shown && self.pull_requests.list().is_some();
         egui::Popup::context_menu(&response)
             .style(menu::style)
             .show(|ui| {
@@ -1476,8 +1566,23 @@ impl ParterreApp {
                         action = Some(MenuAction::ShowLog(group.clone()));
                         ui.close();
                     }
-                    menu::separator(ui);
                     let n = &scene.graph.nodes[node];
+                    if pull_requests_shown {
+                        // Greyed out rather than left out, so the menu keeps its shape.
+                        if n.pull_requests.is_empty() {
+                            ui.add_enabled(false, egui::Button::new("Open pull request"))
+                                .on_disabled_hover_text("No open pull request's head is here");
+                        }
+                        for &i in &n.pull_requests {
+                            let pr = &scene.pull_requests[i];
+                            let label = format!("Open pull request #{}", pr.number);
+                            if ui.button(label).on_hover_text(&pr.title).clicked() {
+                                action = Some(MenuAction::OpenPullRequest(pr.url.clone()));
+                                ui.close();
+                            }
+                        }
+                    }
+                    menu::separator(ui);
                     let commit = scene.repo.commit(n.commit);
                     // Right-clicking selects the node, so Ctrl+C would copy the same hash.
                     let copy_hash = if group.len() > 1 { "" } else { "Ctrl+C" };
@@ -1545,6 +1650,11 @@ impl ParterreApp {
             Some(MenuAction::SelectSubtree(roots)) => self.select_subtree(&roots),
             Some(MenuAction::Center(node)) => self.center_on(node),
             Some(MenuAction::ShowLog(nodes)) => self.show_log(&nodes),
+            Some(MenuAction::OpenPullRequest(url)) => {
+                if let Err(e) = crate::browser::open(&url) {
+                    self.status = Some((e, true));
+                }
+            }
             None => {}
         }
 
@@ -1625,6 +1735,34 @@ impl ParterreApp {
                 swatch(ui, palette.tag, "v1.2.0", "Tag");
                 swatch(ui, palette.stash, "stash", "Stash");
                 swatch(ui, palette.other_ref, "pull/12/head", "Other ref");
+                for (fill, what) in [
+                    (
+                        palette.pull_request,
+                        "Open pull request on GitHub (click to open)",
+                    ),
+                    (palette.draft_pull_request, "Draft pull request"),
+                ] {
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::hover());
+                        let text = crate::theme::text_on(fill);
+                        ui.painter().rect_filled(rect, 4.0, fill);
+                        let icon = render::pull_request_icon(rect.translate(vec2(-4.0, 0.0)), 1.0);
+                        crate::widgets::paint_glyph(
+                            ui.painter(),
+                            icon,
+                            parterre_core::glyphs::PULL_REQUEST,
+                            text,
+                        );
+                        ui.painter().text(
+                            rect.left_center() + vec2(crate::scene::MARGIN_X, 0.0),
+                            egui::Align2::LEFT_CENTER,
+                            "12",
+                            FontId::monospace(12.0),
+                            text,
+                        );
+                        ui.label(what);
+                    });
+                }
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::hover());
                     ui.painter().rect_filled(rect, 4.0, palette.plain_fill);
@@ -1677,6 +1815,10 @@ impl ParterreApp {
                         ),
                         ("Click a node", "Select it"),
                         (
+                            "Click a pull request's number",
+                            "Open the pull request on GitHub",
+                        ),
+                        (
                             "L, double-click a node",
                             "Show log: of the node, or of the range between two selected \
                              nodes (first..second)",
@@ -1706,7 +1848,8 @@ impl ParterreApp {
                         ("Ctrl+,", "Settings"),
                         (
                             "Right-click a node",
-                            "Show log, copy hash or refs, select its subtree, return it to the layout",
+                            "Show log, open its pull requests, copy hash or refs, select its \
+                             subtree, return it to the layout",
                         ),
                     ] {
                         ui.strong(keys);
@@ -1826,6 +1969,8 @@ enum MenuAction {
     SelectSubtree(Vec<usize>),
     Center(usize),
     ShowLog(Vec<usize>),
+    /// Open a pull request's page in the browser.
+    OpenPullRequest(String),
 }
 
 impl eframe::App for ParterreApp {
@@ -1842,6 +1987,7 @@ impl eframe::App for ParterreApp {
             self.title = title;
         }
         self.auto_reload(&ctx);
+        self.update_pull_requests(&ctx);
         self.ensure_scene(&ctx);
         self.handle_keys(&ctx);
 
@@ -1865,8 +2011,13 @@ impl eframe::App for ParterreApp {
         self.log_window(&ctx);
         self.about_window(&ctx);
 
-        // Scripted runs wait for the graph, unless there is none to wait for.
-        if self.scene.is_some() || self.repo.is_none() {
+        // Scripted runs wait for the graph, unless there is none to wait for, and for the pull
+        // requests and the layout with them.
+        let pulling = self.pull_requests.is_loading()
+            || self.pull_requests_shown
+                && self.pull_requests.list().is_some()
+                && self.job.is_some();
+        if (self.scene.is_some() || self.repo.is_none()) && !pulling {
             self.automation.drive(
                 &ctx,
                 self.scene.as_mut(),

@@ -100,6 +100,7 @@ impl ParterreApp {
                     *on = !*on;
                 }
             }
+            self.pull_requests_button(ui);
             let response = widgets::popover_button(ui, Id::new(FILTER_ID), None, false);
             let response = tip(response, "Filter branches", "");
             popover(&response, RectAlign::BOTTOM_START)
@@ -151,6 +152,28 @@ impl ParterreApp {
                 );
             });
         });
+    }
+
+    /// Shows or hides open pull requests; greyed out unless `origin` is on GitHub.
+    fn pull_requests_button(&mut self, ui: &mut Ui) {
+        let available = self.pull_requests.origin().is_some();
+        let on = &mut self.settings.graph.show_pull_requests;
+        let response = ui
+            .add_enabled_ui(available, |ui| {
+                widgets::icon_button(ui, glyphs::PULL_REQUEST, *on && available)
+            })
+            .inner;
+        let verb = if *on { "Hide" } else { "Show" };
+        let response = tip_explained(
+            response,
+            &format!("{verb} pull requests"),
+            "",
+            PULL_REQUESTS_TIP,
+        )
+        .on_disabled_hover_text("Pull requests: origin is not a GitHub repository");
+        if response.clicked() {
+            *on = !*on;
+        }
     }
 
     fn find_field(&mut self, ui: &mut Ui, width: f32) {
@@ -430,6 +453,14 @@ impl ParterreApp {
                     *on = !*on;
                 }
             }
+            let available = self.pull_requests.origin().is_some();
+            let on = &mut g.show_pull_requests;
+            let item = ui.add_enabled_ui(available, |ui| {
+                menu::item(ui, "Pull requests", "", Mark::Check(*on && available))
+            });
+            if item.inner.clicked() {
+                *on = !*on;
+            }
         });
         menu::submenu(ui, "Filter", |ui| {
             let g = &mut self.settings.graph;
@@ -602,6 +633,9 @@ pub(super) const HIDE_TIP: &str = "Leave out branches matching these comma-separ
     (* is any text, ? one character; origin/release/1 matches release/*), with the history only \
     they lead to. Branches that a shown branch's history contains stay, and so does the current \
     branch.";
+pub(super) const PULL_REQUESTS_TIP: &str = "Open pull requests of origin on GitHub, as labels \
+    on the commits they propose, where those have been fetched. Click one to open it. Asks \
+    GitHub, signed in as gh is if gh is installed.";
 pub(super) const REMEMBER_TIP: &str =
     "Keep nodes where you moved them, per repository, across runs and relayouts.";
 

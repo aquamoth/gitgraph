@@ -46,6 +46,7 @@ parterre --mode all --no-remotes   # every commit, local branches and tags only
 parterre --look classic            # straight, unbundled edges like TortoiseGit
 parterre --hide 'pipeline/*,release/*'        # leave out build and release branches
 parterre --branch-color 'feature/*=#9b59b6'   # colour branches by name (repeatable)
+parterre --pull-requests           # label commits with origin's open GitHub pull requests
 parterre --export graph.svg        # write an SVG without opening a window
 parterre --export graph.png --zoom 2   # or a PNG (or .webp), here at 200%
 parterre --help                    # all options
@@ -67,7 +68,8 @@ In the window:
 | `Home` / `H` | Go to HEAD |
 | `Ctrl+F`, then `Enter` / `F3` | Find branches, tags, hashes, subjects or authors |
 | `L`, double-click a node | Show log: the node's history, or with two nodes selected the commits between them (first..second) |
-| Right-click a node | Show log; copy its hash, ref names or subject; select its subtree; return it to the layout |
+| Click a pull request's number | Open the pull request on GitHub |
+| Right-click a node | Show log; open its pull requests; copy its hash, ref names or subject; select its subtree; return it to the layout |
 | `R` | Return all nodes to the layout |
 | `Esc` | Clear the selection |
 | `F5` | Reload the repository (it also reloads by itself when branches, tags or HEAD change) |
@@ -90,6 +92,11 @@ parterre adds:
 - hiding branches by wildcard, e.g. `pipeline/*` (the toolbar's filter options, or *Settings → Filters*). A hidden branch
   still shows where the history of a shown branch contains it, so only leaves vanish.
 - colours by branch name, e.g. `feature/*` purple (*Settings → Branch colours*)
+- open pull requests on GitHub, as labels on the commits they propose (the toolbar's
+  pull-request button, when `origin` is on GitHub). Click one to open it in the browser. A
+  pull request shows once its head commit has been fetched and its base branch is shown.
+  parterre asks GitHub only while they are shown, signed in as `gh` is if `gh` is installed
+  (needed for private repositories), and otherwise without signing in (60 requests an hour).
 - light and dark themes
 - rearranging by hand: drag modes, multi-selection, undo
 
@@ -113,7 +120,8 @@ Colours follow TortoiseGit:
 Colours chosen per branch name replace these, except for the current branch.
 
 parterre needs `git` on `PATH` at runtime; it reads the repository with `git log` and
-`git for-each-ref` and never writes to it.
+`git for-each-ref` and never writes to it. Apart from GitHub's API while pull requests are
+shown, it doesn't use the network.
 
 ## Building
 
