@@ -15,6 +15,7 @@ use parterre_core::recent::same_path;
 use parterre_core::revgraph::Simplification;
 
 use super::{ParterreApp, SettingsPage};
+use crate::export::Format;
 use crate::menu::{self, Mark};
 use crate::widgets::{self, tip, tip_explained};
 
@@ -395,11 +396,14 @@ impl ParterreApp {
         if menu::item(ui, "Reload automatically", "", Mark::Check(auto)).clicked() {
             self.settings.auto_reload = !auto;
         }
-        let export = ui.add_enabled_ui(has_repo, |ui| {
-            menu::item(ui, "Export as SVG or PNG…", "", Mark::None)
-        });
-        if export.inner.clicked() {
-            self.open_export();
+        for (format, label) in [
+            (Format::Svg, "Export as SVG…"),
+            (Format::Png, "Export as PNG…"),
+        ] {
+            let export = ui.add_enabled_ui(has_repo, |ui| menu::item(ui, label, "", Mark::None));
+            if export.inner.clicked() {
+                self.export = Some(format);
+            }
         }
         menu::separator(ui);
 

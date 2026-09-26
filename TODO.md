@@ -283,24 +283,27 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       F5 put every node back into the layout. Undo history does not survive.
     - The status bar says "Reloaded: the refs changed".
 
-22. **PNG export.** The export dialog now offers SVG and PNG; the file name's extension
-    decides, as in TortoiseGit's "Save graph as...". Calls you may want to overrule:
-    - **One menu item,** *Export as SVG or PNG…*, with SVG and PNG buttons in the dialog that
-      change the extension. The dialog shows the PNG's size before saving.
+22. **PNG export.** ☰ → *Export as SVG…* and *Export as PNG…* each open the system's save
+    dialog, as TortoiseGit's "Save graph as..." does. Calls you may want to overrule:
+    - **Two menu items** rather than one with a file-type list: the save dialog can't tell
+      parterre which type was picked, only the name typed. A name without the right extension
+      gets it added. The dialog starts in the folder exported to last, else next to the
+      repository.
     - **Current zoom,** as in TortoiseGit, times the display scale (2 on a HiDPI screen), so
       the PNG looks as the window does. Zoomed out, labels under 4 px are left out, as on
-      screen. SVG stays at 100%. `--export out.png` draws at 100%, or at `--zoom`.
+      screen. SVG stays at 100%. `--export out.png` draws at 100%, or at `--zoom`. The status
+      bar says the size and zoom after saving.
     - **Limits:** at most 100 megapixels and 65,535 px a side. A bigger graph is scaled down
-      to fit, with a note in the dialog and the status bar, instead of failing (TortoiseGit
-      says "not enough memory" when Windows can't make the bitmap). On Apps, "Labelled
-      commits" fits at 100% in both looks (Classic: 24,232 × 3,745 px, 2.4 s); "Branchings
-      and merges" comes out at 61%, and "All commits" at 10%, too small to read. Drawing
-      holds the whole image in memory (300 MB at the limit). Writing the PNG in bands would
-      lift the limit, but needs the `png` crate directly (already built, as `image` uses it).
+      to fit, and the status bar says so, instead of failing (TortoiseGit says "not enough
+      memory" when Windows can't make the bitmap). On Apps, "Labelled commits" fits at 100%
+      in both looks (Classic: 24,232 × 3,745 px, 2.4 s); "Branchings and merges" comes out at
+      61%, and "All commits" at 10%, too small to read. Drawing holds the whole image in
+      memory (300 MB at the limit). Writing the PNG in bands would lift the limit, but needs
+      the `png` crate directly (already built, as `image` uses it).
     - **Background:** the theme's, opaque. No transparent PNG.
-    - **Other formats:** only `.svg` and `.png`. Other extensions (`.jpg`, `.bmp`, `.gif`,
-      which TortoiseGit also writes) are refused with a message; before, `--export` wrote SVG
-      whatever the name. A name without an extension still gets SVG.
+    - **Other formats:** only SVG and PNG (TortoiseGit also writes JPEG, BMP and GIF).
+      `--export` refuses other extensions; before, it wrote SVG whatever the name. A name
+      without an extension still gets SVG.
 
 ## Planned
 
@@ -465,6 +468,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       and the drag net's neighbour lists are stored flat, which took the 100k-commit
       all-commits view from 900 to 740 MB and its layout from about 3 s to 2 s. What is left
       is mostly the drag net (about 170 bytes for each of 1.6M particles); question 11.
-- [x] PNG export (question 22): ☰ → *Export as SVG or PNG…*, and `--export out.png` (with
-      `--zoom`). Drawn by the window's own painting code, rasterised without a GPU, so labels
-      look as on screen.
+- [x] PNG export (question 22): ☰ → *Export as PNG…*, and `--export out.png` (with `--zoom`).
+      Drawn by the window's own painting code, rasterised without a GPU, so labels look as on
+      screen. Both exports now use the system's save dialog instead of a path field.

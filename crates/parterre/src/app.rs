@@ -225,8 +225,10 @@ pub struct ParterreApp {
     show_settings: bool,
     settings_page: SettingsPage,
     show_about: bool,
-    /// Path being edited in the "Export graph" dialog, when open.
-    export_path: Option<String>,
+    /// Show the save dialog for exporting in this format at the end of this frame.
+    export: Option<Format>,
+    /// The folder exported to last, where the save dialog starts next time.
+    export_dir: Option<PathBuf>,
     messages: Messages,
     /// The log window (Show log), and what it keeps while closed.
     log: log_window::LogWindow,
@@ -345,7 +347,8 @@ impl ParterreApp {
             show_settings: demo_settings.is_some(),
             settings_page: demo_settings.unwrap_or_default(),
             show_about: false,
-            export_path: None,
+            export: None,
+            export_dir: None,
             messages: Messages::default(),
             log: log_window::LogWindow::default(),
             focus_log: false,
@@ -362,16 +365,6 @@ impl ParterreApp {
         };
         if let (Some(commits), Some(repo)) = (demo_log, app.repo.clone()) {
             app.open_log(repo, &commits);
-        }
-        if let Some(export) = app.automation.demo_open.clone()
-            && let Some(format) = export.strip_prefix("export")
-        {
-            app.open_export();
-            if let (Some(path), Some(ext)) = (&mut app.export_path, format.strip_prefix(':')) {
-                let mut p = PathBuf::from(&*path);
-                p.set_extension(ext);
-                *path = p.display().to_string();
-            }
         }
         app
     }
@@ -590,12 +583,49 @@ impl ParterreApp {
         Some((oid(edge.child), oid(edge.parent)))
     }
 
-    fn open_export(&mut self) {
-        let Some(repo) = &self.repo else { return };
-        let default = std::env::current_dir()
-            .unwrap_or_default()
-            .join(format!("{}-parterre.svg", repo.display_name()));
-        self.export_path = Some(default.display().to_string());
+    /// Shows the save dialog, then writes the whole graph in `format`, as TortoiseGit's "Save
+    /// graph as" does. It blocks until the dialog closes. PNG is drawn at the current zoom, as
+    /// in TortoiseGit, and with the display's pixels per point, so it looks as on screen.
+    fn export(&mut self, format: Format, ctx: &egui::Context, frame: &eframe::Frame) {
+        let (Some(repo), Some(scene)) = (&self.repo, &self.scene) else {
+            self.status = Some(("Nothing to export yet".into(), true));
+            return;
+        };
+        let ext = format.extension();
+        let (kind, zoom) = match format {
+            Format::Svg => ("SVG", 1.0),
+            Format::Png => ("PNG", self.view.zoom),
+        };
+        let mut dialog = rfd::FileDialog::new()
+            .set_title(format!("Export the graph as {kind}"))
+            .set_parent(frame)
+            .add_filter(format!("{kind} image"), &[ext])
+            .set_file_name(format!("{}.{ext}", repo.display_name()));
+        // Start where the last export went, or next to the repository.
+        if let Some(dir) = self.export_dir.as_deref().or_else(|| repo.path.parent()) {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(mut path) = dialog.save_file() else {
+            return;
+        };
+        // A name typed without the extension, or with another one, gets it added.
+        if path.extension().is_none() || Format::from_path(&path) != Some(format) {
+            let mut name = path.file_name().unwrap_or_default().to_owned();
+            name.push(format!(".{ext}"));
+            path.set_file_name(name);
+        }
+        self.export_dir = path.parent().map(Path::to_owned);
+        let palette = Palette::new(
+            ctx.global_style().visuals.dark_mode,
+            &self.settings.branch_colors,
+        );
+        let ppp = ctx.pixels_per_point();
+        self.status = Some(
+            match export::write(&path, scene, &self.settings, &palette, zoom, ppp) {
+                Ok(what) => (format!("Saved {} ({what})", path.display()), false),
+                Err(e) => (format!("Could not save {}: {e}", path.display()), true),
+            },
+        );
     }
 
     /// Opens the repository containing `dir` in place of the one shown. On failure the one
@@ -636,7 +666,7 @@ impl ParterreApp {
         self.search.hits.clear();
         self.search.current = None;
         self.status = None;
-        self.export_path = None;
+        self.export = None;
         // Its worker thread asks the old repository's git; dropping it ends the thread.
         self.messages = Messages::default();
         // The log shows the old repository's history.
@@ -1509,92 +1539,6 @@ impl ParterreApp {
         }
     }
 
-    fn export_window(&mut self, ctx: &egui::Context) {
-        let Some(path) = &mut self.export_path else {
-            return;
-        };
-        let mut open = true;
-        let mut save = false;
-        // PNG is drawn at the current zoom, as in TortoiseGit, and with the display's pixels
-        // per point, so that it looks as on screen.
-        let (zoom, ppp) = (self.view.zoom, ctx.pixels_per_point());
-        egui::Window::new("Export graph")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                let format = Format::from_path(Path::new(path.trim()));
-                ui.horizontal(|ui| {
-                    for f in [Format::Svg, Format::Png] {
-                        let label = f.extension().to_uppercase();
-                        if ui.selectable_label(format == Some(f), label).clicked() {
-                            let mut p = PathBuf::from(path.trim());
-                            p.set_extension(f.extension());
-                            *path = p.display().to_string();
-                        }
-                    }
-                });
-                match (format, &self.scene) {
-                    (Some(Format::Svg), _) => {
-                        ui.label("The whole graph at 100%, as currently arranged.");
-                    }
-                    (Some(Format::Png), Some(scene)) => {
-                        let size = export::png_size(scene, zoom, ppp);
-                        ui.label(format!(
-                            "The whole graph at the current zoom, as currently arranged: {} × {} \
-                             pixels at {:.0}%.",
-                            size.width,
-                            size.height,
-                            size.zoom * 100.0
-                        ));
-                        if size.reduced {
-                            ui.colored_label(
-                                ui.visuals().warn_fg_color,
-                                format!(
-                                    "Scaled down from {:.0}% to stay within {:.0} megapixels and \
-                                     {:.0} pixels a side.",
-                                    zoom * 100.0,
-                                    export::MAX_PNG_PIXELS / 1e6,
-                                    export::MAX_PNG_SIDE
-                                ),
-                            );
-                        }
-                    }
-                    (Some(Format::Png), None) => {}
-                    (None, _) => {
-                        ui.colored_label(
-                            ui.visuals().error_fg_color,
-                            "Name the file .svg or .png.",
-                        );
-                    }
-                }
-                let resp = ui.add(egui::TextEdit::singleline(path).desired_width(420.0));
-                let ok = format.is_some();
-                save = ok && resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                save |= ui.add_enabled(ok, egui::Button::new("Save")).clicked();
-            });
-        if save {
-            let path = PathBuf::from(path.trim());
-            let palette = Palette::new(
-                ctx.global_style().visuals.dark_mode,
-                &self.settings.branch_colors,
-            );
-            self.status = Some(match &self.scene {
-                Some(scene) => {
-                    match export::write(&path, scene, &self.settings, &palette, zoom, ppp) {
-                        Ok(what) => (format!("Saved {} ({what})", path.display()), false),
-                        Err(e) => (format!("Could not save {}: {e}", path.display()), true),
-                    }
-                }
-                None => ("Nothing to export yet".into(), true),
-            });
-            open = false;
-        }
-        if !open {
-            self.export_path = None;
-        }
-    }
-
     fn legend_window(&mut self, ctx: &egui::Context) {
         let palette = Palette::new(
             ctx.global_style().visuals.dark_mode,
@@ -1875,7 +1819,6 @@ impl eframe::App for ParterreApp {
         self.settings_window(&ctx);
         self.log_window(&ctx);
         self.about_window(&ctx);
-        self.export_window(&ctx);
 
         // Scripted runs wait for the graph, unless there is none to wait for.
         if self.scene.is_some() || self.repo.is_none() {
@@ -1891,6 +1834,9 @@ impl eframe::App for ParterreApp {
         // Last, as the dialog holds up the frame until it closes.
         if std::mem::take(&mut self.pick_folder) {
             self.pick_folder(frame);
+        }
+        if let Some(format) = self.export.take() {
+            self.export(format, &ctx, frame);
         }
     }
 

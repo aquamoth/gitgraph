@@ -136,9 +136,8 @@ struct Cli {
     #[arg(long, value_enum, hide = true)]
     demo_menu: Option<DemoMenuArg>,
 
-    /// Open the menu, a toolbar popover (filter, zoom, drag), the settings (settings, or
-    /// settings:PAGE) or the export dialog (export, or export:png) before taking the
-    /// screenshot.
+    /// Open the menu, a toolbar popover (filter, zoom, drag) or the settings (settings, or
+    /// settings:PAGE) before taking the screenshot.
     #[arg(long, value_name = "WHAT", hide = true)]
     demo_open: Option<String>,
 
