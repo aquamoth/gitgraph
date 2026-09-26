@@ -23,6 +23,7 @@ use super::ParterreApp;
 use super::file_table::{DiffQueue, FileTable, Lister, Listing};
 use super::log_window::{Colors, badge, colors};
 use crate::settings::CompareWindowSettings;
+use crate::text_size;
 use crate::theme::Palette;
 use crate::widgets;
 
@@ -399,6 +400,7 @@ impl ParterreApp {
                 }
                 // Keys go to the main window too when the window is embedded in it.
                 self.compare.handle_keys(ui);
+                text_size::read_input(ui, &mut self.settings.text_size, true);
                 if close {
                     self.compare.view = None;
                 }

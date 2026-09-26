@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 27._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 28._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -422,7 +422,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       now lists the release targets, as the platform verifier needs the list on wasm32 only.
       Only tried on Linux.
 
-26. **Comparing two commits' files** (your request of 2026-09-26: compare files between two
+27. **Comparing two commits' files** (your request of 2026-09-26: compare files between two
     arbitrary branches, and TortoiseGit's "mark for comparison, then compare with it from
     another log"). You picked an own compare window, the recommended branch diff, and a log
     row menu with the compare items only. Calls you may want to overrule:
@@ -517,8 +517,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
         long lines scroll sideways ([#45](https://github.com/aquamoth/parterre/issues/45)).
   - [x] Free text selection in either pane, copied as in the file (wanted 2026-09-26).
   - [x] Comparing two commits' files: Compare revisions, with HEAD, and with a commit marked
-        for comparison, in a compare window (wanted 2026-09-26; question 26).
-  - [x] Compare with working tree (wanted 2026-09-26; question 26).
+        for comparison, in a compare window (wanted 2026-09-26; question 27).
+  - [x] Compare with working tree (wanted 2026-09-26; question 27).
   - [ ] Later: *Unified diff* of two commits (#25); a diff window that reloads by itself
         when its working-tree file changes.
   - [ ] The `+`/`−` sign by the pointer doesn't look good on Windows (reported 2026-09-26,
