@@ -218,7 +218,7 @@ pub struct ParterreApp {
     view: View,
     needs_initial_view: bool,
     canvas: Rect,
-    /// The pointer is over the graph, which takes Ctrl+wheel for its own zoom.
+    /// The pointer is over the graph (or its overview map), where Ctrl+wheel is the graph's.
     graph_hovered: bool,
     hovered: Option<usize>,
     hovered_edge: Option<usize>,
@@ -298,7 +298,7 @@ impl ParterreApp {
         overrides(&mut settings);
         // Settings edited by hand or saved by another version may put a divider out of reach.
         settings.log_window.dividers = settings.log_window.dividers.clamped();
-        settings.text_size = text_size::sanitize(settings.text_size);
+        settings.text_size = parterre_core::text_size::sanitize(settings.text_size);
         cc.egui_ctx.set_zoom_factor(settings.text_size);
         let moves: RememberedMoves = cc
             .storage
@@ -1159,7 +1159,8 @@ impl ParterreApp {
         let (canvas, response) =
             ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.canvas = canvas;
-        self.graph_hovered = response.hovered();
+        // The overview map, drawn over the graph, counts as the graph.
+        self.graph_hovered = ui.rect_contains_pointer(canvas);
         if self.needs_initial_view && canvas.is_positive() && self.scene.is_some() {
             self.needs_initial_view = false;
             if self.automation.fit {
@@ -1181,7 +1182,7 @@ impl ParterreApp {
                 self.settings.edge_style,
                 |w| view.to_screen(canvas, w),
                 p,
-                5.0,
+                view.fixed(5.0),
             ),
             _ => None,
         };

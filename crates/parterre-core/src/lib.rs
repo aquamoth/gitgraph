@@ -17,6 +17,7 @@ pub mod repo;
 pub mod revgraph;
 pub mod route;
 pub mod text;
+pub mod text_size;
 pub mod watch;
 
 pub use oid::Oid;

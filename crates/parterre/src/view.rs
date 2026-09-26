@@ -33,6 +33,12 @@ impl View {
         self.zoom / self.text_size
     }
 
+    /// `len` points at 100% text size, in points now: a length on the graph (a line width, a
+    /// margin) that keeps its size on screen whatever the text size.
+    pub fn fixed(self, len: f32) -> f32 {
+        len / self.text_size
+    }
+
     pub fn to_screen(self, canvas: Rect, world: Pos2) -> Pos2 {
         canvas.min + (world.to_vec2() - self.offset) * self.scale()
     }
@@ -136,6 +142,7 @@ mod tests {
         let length = |v: View| (v.to_screen(canvas(), b) - v.to_screen(canvas(), a)).length();
         let normal = length(at_text_size(1.0));
         assert!((length(at_text_size(1.5)) * 1.5 - normal).abs() < 1e-3);
+        assert!((at_text_size(1.5).fixed(3.0) * 1.5 - 3.0).abs() < 1e-5);
         let v = at_text_size(1.5);
         let w = pos2(123.0, 456.0);
         assert!((v.to_world(canvas(), v.to_screen(canvas(), w)) - w).length() < 1e-3);

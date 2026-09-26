@@ -90,7 +90,10 @@ impl ParterreApp {
             self.settings_window_text_size = None;
             return;
         }
+        // No larger than the screen, at a large text size: the page scrolls.
+        let screen = ctx.input(|i| i.viewport().monitor_size);
         let size = vec2(SIDEBAR + PAGE + 56.0, 480.0);
+        let size = screen.map_or(size, |s| size.min(s * 0.9));
         let builder = egui::ViewportBuilder::default()
             .with_title("Settings – parterre")
             .with_app_id(crate::settings::APP_ID)
@@ -134,7 +137,7 @@ impl ParterreApp {
                 if closing {
                     self.show_settings = false;
                 }
-                // (Embedded, the main window reads it.)
+                // Embedded, it is in the main window, which reads the text size input.
                 text_size::read_input(ui, &mut self.settings.text_size, true);
             }
             egui::CentralPanel::default()
@@ -194,7 +197,7 @@ impl ParterreApp {
                         egui::ComboBox::from_id_salt("text-size")
                             .selected_text(percent(s.text_size))
                             .show_ui(ui, |ui| {
-                                for size in text_size::STEPS {
+                                for size in parterre_core::text_size::STEPS {
                                     ui.selectable_value(&mut s.text_size, size, percent(size));
                                 }
                             });

@@ -329,12 +329,15 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     - **Steps** as in browsers: 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250 and
       300%. A wheel notch is one step, and so is pinching by a fifth. *Settings → Appearance
       → Text size* lists the steps.
-    - **Where:** `Ctrl`+wheel and pinch anywhere but over the graph, in every window.
+    - **Where:** `Ctrl`+wheel and pinch anywhere but over the graph and its overview map, in
+      every window.
       `Ctrl`+`+` `-` `0` only in the log, diff and settings windows: in the main window they
       keep zooming the graph, as before.
-    - **Window sizes:** the settings window, fixed in size, grows and shrinks with the text.
-      The main, log and diff windows keep their size on screen, so they show less at a larger
-      size, as a browser does.
+    - **Window sizes:** the settings window, fixed in size, grows and shrinks with the text,
+      up to 90% of the screen (its page scrolls). Open main, log and diff windows keep their
+      size on screen, so they show less at a larger size, as a browser does. The log and diff
+      windows remember their size in points, though, so one opened later is that much larger
+      (or smaller) on screen. Every window's smallest size is in points too.
     - Also `--text-size 1.5` on the command line (kept, like `--theme`).
     - **To check by hand:** under Xvfb one `xdotool` wheel click arrived as two wheel lines,
       so it gave two steps. A real mouse should give one step per notch; does it?

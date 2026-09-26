@@ -62,11 +62,11 @@ pub fn paint_scene(
 ) {
     painter.rect_filled(canvas, 0.0, palette.background);
     let visible = canvas.expand(40.0);
-    // Sizes are worked out at 100% text size, as `zoom` is shown, and drawn at `pt` points
-    // each, so the graph looks the same at any text size.
+    // Sizes are worked out at 100% text size, as `zoom` is shown, and drawn `fixed`, so the
+    // graph looks the same at any text size.
     let zoom = view.zoom;
-    let pt = 1.0 / view.text_size;
-    let width = (2.0 * zoom).max(1.0) * pt;
+    let fixed = |len: f32| view.fixed(len);
+    let width = fixed((2.0 * zoom).max(1.0));
 
     // Edges first (TortoiseGit draws them on top; boxes on top reads better with dragging).
     let mut emphasised = Vec::new();
@@ -95,10 +95,10 @@ pub fn paint_scene(
         paint_edge(painter, canvas, view, scene, settings, e, visible, stroke);
     }
 
-    let font = FontId::monospace(FONT_SIZE * zoom * pt);
+    let font = FontId::monospace(fixed(FONT_SIZE * zoom));
     let draw_text = FONT_SIZE * zoom >= MIN_TEXT_PX;
-    let radius = (CORNER_RADIUS * zoom * pt).round().clamp(0.0, 255.0) as u8;
-    let row_h = scene.row_height * zoom * pt;
+    let radius = fixed(CORNER_RADIUS * zoom).round().clamp(0.0, 255.0) as u8;
+    let row_h = fixed(scene.row_height * zoom);
     for (i, visual) in scene.visuals.iter().enumerate() {
         let rect = view.rect_to_screen(canvas, scene.node_rect(i));
         if !visible.intersects(rect) {
@@ -112,12 +112,12 @@ pub fn paint_scene(
                 row_rect,
                 corners,
                 fill,
-                Stroke::new(pt, border),
+                Stroke::new(fixed(1.0), border),
                 StrokeKind::Inside,
             );
             if draw_text {
                 painter.text(
-                    Pos2::new(row_rect.min.x + MARGIN_X * zoom * pt, row_rect.center().y),
+                    Pos2::new(row_rect.min.x + fixed(MARGIN_X * zoom), row_rect.center().y),
                     Align2::LEFT_CENTER,
                     &row.label,
                     font.clone(),
@@ -127,9 +127,9 @@ pub fn paint_scene(
         }
 
         let outline = |w: f32, color: Color32| {
-            let w = w * pt;
+            let w = fixed(w);
             painter.rect_stroke(
-                rect.expand(w / 2.0 + pt),
+                rect.expand(w / 2.0 + fixed(1.0)),
                 radius,
                 Stroke::new(w, color),
                 StrokeKind::Middle,
@@ -172,7 +172,7 @@ fn paint_edge(
         return;
     };
     painter.add(Shape::line(path.clone(), stroke));
-    let len = ARROW_LEN * view.zoom.max(0.4) / view.text_size;
+    let len = view.fixed(ARROW_LEN * view.zoom.max(0.4));
     if let Some(head) = arrowhead_points(&path, settings.arrows, len) {
         for tri in head {
             painter.add(Shape::convex_polygon(
@@ -493,7 +493,7 @@ fn paint_hidden_counts(
     palette: &Palette,
     visible: Rect,
 ) {
-    let font = FontId::proportional(FONT_SIZE * 0.85 * view.scale());
+    let font = FontId::proportional(view.fixed(FONT_SIZE * 0.85 * view.zoom));
     let color = palette.edge.gamma_multiply(0.7);
     for (e, edge) in scene.graph.edges.iter().enumerate() {
         if edge.hidden == 0 {
@@ -514,7 +514,7 @@ fn paint_hidden_counts(
         let at = view.to_screen(canvas, mid);
         if visible.contains(at) {
             painter.text(
-                at + vec2(4.0 / view.text_size, 0.0),
+                at + vec2(view.fixed(4.0), 0.0),
                 Align2::LEFT_CENTER,
                 format!("+{}", edge.hidden),
                 font.clone(),
