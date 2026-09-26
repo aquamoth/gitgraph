@@ -15,6 +15,7 @@ use parterre_core::recent::Recent;
 use parterre_core::{Oid, Repo};
 
 mod auto_reload;
+mod diff_window;
 mod log_window;
 mod settings_window;
 mod toolbar;
@@ -244,6 +245,8 @@ pub struct ParterreApp {
     log: log_window::LogWindow,
     /// Raise the log window in the next frame (Show log while it is open).
     focus_log: bool,
+    /// The open diff windows, one file diff each.
+    diffs: diff_window::DiffWindows,
     /// Dragged nodes of every repository, kept when `remember_moves` is on.
     moves: RememberedMoves,
     /// Moved nodes to put back in the next scene: after a reload, when `remember_moves` is
@@ -363,6 +366,7 @@ impl ParterreApp {
             messages: Messages::default(),
             log: log_window::LogWindow::default(),
             focus_log: false,
+            diffs: diff_window::DiffWindows::default(),
             moves,
             carried_moves: None,
             watcher: None,
@@ -376,6 +380,9 @@ impl ParterreApp {
         };
         if let (Some(commits), Some(repo)) = (demo_log, app.repo.clone()) {
             app.open_log(repo, &commits);
+        }
+        if let Some(spec) = app.automation.demo_diff.clone() {
+            app.open_demo_diff(&spec, &cc.egui_ctx);
         }
         app
     }
@@ -688,8 +695,9 @@ impl ParterreApp {
         self.export = None;
         // Its worker thread asks the old repository's git; dropping it ends the thread.
         self.messages = Messages::default();
-        // The log shows the old repository's history.
+        // The log and the diffs show the old repository's history.
         self.log.close();
+        self.diffs.close_all();
     }
 
     /// The folder picker for opening a repository.
@@ -1863,10 +1871,12 @@ impl eframe::App for ParterreApp {
         self.legend_window(&ctx);
         self.settings_window(&ctx);
         self.log_window(&ctx);
+        self.diff_windows(&ctx);
         self.about_window(&ctx);
 
         // Scripted runs wait for the graph, unless there is none to wait for.
         if self.scene.is_some() || self.repo.is_none() {
+            self.automation.waiting = self.diffs.is_loading();
             self.automation.drive(
                 &ctx,
                 self.scene.as_mut(),

@@ -37,3 +37,13 @@ _Avoid_: view, perspective, docking
 **Changed files**:
 The files a commit changed compared with its first parent, with their status and line counts.
 _Avoid_: file list, diff, changeset
+
+**File diff**:
+The line-by-line changes to one of the changed files: what was removed from it and what was
+added, between the same two versions the changed files compare.
+_Avoid_: patch, delta, compare
+
+**Diff window**:
+A separate window showing one file diff. Several can be open at once. It outlives the log window
+it was opened from, but closes with the repository.
+_Avoid_: diff viewer, compare window, merge view

@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use crate::changed_files::{ChangedFile, parse_diff_tree};
+use crate::file_diff::{Content, FileDiffSpec, LoadedDiff, Version, decode};
 use crate::oid::Oid;
 use crate::repo::{Commit, CommitIx, DEFAULT_ABBREV_LEN, GitRef, Head, RefKind, Repo};
 
@@ -91,6 +92,18 @@ impl Git {
             });
         }
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    /// Runs git and returns stdout as bytes, failing on a non-zero exit status.
+    fn run_bytes(&self, args: &[&str]) -> Result<Vec<u8>, GitError> {
+        let out = self.output(args)?;
+        if !out.status.success() {
+            return Err(GitError::Failed {
+                args: args.join(" "),
+                stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+            });
+        }
+        Ok(out.stdout)
     }
 
     /// Runs git with `input` on stdin and returns stdout, failing on a non-zero exit status.
@@ -328,6 +341,90 @@ impl Git {
         ])?;
         parse_diff_tree(&out).map_err(GitError::Parse)
     }
+}
+
+impl Git {
+    /// Loads what a file diff compares: both versions as text, through the textconv filter
+    /// the file's `diff` attribute names (as `git show` does); or, for a binary file, their
+    /// sizes; or, for a submodule, the commits it pointed at.
+    pub fn load_file_diff(&self, spec: &FileDiffSpec) -> Result<LoadedDiff, GitError> {
+        let versions = [spec.old.as_ref(), spec.new.as_ref()];
+        if spec.is_submodule() {
+            let commit = |v: Option<&Version>| -> Result<Option<Oid>, GitError> {
+                let Some(v) = v else { return Ok(None) };
+                let out = self.run(&["rev-parse", &object_name(v)])?;
+                Ok(Oid::from_hex(out.trim()))
+            };
+            return Ok(LoadedDiff {
+                spec: spec.clone(),
+                content: Content::Submodule {
+                    old: commit(versions[0])?,
+                    new: commit(versions[1])?,
+                },
+                textconv: None,
+            });
+        }
+        if spec.binary {
+            let size = |v: Option<&Version>| -> Result<Option<u64>, GitError> {
+                let Some(v) = v else { return Ok(None) };
+                let out = self.run(&["cat-file", "-s", &object_name(v)])?;
+                out.trim()
+                    .parse()
+                    .map(Some)
+                    .map_err(|_| GitError::Parse(format!("object size {out:?}")))
+            };
+            return Ok(LoadedDiff {
+                spec: spec.clone(),
+                content: Content::Binary {
+                    old_size: size(versions[0])?,
+                    new_size: size(versions[1])?,
+                },
+                textconv: None,
+            });
+        }
+        let mut invalid_bytes = 0;
+        let mut text = |v: Option<&Version>| -> Result<String, GitError> {
+            let Some(v) = v else {
+                return Ok(String::new());
+            };
+            let bytes = self.run_bytes(&["cat-file", "--textconv", &object_name(v)])?;
+            let (text, bad) = decode(&bytes);
+            invalid_bytes += bad;
+            Ok(text)
+        };
+        let old = text(versions[0])?;
+        let new = text(versions[1])?;
+        Ok(LoadedDiff {
+            spec: spec.clone(),
+            content: Content::Text {
+                old,
+                new,
+                invalid_bytes,
+            },
+            textconv: self.textconv(spec.path())?,
+        })
+    }
+
+    /// The textconv filter git applies to `path` when diffing, as `driver: command`: the
+    /// `diff` attribute (from the working tree, git's default) names a driver that has a
+    /// `diff.<driver>.textconv` command.
+    fn textconv(&self, path: &str) -> Result<Option<String>, GitError> {
+        let out = self.run(&["check-attr", "-z", "diff", "--", path])?;
+        // `<path> NUL diff NUL <value> NUL`
+        let value = out.split('\0').nth(2).unwrap_or("");
+        if matches!(value, "" | "unspecified" | "set" | "unset") {
+            return Ok(None);
+        }
+        let command = self.query(&["config", &format!("diff.{value}.textconv")])?;
+        Ok(command
+            .filter(|c| !c.is_empty())
+            .map(|c| format!("{value}: {c}")))
+    }
+}
+
+/// `<rev>:<path>`, the name git reads a version by.
+fn object_name(v: &Version) -> String {
+    format!("{}:{}", v.rev.to_hex(), v.path)
 }
 
 /// Convenience wrapper: load the repository containing `dir`.

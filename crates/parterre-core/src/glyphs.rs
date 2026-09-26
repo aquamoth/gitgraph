@@ -170,8 +170,38 @@ pub const RESET: Glyph = &[Part::Path(
     "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5",
 )];
 
+/// Diff window, side by side: Lucide's columns-2.
+pub const DIFF_SIDE_BY_SIDE: Glyph = &[
+    rect(3.0, 3.0, 18.0, 18.0, 2.0, false),
+    Part::Path("M12 3v18"),
+];
+/// Diff window, unified: Lucide's rows-2.
+pub const DIFF_UNIFIED: Glyph = &[
+    rect(3.0, 3.0, 18.0, 18.0, 2.0, false),
+    Part::Path("M3 12h18"),
+];
+/// Fold unchanged lines: Lucide's fold-vertical, two arrows closing on a dashed line.
+pub const FOLD: Glyph = &[Part::Path(
+    "M12 22v-6M12 8V2M4 12H2M10 12H8M16 12h-2M22 12h-2M15 19l-3-3-3 3M15 5l-3 3-3-3",
+)];
+/// Show the whole file: Lucide's unfold-vertical, two arrows opening from a dashed line.
+pub const UNFOLD: Glyph = &[Part::Path(
+    "M12 22v-6M12 8V2M4 12H2M10 12H8M16 12h-2M22 12h-2M15 19l-3 3-3-3M15 5l-3-3-3 3",
+)];
+/// Whitespace counts: Lucide's pilcrow.
+pub const WHITESPACE_COMPARE: Glyph =
+    &[Part::Path("M13 4v16M17 4v16M19 4H9.5a4.5 4.5 0 0 0 0 9H13")];
+/// Changes in whitespace don't count: Lucide's fold-horizontal, blanks squeezed together.
+pub const WHITESPACE_IGNORE_CHANGES: Glyph = &[Part::Path(
+    "M2 12h6M22 12h-6M12 2v2M12 8v2M12 14v2M12 20v2M19 9l-3 3 3 3M5 15l3-3-3-3",
+)];
+/// No whitespace counts: the pilcrow struck through.
+pub const WHITESPACE_IGNORE_ALL: Glyph = &[Part::Path(
+    "M13 4v16M17 4v16M19 4H9.5a4.5 4.5 0 0 0 0 9H13M4 3l16 18",
+)];
+
 /// Every glyph, for tests.
-pub const ALL: [Glyph; 26] = [
+pub const ALL: [Glyph; 33] = [
     MENU,
     SEARCH,
     PLUS,
@@ -198,6 +228,13 @@ pub const ALL: [Glyph; 26] = [
     LAYOUT_DETAILS_BELOW,
     LAYOUT_FILES_RIGHT,
     RESET,
+    DIFF_SIDE_BY_SIDE,
+    DIFF_UNIFIED,
+    FOLD,
+    UNFOLD,
+    WHITESPACE_COMPARE,
+    WHITESPACE_IGNORE_CHANGES,
+    WHITESPACE_IGNORE_ALL,
 ];
 
 /// One stroke of a flattened path.

@@ -59,6 +59,9 @@ pub struct ChangedFile {
     /// The path in the parent, for renames and copies.
     pub old_path: Option<String>,
     pub status: FileStatus,
+    /// The old and new mode, as git's octal numbers (`0o100644`, `0o160000` for a submodule;
+    /// 0 for a side that doesn't exist).
+    pub modes: [u32; 2],
     /// Lines added; `None` for binary files.
     pub added: Option<u32>,
     /// Lines removed; `None` for binary files.
@@ -223,6 +226,14 @@ pub(crate) fn parse_diff_tree(out: &str) -> Result<Vec<ChangedFile>, String> {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| format!("raw record without status: {header:?}"))?;
         let status = FileStatus::from_letter(status_field.as_bytes()[0]);
+        let mut fields = header[1..].split(' ');
+        let mut mode = || {
+            fields
+                .next()
+                .and_then(|m| u32::from_str_radix(m, 8).ok())
+                .ok_or_else(|| format!("raw record without modes: {header:?}"))
+        };
+        let modes = [mode()?, mode()?];
         let mut path = || {
             tokens
                 .next()
@@ -240,6 +251,7 @@ pub(crate) fn parse_diff_tree(out: &str) -> Result<Vec<ChangedFile>, String> {
             path,
             old_path,
             status,
+            modes,
             added: None,
             removed: None,
         });
@@ -337,6 +349,7 @@ mod tests {
             path: path.into(),
             old_path: None,
             status: FileStatus::Added,
+            modes: [0o100644; 2],
             added: Some(0),
             removed: Some(0),
         };
@@ -396,6 +409,7 @@ mod tests {
             path: path.into(),
             old_path: None,
             status,
+            modes: [0o100644; 2],
             added: lines.map(|l| l.0),
             removed: lines.map(|l| l.1),
         }

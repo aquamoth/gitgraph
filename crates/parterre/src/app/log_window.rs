@@ -7,7 +7,7 @@
 //! separate functions that a [`LogLayout`] arranges; the layout is picked in the header or in
 //! the settings, and it and the dividers of each layout are saved with the settings.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, mpsc};
 
 use eframe::egui::text::{LayoutJob, TextFormat, TextWrapping};
@@ -18,6 +18,7 @@ use eframe::egui::{
 use parterre_core::changed_files::{
     ChangedFile, FileColumn, FileOrder, FileStatus, filter_and_sort,
 };
+use parterre_core::file_diff::FileDiffSpec;
 use parterre_core::glyphs::{self, Glyph};
 use parterre_core::log::LogQuery;
 use parterre_core::log_layout::LogLayout;
@@ -30,6 +31,8 @@ use crate::settings::LogWindowSettings;
 use crate::theme::{Palette, text_on};
 use crate::widgets;
 
+/// Opening more diff windows than this at once asks first, as TortoiseGit does.
+const MANY_DIFFS: usize = 10;
 /// Height of a commit row and of a changed-file row.
 const ROW: f32 = 24.0;
 const FILE_ROW: f32 = 23.0;
@@ -81,6 +84,28 @@ pub struct LogWindow {
     copied: Option<(Copied, f64)>,
     /// How many logs were opened, to give each its own scroll positions.
     opened: u64,
+    /// The changed files chosen in the list.
+    selection: FileSelection,
+    /// Diff windows to open, for the app to take.
+    diff_requests: Vec<(Arc<Repo>, FileDiffSpec)>,
+    /// Diff windows waiting for "Open all?" to be answered.
+    confirm: Option<Vec<(Arc<Repo>, FileDiffSpec)>>,
+}
+
+/// Changed files chosen in the list, by path, for the commit they belong to. Changing the
+/// commit clears it.
+#[derive(Debug, Default)]
+struct FileSelection {
+    commit: Option<Oid>,
+    paths: HashSet<String>,
+    /// Where a Shift+click range starts.
+    anchor: Option<String>,
+}
+
+/// What a click in the changed files asked for, by row in the list as shown.
+enum FileClick {
+    Select(usize, Modifiers),
+    Open(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -431,6 +456,13 @@ impl LogWindow {
     pub fn close(&mut self) {
         self.view = None;
         self.files = ChangedFiles::default();
+        self.selection = FileSelection::default();
+        self.confirm = None;
+    }
+
+    /// The diff windows asked for since the last call.
+    pub fn take_diff_requests(&mut self) -> Vec<(Arc<Repo>, FileDiffSpec)> {
+        std::mem::take(&mut self.diff_requests)
     }
 
     /// After F5: re-runs the query on the new snapshot.
@@ -497,6 +529,31 @@ impl LogWindow {
         self.header(ui, &c, env);
         let body = ui.available_rect_before_wrap();
         self.body(ui, body, env);
+        self.confirm_many(ui);
+    }
+
+    /// Asks before opening more than [`MANY_DIFFS`] diff windows at once.
+    fn confirm_many(&mut self, ui: &mut Ui) {
+        let Some(pending) = &self.confirm else { return };
+        let n = pending.len();
+        let (mut open, mut cancel) = (false, false);
+        let modal = egui::Modal::new(Id::new("log-many-diffs")).show(ui.ctx(), |ui| {
+            ui.set_width(340.0);
+            ui.label(RichText::new(format!("Open {n} diff windows?")).strong());
+            ui.add_space(4.0);
+            ui.label("A window opens for every selected file.");
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                open = widgets::text_button(ui, "Open all").clicked();
+                cancel = widgets::text_button(ui, "Cancel").clicked();
+            });
+        });
+        if open {
+            self.diff_requests
+                .extend(self.confirm.take().unwrap_or_default());
+        } else if cancel || modal.should_close() {
+            self.confirm = None;
+        }
     }
 
     /// The range at the top left, as TortoiseGit shows it; on the right the commit count, the
@@ -847,6 +904,12 @@ impl LogWindow {
         };
         let commit = view.repo.commit(ix);
         let merge = commit.parents.len() > 1;
+        if self.selection.commit != Some(commit.oid) {
+            self.selection = FileSelection {
+                commit: Some(commit.oid),
+                ..FileSelection::default()
+            };
+        }
         let ctx = ui.ctx().clone();
         let files = self.files.get(&view.repo.path, commit.oid, &ctx);
         let shown = match files {
@@ -972,6 +1035,8 @@ impl LogWindow {
         ui.spacing_mut().item_spacing.y = 0.0;
         let body = egui::TextStyle::Body.resolve(ui.style());
         let text = ui.visuals().text_color();
+        let mut click = None;
+        let selection = &self.selection;
         ScrollArea::vertical()
             .id_salt(("log-files", commit.oid))
             .auto_shrink(false)
@@ -979,7 +1044,15 @@ impl LogWindow {
                 for row in range {
                     let file = &files[shown[row]];
                     let (rect, response) = ui
-                        .allocate_exact_size(vec2(ui.available_width(), FILE_ROW), Sense::hover());
+                        .allocate_exact_size(vec2(ui.available_width(), FILE_ROW), Sense::click());
+                    if response.double_clicked() {
+                        click = Some(FileClick::Open(row));
+                    } else if response.clicked() {
+                        click = Some(FileClick::Select(row, ui.input(|i| i.modifiers)));
+                    }
+                    if selection.paths.contains(&file.path) {
+                        ui.painter().rect_filled(rect, 0.0, c.selected_bg);
+                    }
                     if response.hovered() {
                         ui.painter().rect_filled(rect, 0.0, c.hover);
                     } else if row % 2 == 1 {
@@ -1045,6 +1118,66 @@ impl LogWindow {
                     }
                 }
             });
+
+        // Enter opens every selected file; a double-click opens one.
+        let enter = !ui.ctx().egui_wants_keyboard_input()
+            && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
+        let parent = commit.parents.first().map(|&p| view.repo.commit(p).oid);
+        let spec = |f: &ChangedFile| {
+            (
+                view.repo.clone(),
+                FileDiffSpec::of_commit(commit.oid, parent, f),
+            )
+        };
+        let sel = &mut self.selection;
+        let mut open: Vec<(Arc<Repo>, FileDiffSpec)> = Vec::new();
+        match click {
+            Some(FileClick::Open(row)) => {
+                let file = &files[shown[row]];
+                sel.paths = HashSet::from([file.path.clone()]);
+                sel.anchor = Some(file.path.clone());
+                open.push(spec(file));
+            }
+            Some(FileClick::Select(row, mods)) => {
+                let path = files[shown[row]].path.clone();
+                let anchor = sel
+                    .anchor
+                    .as_ref()
+                    .and_then(|a| shown.iter().position(|&i| &files[i].path == a));
+                if mods.command {
+                    if !sel.paths.remove(&path) {
+                        sel.paths.insert(path.clone());
+                    }
+                    sel.anchor = Some(path);
+                } else if mods.shift
+                    && let Some(from) = anchor
+                {
+                    let (a, b) = (from.min(row), from.max(row));
+                    sel.paths = shown[a..=b]
+                        .iter()
+                        .map(|&i| files[i].path.clone())
+                        .collect();
+                } else {
+                    sel.paths = HashSet::from([path.clone()]);
+                    sel.anchor = Some(path);
+                }
+            }
+            None => {}
+        }
+        if enter {
+            open.extend(
+                shown
+                    .iter()
+                    .map(|&i| &files[i])
+                    .filter(|f| sel.paths.contains(&f.path))
+                    .map(spec),
+            );
+        }
+        if open.len() > MANY_DIFFS {
+            self.confirm = Some(open);
+        } else {
+            self.diff_requests.extend(open);
+        }
     }
 }
 
@@ -1525,6 +1658,9 @@ impl ParterreApp {
                 .frame(egui::Frame::central_panel(&ui.ctx().global_style()).inner_margin(0))
                 .show(ui, |ui| log.contents(ui, &mut env));
         });
+        for (repo, spec) in self.log.take_diff_requests() {
+            self.diffs.open(repo, spec, &self.settings.diff_window, ctx);
+        }
     }
 }
 
@@ -1538,6 +1674,7 @@ mod tests {
             path: "src/new.rs".into(),
             old_path: Some("lib/old.rs".into()),
             status: FileStatus::Renamed,
+            modes: [0o100644; 2],
             added: Some(1),
             removed: Some(0),
         }
