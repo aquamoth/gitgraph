@@ -20,6 +20,7 @@ use eframe::egui::{
     self, Color32, CornerRadius, FontId, Key, Modifiers, Rect, RichText, ScrollArea, Sense, Stroke,
     StrokeKind, Ui, UiBuilder, Vec2, pos2, vec2,
 };
+use parterre_core::blame::BlameSpec;
 use parterre_core::changed_files::FileStatus;
 use parterre_core::file_diff::{
     Content, DiffLine, DiffOptions, FileDiff, FileDiffSpec, LineKind, LoadedDiff, Note, Rev, Row,
@@ -43,7 +44,7 @@ const MARKER: f32 = 16.0;
 /// Width of the overview strip.
 const OVERVIEW: f32 = 14.0;
 /// Height of the horizontal scrollbar.
-const SCROLLBAR: f32 = 10.0;
+pub(super) const SCROLLBAR: f32 = 10.0;
 /// Rows kept above a change scrolled to.
 const LEAD: f32 = 3.0;
 
@@ -64,17 +65,31 @@ impl DiffWindows {
         settings: &DiffWindowSettings,
         ctx: &egui::Context,
     ) {
+        self.open_at(repo, spec, None, settings, ctx);
+    }
+
+    /// As [`DiffWindows::open`], scrolled to the change at `line` (from 0) of the new version.
+    pub fn open_at(
+        &mut self,
+        repo: Arc<Repo>,
+        spec: FileDiffSpec,
+        line: Option<usize>,
+        settings: &DiffWindowSettings,
+        ctx: &egui::Context,
+    ) {
         if let Some(w) = self.windows.iter_mut().find(|w| w.spec == spec) {
             // Files on disk may have changed since: load them again, in the same window.
             if spec.reads_working_tree() {
                 *w = DiffWindow::new(w.id, repo, spec, settings, ctx);
             }
+            w.goto = line.or(w.goto);
             w.focus = true;
             return;
         }
         self.opened += 1;
-        self.windows
-            .push(DiffWindow::new(self.opened, repo, spec, settings, ctx));
+        let mut w = DiffWindow::new(self.opened, repo, spec, settings, ctx);
+        w.goto = line;
+        self.windows.push(w);
     }
 
     /// Closes every diff window (the repository they belong to is closing).
@@ -239,6 +254,10 @@ struct DiffWindow {
     closed: bool,
     /// The theme last given to the window's title bar.
     title_theme: Option<egui::SystemTheme>,
+    /// A blame window asked for (the toolbar's Blame): the file, and the line to choose.
+    blame: Option<(BlameSpec, Option<usize>)>,
+    /// Once loaded, scroll to the change at this line (from 0) of the new version.
+    goto: Option<usize>,
 }
 
 impl DiffWindow {
@@ -303,6 +322,8 @@ impl DiffWindow {
             focus: false,
             closed: false,
             title_theme: None,
+            blame: None,
+            goto: None,
         }
     }
 
@@ -417,6 +438,17 @@ impl DiffWindow {
             }
         }
         positions
+    }
+
+    /// The change that line `line` (from 0) of the new version is in, or the last one before
+    /// it.
+    fn change_at(&self, line: usize) -> Option<usize> {
+        let ready = self.ready()?;
+        let (rows, _) = Self::rows_and_changes(&ready.diff, self.form);
+        let at = self.shown.iter().position(
+            |s| matches!(s, Shown::Row(r) if rows[*r].new.is_some_and(|n| n as usize >= line)),
+        )?;
+        self.positions.iter().rposition(|&p| p <= at)
     }
 
     fn set_form(&mut self, form: DiffForm) {
@@ -659,6 +691,57 @@ impl DiffWindow {
             settings.whitespace = ws;
         }
         let _ = c;
+
+        let why = if self.spec.is_submodule() {
+            Some("A submodule has no lines to blame")
+        } else if self.spec.binary {
+            Some("A binary file has no lines to blame")
+        } else {
+            None
+        };
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let r = ui.add_enabled_ui(why.is_none(), |ui| widgets::text_button(ui, "Blame"));
+            let r = match why {
+                Some(why) => r.inner.on_disabled_hover_text(why),
+                None => widgets::tip_explained(
+                    r.inner,
+                    "Blame",
+                    "",
+                    "Which commit last changed each line of the new version (of the old one, \
+                     for a deleted file), at the change in view.",
+                ),
+            };
+            if r.clicked() {
+                self.blame = self.blame_spec();
+            }
+        });
+    }
+
+    /// The version to blame (the new one, or the old one of a deleted file), and the line of
+    /// it at the change in view.
+    fn blame_spec(&self) -> Option<(BlameSpec, Option<usize>)> {
+        let (version, old) = match (&self.spec.new, &self.spec.old) {
+            (Some(v), _) => (v, false),
+            (None, Some(v)) => (v, true),
+            (None, None) => return None,
+        };
+        let line = self.ready().and_then(|ready| {
+            let (rows, _) = Self::rows_and_changes(&ready.diff, self.form);
+            let at = *self.positions.get(self.current?)?;
+            let Shown::Row(r) = self.shown.get(at)? else {
+                return None;
+            };
+            // The change's first line of that version, or the one before where it has none.
+            rows[*r..]
+                .iter()
+                .find_map(|row| if old { row.old } else { row.new })
+                .map(|l| l as usize)
+        });
+        let spec = BlameSpec {
+            rev: version.rev,
+            path: version.path.clone(),
+        };
+        Some((spec, line))
     }
 
     /// Status and path, the counts on the right, and the notes below.
@@ -739,6 +822,11 @@ impl DiffWindow {
     fn body(&mut self, ui: &mut Ui, full: Rect, c: &Colors) {
         // The toolbar, drawn just before, may have changed the form or the folding.
         self.refresh();
+        if let Some(line) = self.goto.take()
+            && let Some(k) = self.change_at(line)
+        {
+            self.jump = Some(k);
+        }
         let positions = self.positions.clone();
         let Load::Ready(ready) = &self.load else {
             return;
@@ -994,7 +1082,8 @@ impl DiffWindow {
                 pos2(full.left(), bottom),
                 pos2(full.right() - OVERVIEW, full.bottom()),
             );
-            self.hscrollbar(ui, track, text_w / content_w, hmax, c);
+            let id = egui::Id::new(("diff-hbar", self.id));
+            hscrollbar(ui, id, track, &mut self.hoff, text_w / content_w, hmax, c);
         }
     }
 
@@ -1032,33 +1121,6 @@ impl DiffWindow {
             .map(|c| self.repo.commit(c).subject.clone())
             .unwrap_or_default();
         format!("{short}   {subject}")
-    }
-
-    fn hscrollbar(&mut self, ui: &mut Ui, track: Rect, visible: f32, hmax: f32, c: &Colors) {
-        ui.painter()
-            .rect_filled(track, 0.0, ui.visuals().panel_fill);
-        let thumb_w = (track.width() * visible).clamp(30.0, track.width());
-        let room = (track.width() - thumb_w).max(1.0);
-        let x = track.left() + room * (self.hoff / hmax);
-        let thumb = Rect::from_min_size(pos2(x, track.top() + 2.0), vec2(thumb_w, SCROLLBAR - 4.0));
-        let response = ui.interact(
-            track,
-            egui::Id::new(("diff-hbar", self.id)),
-            Sense::click_and_drag(),
-        );
-        if response.dragged() {
-            self.hoff = (self.hoff + response.drag_delta().x * hmax / room).clamp(0.0, hmax);
-        } else if response.clicked()
-            && let Some(p) = response.interact_pointer_pos()
-        {
-            self.hoff = ((p.x - track.left() - thumb_w / 2.0) / room * hmax).clamp(0.0, hmax);
-        }
-        let fill = if response.hovered() || response.dragged() {
-            c.thumb_hover
-        } else {
-            c.thumb
-        };
-        ui.painter().rect_filled(thumb, CornerRadius::same(3), fill);
     }
 
     /// Chooses text with the mouse: a press starts (Shift extends), a drag moves the end
@@ -1528,6 +1590,39 @@ fn overview(
     }
 }
 
+/// A horizontal scrollbar in `track` for an offset `hoff` of at most `hmax`, `visible` being
+/// the share of the width in view: drag the thumb, or click to put it there.
+pub(super) fn hscrollbar(
+    ui: &mut Ui,
+    id: egui::Id,
+    track: Rect,
+    hoff: &mut f32,
+    visible: f32,
+    hmax: f32,
+    c: &Colors,
+) {
+    ui.painter()
+        .rect_filled(track, 0.0, ui.visuals().panel_fill);
+    let thumb_w = (track.width() * visible).clamp(30.0, track.width());
+    let room = (track.width() - thumb_w).max(1.0);
+    let x = track.left() + room * (*hoff / hmax);
+    let thumb = Rect::from_min_size(pos2(x, track.top() + 2.0), vec2(thumb_w, SCROLLBAR - 4.0));
+    let response = ui.interact(track, id, Sense::click_and_drag());
+    if response.dragged() {
+        *hoff = (*hoff + response.drag_delta().x * hmax / room).clamp(0.0, hmax);
+    } else if response.clicked()
+        && let Some(p) = response.interact_pointer_pos()
+    {
+        *hoff = ((p.x - track.left() - thumb_w / 2.0) / room * hmax).clamp(0.0, hmax);
+    }
+    let fill = if response.hovered() || response.dragged() {
+        c.thumb_hover
+    } else {
+        c.thumb
+    };
+    ui.painter().rect_filled(thumb, CornerRadius::same(3), fill);
+}
+
 /// The column of the first changed word in the shown row `at`, if any.
 fn first_word_column(diff: &FileDiff, rows: &[Row], shown: &[Shown], at: usize) -> Option<usize> {
     let Some(Shown::Row(r)) = shown.get(at) else {
@@ -1560,7 +1655,7 @@ fn with_arrows(text: &str, font: &FontId, color: Color32) -> LayoutJob {
     job
 }
 
-fn message(ui: &Ui, body: Rect, text: &str, color: Color32) {
+pub(super) fn message(ui: &Ui, body: Rect, text: &str, color: Color32) {
     let g = ui
         .painter()
         .layout_job(with_arrows(text, &FontId::proportional(14.0), color));
@@ -1580,32 +1675,32 @@ fn size_text(size: Option<u64>) -> String {
     }
 }
 
-struct Colors {
-    pane: Color32,
-    line: Color32,
-    weak: Color32,
-    text: Color32,
-    filler: Color32,
-    fold: Color32,
-    fold_hover: Color32,
-    removed_line: Color32,
-    removed_word: Color32,
-    added_line: Color32,
-    added_word: Color32,
-    removed: Color32,
-    added: Color32,
-    renamed: Color32,
-    note: Color32,
-    selected_bg: Color32,
-    selected_fg: Color32,
+pub(super) struct Colors {
+    pub(super) pane: Color32,
+    pub(super) line: Color32,
+    pub(super) weak: Color32,
+    pub(super) text: Color32,
+    pub(super) filler: Color32,
+    pub(super) fold: Color32,
+    pub(super) fold_hover: Color32,
+    pub(super) removed_line: Color32,
+    pub(super) removed_word: Color32,
+    pub(super) added_line: Color32,
+    pub(super) added_word: Color32,
+    pub(super) removed: Color32,
+    pub(super) added: Color32,
+    pub(super) renamed: Color32,
+    pub(super) note: Color32,
+    pub(super) selected_bg: Color32,
+    pub(super) selected_fg: Color32,
     /// Behind chosen text.
-    selection: Color32,
-    thumb: Color32,
-    thumb_hover: Color32,
+    pub(super) selection: Color32,
+    pub(super) thumb: Color32,
+    pub(super) thumb_hover: Color32,
 }
 
 /// The log window's colours for panes and statuses, and tints for the lines.
-fn colors(ui: &Ui) -> Colors {
+pub(super) fn colors(ui: &Ui) -> Colors {
     let t = widgets::tones(ui);
     let weak = ui.visuals().weak_text_color();
     let text = ui.visuals().text_color();
@@ -1662,6 +1757,7 @@ impl ParterreApp {
     /// Every open diff window.
     pub(super) fn diff_windows(&mut self, ctx: &egui::Context) {
         let settings = &mut self.settings;
+        let mut blames = Vec::new();
         for window in &mut self.diffs.windows {
             window.show(
                 ctx,
@@ -1670,8 +1766,14 @@ impl ParterreApp {
                 self.window_theme,
                 &self.window_icon,
             );
+            if let Some(blame) = window.blame.take() {
+                blames.push((window.repo.clone(), blame));
+            }
         }
         self.diffs.windows.retain(|w| !w.closed);
+        for (repo, (spec, line)) in blames {
+            self.open_blame(repo, spec, line, ctx);
+        }
     }
 
     /// Opens the diff of `path` in the commit `rev` (a ref or hash prefix) against its first
@@ -1823,6 +1925,22 @@ mod tests {
         frame(&ctx, &mut w, &mut settings, Vec::new());
         assert_eq!(w.form, DiffForm::SideBySide);
         assert_eq!(settings.form, DiffForm::SideBySide);
+    }
+
+    #[test]
+    fn a_window_opened_at_a_line_starts_at_its_change() {
+        let old = numbered(80);
+        let new = old
+            .replace("line 5\n", "line five\n")
+            .replace("line 60\n", "line sixty\n");
+        let mut settings = DiffWindowSettings::default();
+        let mut w = window(&old, &new, &settings);
+        w.jump = None;
+        w.goto = Some(59);
+        let ctx = egui::Context::default();
+        frame(&ctx, &mut w, &mut settings, Vec::new());
+        frame(&ctx, &mut w, &mut settings, Vec::new());
+        assert_eq!(w.current, Some(1));
     }
 
     /// Where display column `col` of row `row` starts in the new (right) pane, side by side and

@@ -12,6 +12,7 @@ use eframe::egui::text::{LayoutJob, TextFormat, TextWrapping};
 use eframe::egui::{
     self, FontId, Id, Key, RichText, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2,
 };
+use parterre_core::blame::BlameSpec;
 use parterre_core::compare::Comparison;
 use parterre_core::file_diff::{FileDiffSpec, Rev};
 use parterre_core::glyphs;
@@ -61,6 +62,8 @@ pub struct CompareWindow {
     /// The theme last given to the window's title bar.
     title_theme: Option<egui::SystemTheme>,
     diffs: DiffQueue<(Arc<Repo>, FileDiffSpec)>,
+    /// Blame windows asked for, for the app to take.
+    blames: Vec<(Arc<Repo>, BlameSpec)>,
 }
 
 #[derive(Debug)]
@@ -188,7 +191,7 @@ impl CompareWindow {
         let weak = ui.visuals().weak_text_color();
         let abbrev = view.repo.abbrev_len;
         let since = &mut env.settings.since_ancestor;
-        let open = self.table.show(
+        let action = self.table.show(
             ui,
             c,
             "compare",
@@ -216,8 +219,17 @@ impl CompareWindow {
                 ui.label(RichText::new(note).size(12.0).color(weak));
             },
         );
+        // The right-hand side's version, as TortoiseGit's "Blame revisions" blames the newer.
+        if let Some(f) = action.blame {
+            let spec = BlameSpec {
+                rev: comparison.new,
+                path: f.path.clone(),
+            };
+            self.blames.push((view.repo.clone(), spec));
+        }
         let Some(Some(base)) = base else { return };
-        let open = open
+        let open = action
+            .open
             .into_iter()
             .map(|f| {
                 let spec = FileDiffSpec::between(Some(base), comparison.new, f);
@@ -421,6 +433,9 @@ impl ParterreApp {
         });
         for (repo, spec) in self.compare.diffs.take() {
             self.diffs.open(repo, spec, &self.settings.diff_window, ctx);
+        }
+        for (repo, spec) in std::mem::take(&mut self.compare.blames) {
+            self.open_blame(repo, spec, None, ctx);
         }
     }
 }
