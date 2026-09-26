@@ -64,6 +64,7 @@ In the window:
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo a move |
 | Drag the background, wheel, Shift+wheel | Pan |
 | Ctrl+wheel, pinch, `+` `-` `0` | Zoom |
+| Ctrl+wheel, pinch anywhere but over the graph | Text size of every window (also *Settings → Appearance*, and `Ctrl`+`+` `-` `0` in the log, diff and settings windows). The graph keeps its own zoom. |
 | `F`, double-click the background | Fit the whole graph |
 | `Home` / `H` | Go to HEAD |
 | `Ctrl+F`, then `Enter` / `F3` | Find branches, tags, hashes, subjects or authors |

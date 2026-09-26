@@ -17,6 +17,7 @@ mod render;
 mod scene;
 mod settings;
 mod system_theme;
+mod text_size;
 mod theme;
 // Runs in build.rs; compiled here only for its tests.
 #[cfg(test)]
@@ -103,6 +104,10 @@ struct Cli {
     /// Colour theme.
     #[arg(long, value_enum)]
     theme: Option<Theme>,
+
+    /// Text size of every window (1 = 100%, 0.5 to 3); the graph keeps its own zoom.
+    #[arg(long, value_name = "SIZE")]
+    text_size: Option<f32>,
 
     /// Initial window size, e.g. 1600x1000.
     #[arg(long, value_parser = parse_size)]
@@ -476,6 +481,9 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
     }
     if cli.diff_unfolded {
         s.diff_window.fold = false;
+    }
+    if let Some(size) = cli.text_size {
+        s.text_size = size;
     }
     if let Some(theme) = cli.theme {
         s.theme = match theme {

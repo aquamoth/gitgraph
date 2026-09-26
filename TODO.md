@@ -321,7 +321,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     opened without a node. Ruled out of the first log window
     ([#27](https://github.com/aquamoth/parterre/issues/27)); the log query is shaped so these
     can be added as new fields and callers. Which searches, and when?
-
 25. **Pull requests on GitHub, slice 1** (research §12 and §14). Not in TortoiseGit. Tried on
     a commits-only clone of `cli/cli`: 63 open pull requests, 25 of them from its own branches,
     shown; the 38 from forks need slice 2. Calls you may want to overrule:
@@ -360,6 +359,27 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
         on the status bar, which may be hidden. On success the status bar counts them.
       - Loads parterre makes by itself (opening, refs changing, F5) never write to the
         status bar, even on success; the tooltip keeps the last error.
+26. **Text size** (your decisions of 2026-09-26: one size for every window, the graph keeps
+    its own zoom, remembered with the settings). Choices I made on my own:
+    - **What grows:** everything egui draws: text, buttons, spacing, menus and tooltips, in
+      the main window's toolbar and status bar too. The graph keeps its size on screen, and
+      so do PNG and WebP exports; the overview map grows, as part of the window.
+    - **Steps** as in browsers: 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250 and
+      300%. A wheel notch is one step, and so is pinching by a fifth. *Settings → Appearance
+      → Text size* lists the steps.
+    - **Where:** `Ctrl`+wheel and pinch anywhere but over the graph and its overview map, in
+      every window.
+      `Ctrl`+`+` `-` `0` only in the log, diff and settings windows: in the main window they
+      keep zooming the graph, as before.
+    - **Window sizes:** the settings window, fixed in size, grows and shrinks with the text,
+      up to 90% of the screen (its page scrolls). Open main, log and diff windows keep their
+      size on screen, so they show less at a larger size, as a browser does. The log and diff
+      windows remember their size in points, though, so one opened later is that much larger
+      (or smaller) on screen. Every window's smallest size is in points too.
+    - Also `--text-size 1.5` on the command line (kept, like `--theme`).
+    - **To check by hand:** under Xvfb one `xdotool` wheel click arrived as two wheel lines,
+      so it gave two steps. A real mouse should give one step per notch; does it?
+
 
       Settings saved while they were off by default keep them off. On for one repository is
       on for all, like the other settings. `--export` never asks GitHub.
@@ -467,10 +487,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [ ] Reopen a repository at the zoom and position it last had, stored per repository like
       the remembered moves; without a stored view, 100% with the current branch near the top,
       as today (question 4, decided 2026-09-26).
-- [ ] Text size with `Ctrl`+wheel in every window besides the graph: the log window, the
-      diff windows and the settings, as the graph zooms with it (wanted 2026-09-26). Probably
-      also `Ctrl`+`+`/`-`/`0`. Open: one size shared by all these windows or one each, and
-      whether it is remembered with the settings.
 - [ ] File diffs from the log window, being charted in the map *Roadmap to TortoiseGit
       parity: revision graph and log* ([#25](https://github.com/aquamoth/parterre/issues/25)):
       read-only, one diff window per file, diffed by `imara-diff` (lines and words; decided in
@@ -702,3 +718,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       `--export out.png` or `out.webp` (with `--zoom`). Drawn by the window's own painting
       code, rasterised without a GPU, so labels look as on screen. Every export now uses the
       system's save dialog instead of a path field.
+- [x] Text size for every window, with `Ctrl`+wheel off the graph, `Ctrl`+`+` `-` `0` in the
+      log, diff and settings windows, and *Settings → Appearance*; remembered with the
+      settings. The graph keeps its own zoom and its size on screen (question 26).

@@ -159,6 +159,9 @@ pub struct Settings {
     pub layout: LayoutOptions,
     pub net: NetParams,
     pub theme: ThemeChoice,
+    /// The text size of every window (egui's zoom factor; 1.0 = 100%). The graph has its own
+    /// zoom.
+    pub text_size: f32,
     pub edge_style: EdgeStyle,
     pub arrows: Arrows,
     /// Overview map of the whole graph in the bottom-right corner.
@@ -262,6 +265,7 @@ impl Default for Settings {
             layout: LayoutOptions::default(),
             net: NetParams::default(),
             theme: ThemeChoice::default(),
+            text_size: 1.0,
             edge_style: EdgeStyle::default(),
             arrows: Arrows::default(),
             show_overview: false,
@@ -334,6 +338,19 @@ mod tests {
         s.diff_window.fold = false;
         let back: Settings = ron::from_str(&ron::to_string(&s).unwrap()).unwrap();
         assert_eq!(back.diff_window, s.diff_window);
+    }
+
+    #[test]
+    fn text_size_starts_at_100_percent_and_is_kept() {
+        let old: Settings = ron::from_str("(log_window: (size: (900.0, 600.0)))").unwrap();
+        assert_eq!(old.text_size, 1.0);
+
+        let s = Settings {
+            text_size: 1.25,
+            ..Settings::default()
+        };
+        let back: Settings = ron::from_str(&ron::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.text_size, 1.25);
     }
 
     #[test]

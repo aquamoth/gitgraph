@@ -30,6 +30,7 @@ use parterre_core::{Oid, Repo};
 
 use super::ParterreApp;
 use crate::settings::{DiffForm, DiffWindowSettings};
+use crate::text_size;
 use crate::widgets;
 
 /// Height of the toolbar.
@@ -1214,11 +1215,13 @@ impl DiffWindow {
         });
     }
 
-    /// Shows the window; returns nothing, but sets `closed` when it was closed.
+    /// Shows the window; returns nothing, but sets `closed` when it was closed. Ctrl+wheel and
+    /// Ctrl+plus, minus and 0 change `text_size`.
     fn show(
         &mut self,
         ctx: &egui::Context,
         settings: &mut DiffWindowSettings,
+        text_size: &mut f32,
         window_theme: Option<egui::SystemTheme>,
         icon: &Arc<egui::IconData>,
     ) {
@@ -1259,6 +1262,7 @@ impl DiffWindow {
                 }
                 // Keys go to the main window too when the diff is embedded in it.
                 self.handle_keys(ui, settings);
+                text_size::read_input(ui, text_size, true);
                 if close {
                     self.closed = true;
                 }
@@ -1657,9 +1661,15 @@ fn colors(ui: &Ui) -> Colors {
 impl ParterreApp {
     /// Every open diff window.
     pub(super) fn diff_windows(&mut self, ctx: &egui::Context) {
-        let settings = &mut self.settings.diff_window;
+        let settings = &mut self.settings;
         for window in &mut self.diffs.windows {
-            window.show(ctx, settings, self.window_theme, &self.window_icon);
+            window.show(
+                ctx,
+                &mut settings.diff_window,
+                &mut settings.text_size,
+                self.window_theme,
+                &self.window_icon,
+            );
         }
         self.diffs.windows.retain(|w| !w.closed);
     }
