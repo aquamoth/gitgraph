@@ -951,7 +951,7 @@ impl DiffWindow {
         );
         overview(ui, strip, diff, rows, &self.shown, side, view, row_h, c);
         self.select(ui, &input, area, out.state.offset.y, row_h);
-        // Unified: a badge by the pointer says which version choosing takes.
+        // Unified: a sign by the pointer says which version choosing takes.
         let badge = if self.dragging {
             self.selection
                 .map(|s| s.column)
@@ -1403,25 +1403,22 @@ fn fold_button(ui: &mut Ui, on: bool, opened: bool) -> egui::Response {
     widgets::icon_button(ui, glyph, tinted)
 }
 
-/// A small `+` (new version) or `−` (old version) at the lower right of the pointer, to say
-/// which version choosing text takes in the unified form. egui can't change the cursor's
-/// image, so the badge is drawn beside it, above everything else.
+/// A small green `+` (new version) or red `−` (old version) at the lower right of the
+/// pointer, a quiet reminder of which version choosing text takes in the unified form. egui
+/// can't change the cursor's image, so the sign is drawn beside it, above everything else.
 fn version_badge(ui: &Ui, pointer: egui::Pos2, version: Column, c: &Colors) {
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
         egui::Order::Tooltip,
         egui::Id::new("diff-version-badge"),
     ));
-    let center = pointer + vec2(12.0, 14.0);
-    let fill = match version {
-        Column::Old => c.removed,
-        Column::New => c.added,
+    let center = pointer + vec2(10.0, 12.0);
+    let (color, plus) = match version {
+        Column::Old => (c.removed, false),
+        Column::New => (c.added, true),
     };
-    let box_ = Rect::from_center_size(center, Vec2::splat(11.0));
-    painter.rect_filled(box_.expand(1.0), CornerRadius::same(3), Color32::WHITE);
-    painter.rect_filled(box_, CornerRadius::same(3), fill);
-    let stroke = Stroke::new(1.6, Color32::WHITE);
+    let stroke = Stroke::new(1.5, color);
     painter.hline(center.x - 3.0..=center.x + 3.0, center.y, stroke);
-    if version == Column::New {
+    if plus {
         painter.vline(center.x, center.y - 3.0..=center.y + 3.0, stroke);
     }
 }
