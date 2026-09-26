@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 18._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 19._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -192,6 +192,20 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     - **Per-user and machine-wide don't replace each other.** Windows Installer only upgrades
       within one scope, so a user who installs per-user and later machine-wide (or the other
       way round) gets two entries in *Settings → Apps*. Known MSI behaviour, not tested.
+18. **Log window** (#39, layout A). Calls #27–#29 didn't settle:
+    - **Ref badges follow the graph's ref kinds.** The log shows badges (and names the range
+      with refs) only of the kinds the graph shows: hide remote branches, other refs or the
+      stash in the graph and they go from the log too. The alternative is every ref, always,
+      which on Apps would add the `refs/t3/*` checkpoints.
+    - **Esc in the filter field** only leaves the field; a second Esc closes the window.
+    - **F5 in the log window** reloads the whole repository, graph included, as F5 in the
+      graph does; the log re-runs its query and keeps the selected commit.
+    - **Show log while the window is open** replaces its contents and asks the window manager
+      to raise it (Wayland may ignore that). Sort and filter of the changed files, and the
+      divider positions, carry over to the new log.
+    - **Size on first open:** 1100 × 760; after that, the size it last had.
+    - **No keyboard focus for the list:** the arrow keys, Page Up/Down, Home and End move the
+      selected commit whenever the filter field doesn't have the keyboard.
 
 ## Planned
 
@@ -199,6 +213,11 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       parity* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
       from TortoiseGit (decided in #28): when the second of two selected nodes is an ancestor
       of the first, the two are swapped instead of showing an empty list.
+  - [x] Layout A (stacked) and its entry points: *Show log* first in the node menu, `L` and
+        double-click ([#39](https://github.com/aquamoth/parterre/issues/39); see question 18).
+  - [ ] Layouts B, C and D, the layout picker and reset, and divider positions saved per
+        layout ([#40](https://github.com/aquamoth/parterre/issues/40)). The dividers live in
+        `log_window::Dividers` for the session only until then.
 - [x] Wayland freeze ([#38](https://github.com/aquamoth/parterre/issues/38)). On Wayland the
       whole app froze when one of its windows was minimized while another was open; it
       happened with Settings already. Worked around (see `frame_pacing.rs`, and

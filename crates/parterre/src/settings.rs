@@ -168,6 +168,23 @@ pub struct Settings {
     pub remember_moves: bool,
     /// Colours for branches by name; the first matching rule wins.
     pub branch_colors: Vec<BranchColor>,
+    pub log_window: LogWindowSettings,
+}
+
+/// What the log window remembers across runs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LogWindowSettings {
+    /// Inner size in points. (Its position can't be set on Wayland, so it isn't kept.)
+    pub size: [f32; 2],
+}
+
+impl Default for LogWindowSettings {
+    fn default() -> Self {
+        LogWindowSettings {
+            size: [1100.0, 760.0],
+        }
+    }
 }
 
 impl Default for Settings {
@@ -185,6 +202,7 @@ impl Default for Settings {
             highlight_edges: true,
             remember_moves: false,
             branch_colors: Vec::new(),
+            log_window: LogWindowSettings::default(),
         };
         Look::Modern.apply(&mut s);
         s

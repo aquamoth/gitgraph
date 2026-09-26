@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use parterre_core::{Oid, Repo};
 
+mod log_window;
 mod settings_window;
 mod toolbar;
 
@@ -219,6 +220,10 @@ pub struct ParterreApp {
     /// Path being edited in the "Export as SVG" dialog, when open.
     export_path: Option<String>,
     messages: Messages,
+    /// The log window (Show log), and what it keeps while closed.
+    log: log_window::LogWindow,
+    /// Raise the log window in the next frame (Show log while it is open).
+    focus_log: bool,
     /// Dragged nodes of every repository, kept when `remember_moves` is on.
     moves: RememberedMoves,
     system_theme: SystemTheme,
@@ -274,7 +279,19 @@ impl ParterreApp {
         // Automated runs are short and show one window (viewports are embedded), so they neither
         // freeze nor need their frame rate capped: they run as fast as they can.
         let frame_limiter = (!vsync && !automation.is_active()).then(FrameLimiter::default);
-        ParterreApp {
+        let demo_log: Option<Vec<parterre_core::CommitIx>> =
+            automation.demo_log.as_deref().map(|spec| {
+                spec.split("..")
+                    .filter_map(|name| {
+                        let commit = repo.resolve(name);
+                        if commit.is_none() {
+                            eprintln!("--demo-log: no commit named {name}");
+                        }
+                        commit
+                    })
+                    .collect()
+            });
+        let mut app = ParterreApp {
             repo_path,
             repo: Arc::new(repo),
             settings,
@@ -302,6 +319,8 @@ impl ParterreApp {
             show_about: false,
             export_path: None,
             messages: Messages::default(),
+            log: log_window::LogWindow::default(),
+            focus_log: false,
             moves,
             system_theme: SystemTheme::watch(&cc.egui_ctx),
             window_theme: None,
@@ -310,7 +329,11 @@ impl ParterreApp {
             zoom_text: String::new(),
             automation,
             frame_limiter,
+        };
+        if let Some(commits) = demo_log {
+            app.open_log(app.repo.clone(), &commits);
         }
+        app
     }
 
     /// Starts a new layout when the graph or layout options changed, and installs finished
@@ -529,6 +552,7 @@ impl ParterreApp {
                 // the selection is carried over by commit id.
                 self.pending_select = self.selected_commits();
                 self.repo = Arc::new(repo);
+                self.log.reload(&self.repo);
                 self.requested = None;
                 self.status = Some(("Reloaded".into(), false));
             }
@@ -691,6 +715,11 @@ impl ParterreApp {
         }
         if pressed(Key::F5) {
             self.reload();
+        }
+        // One node gives its log, two the range between them; three or more nothing.
+        if pressed(Key::L) {
+            let nodes = self.selection.nodes.clone();
+            self.show_log(&nodes);
         }
         if pressed(Key::F) {
             self.fit();
@@ -917,8 +946,16 @@ impl ParterreApp {
                 self.selection.set(Some(n));
             }
         }
-        if response.double_clicked() && self.hovered.is_none() {
-            self.view.fit(canvas, scene.bounds(), 1.0);
+        // Double-clicking a node opens its log and selects it alone; the background fits.
+        let mut action = None;
+        if response.double_clicked() {
+            match self.hovered {
+                Some(n) => {
+                    self.selection.set(Some(n));
+                    action = Some(MenuAction::ShowLog(vec![n]));
+                }
+                None => self.view.fit(canvas, scene.bounds(), 1.0),
+            }
         }
 
         // Wheel: scroll; Ctrl+wheel or pinch: zoom around the pointer.
@@ -1102,7 +1139,6 @@ impl ParterreApp {
             Some(n) => vec![n],
             None => Vec::new(),
         };
-        let mut action = None;
         let item = |text: &str, shortcut: &str| egui::Button::new(text).shortcut_text(shortcut);
         egui::Popup::context_menu(&response)
             .style(menu::style)
@@ -1119,6 +1155,15 @@ impl ParterreApp {
                     }
                     return;
                 };
+                // Greyed out rather than left out, so the menu keeps its shape.
+                let show_log = ui
+                    .add_enabled(group.len() <= 2, item("Show log", "L"))
+                    .on_disabled_hover_text("Select one or two nodes");
+                if show_log.clicked() {
+                    action = Some(MenuAction::ShowLog(group.clone()));
+                    ui.close();
+                }
+                menu::separator(ui);
                 let n = &scene.graph.nodes[node];
                 let commit = scene.repo.commit(n.commit);
                 // Right-clicking selects the node, so Ctrl+C would copy the same hash.
@@ -1185,6 +1230,7 @@ impl ParterreApp {
             Some(MenuAction::ReturnToLayout(nodes)) => self.return_to_layout(&nodes),
             Some(MenuAction::SelectSubtree(roots)) => self.select_subtree(&roots),
             Some(MenuAction::Center(node)) => self.center_on(node),
+            Some(MenuAction::ShowLog(nodes)) => self.show_log(&nodes),
             None => {}
         }
 
@@ -1356,6 +1402,11 @@ impl ParterreApp {
                         ),
                         ("Click a node", "Select it"),
                         (
+                            "L, double-click a node",
+                            "Show log: of the node, or of the range between two selected \
+                             nodes (first..second)",
+                        ),
+                        (
                             "Ctrl+click / Shift+click",
                             "Toggle it in / add it to the selection",
                         ),
@@ -1379,7 +1430,7 @@ impl ParterreApp {
                         ("Ctrl+,", "Settings"),
                         (
                             "Right-click a node",
-                            "Copy hash or refs, select its subtree, return it to the layout",
+                            "Show log, copy hash or refs, select its subtree, return it to the layout",
                         ),
                     ] {
                         ui.strong(keys);
@@ -1471,6 +1522,7 @@ enum MenuAction {
     ReturnToLayout(Vec<usize>),
     SelectSubtree(Vec<usize>),
     Center(usize),
+    ShowLog(Vec<usize>),
 }
 
 impl eframe::App for ParterreApp {
@@ -1497,6 +1549,7 @@ impl eframe::App for ParterreApp {
         self.shortcuts_window(&ctx);
         self.legend_window(&ctx);
         self.settings_window(&ctx);
+        self.log_window(&ctx);
         self.about_window(&ctx);
         self.export_window(&ctx);
 

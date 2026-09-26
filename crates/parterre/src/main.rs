@@ -136,6 +136,11 @@ struct Cli {
     #[arg(long, value_name = "WHAT", hide = true)]
     demo_open: Option<String>,
 
+    /// Open the log window before taking the screenshot: of REF, or of the range FIRST..SECOND
+    /// (refs or hash prefixes, as if those nodes were selected in that order).
+    #[arg(long, value_name = "REF[..REF]", hide = true)]
+    demo_log: Option<String>,
+
     /// What moves when dragging (for --demo-drag).
     #[arg(long, value_enum, hide = true)]
     drag_mode: Option<DragModeArg>,
@@ -252,6 +257,7 @@ fn main() -> ExitCode {
     );
     automation.demo_node = cli.demo_node.clone();
     automation.demo_open = cli.demo_open.clone();
+    automation.demo_log = cli.demo_log.clone();
     automation.demo_menu = cli.demo_menu.map(|m| match m {
         DemoMenuArg::Node => automation::DemoMenu::Node,
         DemoMenuArg::Canvas => automation::DemoMenu::Canvas,
