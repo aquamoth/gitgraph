@@ -4,8 +4,13 @@ parterre is a Cargo workspace with two crates:
 
 ```
 crates/parterre-core   GUI-free; everything testable lives here
-  git.rs               run `git log` / `git for-each-ref`, parse into a Repo
-  repo.rs              Repo snapshot: commits (with parent indices), refs, HEAD
+  git.rs               run `git log` / `git for-each-ref`, parse into a Repo; changed files
+                       of a commit (`git diff-tree`)
+  repo.rs              Repo snapshot: commits (with parent indices), refs, HEAD, git's hash
+                       length
+  log.rs               log query: tips and exclusions → commits in `git log --date-order`
+                       order, from the snapshot alone
+  changed_files.rs     changed-file types, `diff-tree -z` parser, files-before-folders order
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
   pattern.rs           branch-name wildcards, for hiding and colouring branches
   glyphs.rs            toolbar and menu icons as SVG path data, and a path flattener

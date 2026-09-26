@@ -83,6 +83,9 @@ pub enum Head {
     Detached(CommitIx),
 }
 
+/// git's abbreviation length for small repositories, used when git cannot tell us.
+pub const DEFAULT_ABBREV_LEN: usize = 7;
+
 #[derive(Clone, Debug)]
 pub struct Repo {
     /// Working tree root, or the git dir for bare repositories.
@@ -90,6 +93,9 @@ pub struct Repo {
     pub commits: Vec<Commit>,
     pub refs: Vec<GitRef>,
     pub head: Head,
+    /// How many hex digits git abbreviates hashes to in this repository (`core.abbrev`; by
+    /// default sized to the object count, 7 at minimum). Use with [`Oid::short`].
+    pub abbrev_len: usize,
     by_oid: HashMap<Oid, CommitIx>,
 }
 
@@ -105,6 +111,7 @@ impl Repo {
             commits,
             refs,
             head,
+            abbrev_len: DEFAULT_ABBREV_LEN,
             by_oid,
         }
     }
