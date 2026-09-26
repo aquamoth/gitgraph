@@ -7,7 +7,7 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 
-use crate::repo::{CommitIx, Repo};
+use crate::repo::{CommitIx, GitRef, Repo};
 
 /// What the log lists: the commits reachable from any of `tips` but from none of `exclude`,
 /// like `git log <tips> ^<exclude>`.
@@ -52,6 +52,41 @@ impl LogQuery {
         LogQuery {
             tips: vec![second],
             exclude: vec![first],
+        }
+    }
+
+    /// The log for selected nodes' commits, in selection order: one gives [`LogQuery::commit`],
+    /// two give [`LogQuery::range`], none or three and more give nothing (decided in #28).
+    pub fn for_selection(repo: &Repo, selected: &[CommitIx]) -> Option<LogQuery> {
+        match *selected {
+            [one] => Some(LogQuery::commit(one)),
+            [first, second] => Some(LogQuery::range(repo, first, second)),
+            _ => None,
+        }
+    }
+
+    /// What the query shows, as TortoiseGit labels it: `main` for one tip, `feature/x..main`
+    /// for a range. A commit is named by its first ref that `show` accepts, else by its short
+    /// hash. `refs` is [`Repo::refs_by_commit`].
+    pub fn label(
+        &self,
+        repo: &Repo,
+        refs: &[Vec<usize>],
+        show: impl Fn(&GitRef) -> bool,
+    ) -> LogLabel {
+        let name = |c: CommitIx| {
+            refs[c.ix()]
+                .iter()
+                .map(|&r| &repo.refs[r])
+                .find(|r| show(r))
+                .map_or_else(
+                    || repo.commit(c).oid.short(repo.abbrev_len),
+                    |r| r.name.clone(),
+                )
+        };
+        LogLabel {
+            from: self.exclude.first().map(|&c| name(c)),
+            to: self.tips.first().map(|&c| name(c)).unwrap_or_default(),
         }
     }
 
@@ -144,6 +179,23 @@ impl LogQuery {
         }
         debug_assert_eq!(out.len(), selected);
         out
+    }
+}
+
+/// The label of a [`LogQuery`]: `to` alone, or `from..to` for a range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogLabel {
+    /// The excluded end of a range.
+    pub from: Option<String>,
+    pub to: String,
+}
+
+impl std::fmt::Display for LogLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.from {
+            Some(from) => write!(f, "{from}..{}", self.to),
+            None => f.write_str(&self.to),
+        }
     }
 }
 
@@ -313,6 +365,63 @@ mod tests {
             LogQuery::range(&r, CommitIx(1), CommitIx(1))
                 .run(&r)
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn selection_maps_to_a_query() {
+        let r = repo(&[(4, &[1]), (3, &[2]), (2, &[3]), (1, &[])]);
+        assert_eq!(LogQuery::for_selection(&r, &[]), None);
+        assert_eq!(
+            LogQuery::for_selection(&r, &ixs(&[1])),
+            Some(LogQuery::commit(CommitIx(1)))
+        );
+        // Selection order is `first..second`, including the ancestor swap.
+        assert_eq!(
+            LogQuery::for_selection(&r, &ixs(&[2, 0])),
+            Some(LogQuery::range(&r, CommitIx(2), CommitIx(0)))
+        );
+        assert_eq!(
+            LogQuery::for_selection(&r, &ixs(&[0, 2])),
+            LogQuery::for_selection(&r, &ixs(&[2, 0]))
+        );
+        assert_eq!(LogQuery::for_selection(&r, &ixs(&[0, 1, 2])), None);
+    }
+
+    #[test]
+    fn labels_use_ref_names_else_short_hashes() {
+        use crate::repo::{GitRef, RefKind};
+        let mut r = repo(&[(4, &[1]), (3, &[2]), (2, &[3]), (1, &[])]);
+        let git_ref = |full: &str, name: &str, kind, target| GitRef {
+            full_name: full.into(),
+            name: name.into(),
+            kind,
+            target: CommitIx(target),
+            annotated: false,
+            is_head: false,
+        };
+        r.refs = vec![
+            git_ref("refs/tags/v1", "v1", RefKind::Tag, 0),
+            git_ref("refs/heads/main", "main", RefKind::LocalBranch, 0),
+            git_ref("refs/pull/1", "pull/1", RefKind::Other, 2),
+        ];
+        r.abbrev_len = 9;
+        let refs = r.refs_by_commit();
+        let all = |_: &GitRef| true;
+        // Heads sort before tags.
+        let one = LogQuery::commit(CommitIx(0)).label(&r, &refs, all);
+        assert_eq!(one.to_string(), "main");
+        let range = LogQuery::range(&r, CommitIx(3), CommitIx(0)).label(&r, &refs, all);
+        assert_eq!(range.to_string(), format!("{}..main", "0".repeat(9)));
+        let pull = LogQuery::range(&r, CommitIx(2), CommitIx(0));
+        assert_eq!(pull.label(&r, &refs, all).to_string(), "pull/1..main");
+        let hidden = pull.label(&r, &refs, |g: &GitRef| g.kind != RefKind::Other);
+        assert_eq!(
+            hidden,
+            LogLabel {
+                from: Some(r.commit(CommitIx(2)).oid.short(9)),
+                to: "main".into()
+            }
         );
     }
 
