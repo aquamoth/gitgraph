@@ -29,6 +29,11 @@ What the log window lists: the tips to walk back from and the commits to leave o
 two-node range). It knows nothing about the graph.
 _Avoid_: log filter, range spec
 
+**Log layout**:
+One of a fixed set of arrangements of the log window's three panes (commits, details, changed
+files).
+_Avoid_: view, perspective, docking
+
 **Changed files**:
 The files a commit changed compared with its first parent, with their status and line counts.
 _Avoid_: file list, diff, changeset

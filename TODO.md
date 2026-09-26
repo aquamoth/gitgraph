@@ -188,6 +188,9 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
         <https://github.com/emilk/egui/pull/8631> (bug:
         <https://github.com/emilk/egui/issues/5145>). Once it is in a released eframe, remove
         the frame cap and turn vsync back on.
+- [ ] Short hashes in the graph as long as git makes them for the repository (`core.abbrev`
+      auto: 9 on Apps), as the log window will. Today the graph uses a fixed 8, and 10 in one
+      place.
 - [ ] Settings window without minimize and maximize buttons. It is a dialog, and maximizing it
       breaks its layout.
 - [ ] Toolbar merged into the title bar, with ☰, the repository name and the window buttons in
