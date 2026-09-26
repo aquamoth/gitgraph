@@ -55,6 +55,25 @@ impl TestRepo {
         self.git(&["rev-parse", "HEAD"])
     }
 
+    /// Sets the clock (minutes after the base date) for the commits that follow; each commit
+    /// first advances it by one. Going backwards simulates clock skew.
+    pub fn set_clock(&mut self, minutes: u32) {
+        self.clock = minutes;
+    }
+
+    /// Writes a file in the working tree, creating folders as needed.
+    pub fn write(&self, path: &str, contents: &[u8]) {
+        let full = self.dir.path().join(path);
+        std::fs::create_dir_all(full.parent().expect("parent")).expect("mkdir");
+        std::fs::write(full, contents).expect("write file");
+    }
+
+    /// Stages everything and commits it; returns the commit's hash.
+    pub fn commit_all(&mut self, message: &str) -> String {
+        self.git(&["add", "-A"]);
+        self.commit(message)
+    }
+
     pub fn checkout(&self, rev: &str) {
         self.git(&["checkout", "-q", rev]);
     }
