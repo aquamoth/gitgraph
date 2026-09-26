@@ -74,16 +74,7 @@ impl LogQuery {
         refs: &[Vec<usize>],
         show: impl Fn(&GitRef) -> bool,
     ) -> LogLabel {
-        let name = |c: CommitIx| {
-            refs[c.ix()]
-                .iter()
-                .map(|&r| &repo.refs[r])
-                .find(|r| show(r))
-                .map_or_else(
-                    || repo.commit(c).oid.short(repo.abbrev_len),
-                    |r| r.name.clone(),
-                )
-        };
+        let name = |c: CommitIx| commit_name(repo, refs, c, &show);
         LogLabel {
             from: self.exclude.first().map(|&c| name(c)),
             to: self.tips.first().map(|&c| name(c)).unwrap_or_default(),
@@ -197,6 +188,24 @@ impl std::fmt::Display for LogLabel {
             None => f.write_str(&self.to),
         }
     }
+}
+
+/// A commit's name in labels: its first ref that `show` accepts, else its short hash. `refs`
+/// is [`Repo::refs_by_commit`].
+pub fn commit_name(
+    repo: &Repo,
+    refs: &[Vec<usize>],
+    commit: CommitIx,
+    show: impl Fn(&GitRef) -> bool,
+) -> String {
+    refs[commit.ix()]
+        .iter()
+        .map(|&r| &repo.refs[r])
+        .find(|r| show(r))
+        .map_or_else(
+            || repo.commit(commit).oid.short(repo.abbrev_len),
+            |r| r.name.clone(),
+        )
 }
 
 /// True if `ancestor` is reachable from `descendant` through parent links (a commit counts as

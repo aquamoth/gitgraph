@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use crate::changed_files::{ChangedFile, parse_diff_tree};
-use crate::file_diff::{Content, FileDiffSpec, LoadedDiff, Version, decode};
+use crate::file_diff::{Content, FileDiffSpec, LoadedDiff, Rev, Version, decode};
 use crate::oid::Oid;
 use crate::repo::{Commit, CommitIx, DEFAULT_ABBREV_LEN, GitRef, Head, RefKind, Repo};
 
@@ -27,6 +27,12 @@ pub enum GitError {
     NotARepository(PathBuf),
     #[error("unexpected output from git: {0}")]
     Parse(String),
+    #[error("could not read {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// A handle for running git commands against one repository.
@@ -142,6 +148,11 @@ impl Git {
 
     /// Resolves the repository root: the working tree, or the git dir for a bare repository.
     pub fn repo_root(&self) -> Result<PathBuf, GitError> {
+        Ok(self.locate()?.0)
+    }
+
+    /// The repository root, and whether it is a working tree.
+    fn locate(&self) -> Result<(PathBuf, bool), GitError> {
         let Some(out) = self.query(&["rev-parse", "--is-bare-repository", "--absolute-git-dir"])?
         else {
             return Err(GitError::NotARepository(self.dir.clone()));
@@ -152,12 +163,12 @@ impl Git {
             .next()
             .ok_or_else(|| GitError::Parse("rev-parse printed no git dir".into()))?;
         if bare {
-            return Ok(PathBuf::from(git_dir));
+            return Ok((PathBuf::from(git_dir), false));
         }
         // Inside a `.git` directory there is no work tree: use the git dir itself.
         Ok(match self.query(&["rev-parse", "--show-toplevel"])? {
-            Some(top) if !top.is_empty() => PathBuf::from(top),
-            _ => PathBuf::from(git_dir),
+            Some(top) if !top.is_empty() => (PathBuf::from(top), true),
+            _ => (PathBuf::from(git_dir), false),
         })
     }
 
@@ -181,7 +192,7 @@ impl Git {
     /// Refs and HEAD are read first and the log is then walked from exactly those commits, so
     /// a concurrent fetch cannot leave refs pointing at commits that were not loaded.
     pub fn load(&self) -> Result<Repo, GitError> {
-        let root = self.repo_root()?;
+        let (root, has_working_tree) = self.locate()?;
         let git = Git::new(&root);
 
         let ref_format = format!(
@@ -287,6 +298,7 @@ impl Git {
         }
         let mut repo = Repo::new(root, commits, refs, head);
         repo.abbrev_len = abbrev_len;
+        repo.has_working_tree = has_working_tree;
         Ok(repo)
     }
 
@@ -341,6 +353,61 @@ impl Git {
         ])?;
         parse_diff_tree(&out).map_err(GitError::Parse)
     }
+
+    /// The files that differ between the trees of two commits, `old` against `new`, as
+    /// `git diff-tree <old> <new>` lists them (TortoiseGit's "Compare revisions").
+    pub fn changed_between(&self, old: &Oid, new: &Oid) -> Result<Vec<ChangedFile>, GitError> {
+        let out = self.run(&[
+            "diff-tree",
+            "-r",
+            "-M",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-z",
+            "--raw",
+            "--numstat",
+            &old.to_hex(),
+            &new.to_hex(),
+        ])?;
+        parse_diff_tree(&out).map_err(GitError::Parse)
+    }
+
+    /// The common ancestor git picks for two commits (`git merge-base`; hashes or names such
+    /// as `HEAD`), or `None` for unrelated histories.
+    pub fn merge_base(&self, a: &str, b: &str) -> Result<Option<Oid>, GitError> {
+        let out = self.query(&["merge-base", a, b])?;
+        Ok(out.and_then(|hex| Oid::from_hex(&hex)))
+    }
+
+    /// The files that differ between `commit` and the working tree, staged or not, as
+    /// `git diff <commit>` lists them; `reverse` lists the working tree against the commit
+    /// instead. Untracked files are not listed. The index's stat information is refreshed in
+    /// memory only (`--no-optional-locks`), so nothing is written.
+    pub fn changed_in_working_tree(
+        &self,
+        commit: &Oid,
+        reverse: bool,
+    ) -> Result<Vec<ChangedFile>, GitError> {
+        let hex = commit.to_hex();
+        let mut args = vec![
+            "--no-optional-locks",
+            "diff",
+            "-r",
+            "-M",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "-z",
+            "--raw",
+            "--numstat",
+        ];
+        if reverse {
+            args.push("-R");
+        }
+        args.extend([hex.as_str(), "--"]);
+        let out = self.run(&args)?;
+        parse_diff_tree(&out).map_err(GitError::Parse)
+    }
 }
 
 impl Git {
@@ -352,7 +419,16 @@ impl Git {
         if spec.is_submodule() {
             let commit = |v: Option<&Version>| -> Result<Option<Oid>, GitError> {
                 let Some(v) = v else { return Ok(None) };
-                let out = self.run(&["rev-parse", &object_name(v)])?;
+                let out = match v.rev {
+                    Rev::Commit(_) => self.run(&["rev-parse", &object_name(v)])?,
+                    // What the submodule has checked out; nothing if it isn't.
+                    Rev::WorkingTree => {
+                        let dir = self.dir.join(&v.path);
+                        let dir = dir.to_string_lossy();
+                        let head = self.query(&["-C", &dir, "rev-parse", "-q", "--verify", "HEAD"]);
+                        head.ok().flatten().unwrap_or_default()
+                    }
+                };
                 Ok(Oid::from_hex(out.trim()))
             };
             return Ok(LoadedDiff {
@@ -367,6 +443,12 @@ impl Git {
         if spec.binary {
             let size = |v: Option<&Version>| -> Result<Option<u64>, GitError> {
                 let Some(v) = v else { return Ok(None) };
+                if v.rev == Rev::WorkingTree {
+                    let path = self.dir.join(&v.path);
+                    let meta = std::fs::metadata(&path)
+                        .map_err(|source| GitError::Read { path, source })?;
+                    return Ok(Some(meta.len()));
+                }
                 let out = self.run(&["cat-file", "-s", &object_name(v)])?;
                 out.trim()
                     .parse()
@@ -387,7 +469,10 @@ impl Git {
             let Some(v) = v else {
                 return Ok(String::new());
             };
-            let bytes = self.run_bytes(&["cat-file", "--textconv", &object_name(v)])?;
+            let bytes = match v.rev {
+                Rev::Commit(_) => self.run_bytes(&["cat-file", "--textconv", &object_name(v)])?,
+                Rev::WorkingTree => self.working_tree_file(&v.path)?,
+            };
             let (text, bad) = decode(&bytes);
             invalid_bytes += bad;
             Ok(text)
@@ -422,9 +507,72 @@ impl Git {
     }
 }
 
-/// `<rev>:<path>`, the name git reads a version by.
+impl Git {
+    /// A file of the working tree as `git diff` reads it: through its clean filter and
+    /// line-ending conversion, then the textconv filter of its `diff` attribute. git has no
+    /// command that prints that, so this diffs the file against the empty tree, which lists
+    /// every line as added, and takes the lines back out of the patch.
+    fn working_tree_file(&self, path: &str) -> Result<Vec<u8>, GitError> {
+        let empty_tree =
+            self.run_with_input(&["hash-object", "-t", "tree", "--stdin"], String::new())?;
+        let patch = self.run_bytes(&[
+            "--no-optional-locks",
+            "--literal-pathspecs",
+            "diff",
+            "--no-ext-diff",
+            "--textconv",
+            "--no-color",
+            "--no-renames",
+            "-U0",
+            empty_tree.trim(),
+            "--",
+            path,
+        ])?;
+        added_lines(&patch).map_err(GitError::Parse)
+    }
+}
+
+/// The text of a patch that adds one whole file: its `+` lines, with the last newline taken
+/// off after `\ No newline at end of file`. Anything but added lines is an error.
+fn added_lines(patch: &[u8]) -> Result<Vec<u8>, String> {
+    let mut text = Vec::with_capacity(patch.len());
+    let mut in_hunk = false;
+    let mut lines = patch.split(|&b| b == b'\n').peekable();
+    while let Some(line) = lines.next() {
+        // The split leaves an empty piece after the final newline.
+        if line.is_empty() && lines.peek().is_none() {
+            break;
+        }
+        if !in_hunk {
+            in_hunk = line.starts_with(b"@@ ");
+            if !in_hunk && line.starts_with(b"Binary files ") {
+                return Err("git reads the working tree file as binary".into());
+            }
+            continue;
+        }
+        match line.first() {
+            Some(b'+') => {
+                text.extend_from_slice(&line[1..]);
+                text.push(b'\n');
+            }
+            Some(b'\\') => {
+                text.pop();
+            }
+            _ => {
+                let line = String::from_utf8_lossy(line);
+                return Err(format!(
+                    "unexpected line in the working tree patch: {line:?}"
+                ));
+            }
+        }
+    }
+    Ok(text)
+}
+
+/// `<rev>:<path>`, the name git reads a committed version by.
 fn object_name(v: &Version) -> String {
-    format!("{}:{}", v.rev.to_hex(), v.path)
+    let rev = v.rev.commit().map(|o| o.to_hex()).unwrap_or_default();
+    format!("{rev}:{}", v.path)
 }
 
 /// Convenience wrapper: load the repository containing `dir`.

@@ -133,6 +133,32 @@ fn icon_color(ui: &Ui, on: bool) -> Color32 {
     }
 }
 
+/// A bookmark ribbon filling `rect`, notched at the bottom: the mark for comparison.
+pub fn paint_ribbon(painter: &Painter, rect: Rect, fill: Color32, outline: Stroke) {
+    let (left, top, right, bottom) = (rect.left(), rect.top(), rect.right(), rect.bottom());
+    let mid = rect.center().x;
+    let notch = bottom - rect.height() / 4.0;
+    // egui fills convex shapes only, so the notched ribbon is two halves.
+    for half in [
+        [(left, top), (mid, top), (mid, notch), (left, bottom)],
+        [(mid, top), (right, top), (right, bottom), (mid, notch)],
+    ] {
+        let points = half.map(|(x, y)| egui::pos2(x, y)).to_vec();
+        painter.add(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
+    }
+    let outline_points = [
+        (left, top),
+        (right, top),
+        (right, bottom),
+        (mid, notch),
+        (left, bottom),
+        (left, top),
+    ]
+    .map(|(x, y)| egui::pos2(x, y))
+    .to_vec();
+    painter.add(egui::Shape::line(outline_points, outline));
+}
+
 /// A square button showing `glyph`, tinted while `on`.
 pub fn icon_button(ui: &mut Ui, glyph: Glyph, on: bool) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(BUTTON), Sense::click());

@@ -2,6 +2,7 @@
 //! and lay that graph out. Nothing in this crate depends on a GUI toolkit.
 
 pub mod changed_files;
+pub mod compare;
 pub mod file_diff;
 pub mod forge;
 pub mod git;

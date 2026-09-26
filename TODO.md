@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 27._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 28._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -422,6 +422,66 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       now lists the release targets, as the platform verifier needs the list on wasm32 only.
       Only tried on Linux.
 
+27. **Comparing two commits' files** (your request of 2026-09-26: compare files between two
+    arbitrary branches, and TortoiseGit's "mark for comparison, then compare with it from
+    another log"). You picked an own compare window, the recommended branch diff, and a log
+    row menu with the compare items only. Calls you may want to overrule:
+    - **Branch diff: tree against tree by default** (you asked to see it working first). The
+      list is everything that differs between the two snapshots (`git diff A B`), as in
+      TortoiseGit. *Since common ancestor* in the window's file bar switches to what the right
+      side changed since the two forked (`git diff A...B`, a pull request's view), and is
+      remembered. Example: `main` and `feature` fork from `base`; main then adds `main.txt`,
+      feature adds `feature.txt` and edits `shared.txt`. Comparing main → feature:
+      - tree against tree: `feature.txt` added, `main.txt` **deleted**, `shared.txt` modified
+        (main's own work shows up as if feature had removed it);
+      - since common ancestor: `feature.txt` added, `shared.txt` modified (only feature's
+        work; the file bar says `from <base hash>`).
+
+      Should *Since common ancestor* be the default instead?
+    - **Which side is which:** the commit picked first (the first selected node, the marked
+      commit, or the node or row for *Compare with HEAD*) goes on the left, except that an
+      ancestor always goes on the left, as with Show log's range (#28). TortoiseGit always
+      puts the first one left. A *Swap sides* button in the header turns it round.
+    - **Where it is offered:**
+      - node menu: *Compare with HEAD* (one node) or *Compare revisions* (two), in one slot;
+        *Mark for comparison* (*Clear the mark* on the marked one); *Compare with marked
+        (name)*;
+      - log row menu (right-click; it also selects the row): the same three plus *Copy hash*
+        and *Copy subject*. The roadmap (#25) had ruled out a row menu in the log as the
+        start of TortoiseGit's ~40 items; this one stops there;
+      - a range log's header: *Compare files*, for its two ends.
+    - **The mark** is one commit for the whole app, as TortoiseGit's, until marked again, the
+      mark is cleared, or another repository is opened. It survives reloads, and is not
+      remembered across runs. It shows as a magenta bookmark ribbon on the node's top edge and
+      before the subject in the log (not in TortoiseGit's graph, which has no mark). A commit
+      inside an edge shows no ribbon in the graph. Marking says so in the status bar.
+    - **The window** is like the log window: one at a time, replaced by the next comparison,
+      with its size remembered. `Esc` closes it and `F5` reloads. Its table is the log
+      window's (sort, filter, selection, `Enter` for the selected files, asking before more
+      than ten diff windows) but keeps its own sort and filter. TortoiseGit's dialog is modal
+      and adds editable revisions, a log button, *View Patch*, and per-file revert, blame,
+      export and save list: left out.
+    - **No shortcuts** for the new items.
+    - **Compare with working tree** (your request of 2026-09-26, the evening after): in the
+      node menu under *Compare with HEAD*, and in the log row menu; greyed out in a bare
+      repository. Calls you may want to overrule:
+      - **The working tree is the files on disk, staged or not,** as `git diff <commit>`
+        compares them, so staged new files are listed. **Untracked files are not**, as in
+        `git diff` and TortoiseGit's dialog. Listing them would need a switch in the window.
+      - **Files are read as git diff reads them:** through the clean filter and line-ending
+        conversion, then textconv. git has no command that prints a working-tree file that
+        way, so parterre diffs it against the empty tree and takes the added lines back out
+        of the patch; anything else in the patch is an error, not a guess. Binary files give
+        their size on disk.
+      - **Nothing is written:** git refreshes the index's stat information in memory only
+        (`--no-optional-locks`), where TortoiseGit refreshes the index first.
+      - **It doesn't follow the disk by itself.** `F5` in the compare window lists the files
+        again (the bar says so); opening a file's diff again reloads its window. The ref
+        watcher doesn't look at the working tree.
+      - **Swap works** (`git diff -R`), where TortoiseGit disables it for the working tree.
+        *Since common ancestor* takes the working tree's fork point from `HEAD`, as `git diff
+        --merge-base` does.
+
 ## Planned
 
 - [ ] Reopen a repository at the zoom and position it last had, stored per repository like
@@ -456,6 +516,11 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
   - [ ] Stretch goal: wrap long lines, as a toggle in the diff window's toolbar. Until then
         long lines scroll sideways ([#45](https://github.com/aquamoth/parterre/issues/45)).
   - [x] Free text selection in either pane, copied as in the file (wanted 2026-09-26).
+  - [x] Comparing two commits' files: Compare revisions, with HEAD, and with a commit marked
+        for comparison, in a compare window (wanted 2026-09-26; question 27).
+  - [x] Compare with working tree (wanted 2026-09-26; question 27).
+  - [ ] Later: *Unified diff* of two commits (#25); a diff window that reloads by itself
+        when its working-tree file changes.
   - [ ] The `+`/`−` sign by the pointer doesn't look good on Windows (reported 2026-09-26,
         with a photo). It is drawn at a fixed offset (10, 12) from the pointer
         (`version_badge` in `diff_window.rs`), which lands on the I-beam's lower right serif:

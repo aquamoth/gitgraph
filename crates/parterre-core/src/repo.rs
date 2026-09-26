@@ -105,6 +105,9 @@ pub struct Repo {
     /// How many hex digits git abbreviates hashes to in this repository (`core.abbrev`; by
     /// default sized to the object count, 7 at minimum). Use with [`Oid::short`].
     pub abbrev_len: usize,
+    /// False for a bare repository (or one opened inside its `.git` directory): there are no
+    /// files on disk to compare with.
+    pub has_working_tree: bool,
     by_oid: HashMap<Oid, CommitIx>,
 }
 
@@ -121,6 +124,7 @@ impl Repo {
             refs,
             head,
             abbrev_len: DEFAULT_ABBREV_LEN,
+            has_working_tree: true,
             by_oid,
         }
     }

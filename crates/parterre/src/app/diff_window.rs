@@ -22,8 +22,8 @@ use eframe::egui::{
 };
 use parterre_core::changed_files::FileStatus;
 use parterre_core::file_diff::{
-    Content, DiffLine, DiffOptions, FileDiff, FileDiffSpec, LineKind, LoadedDiff, Note, Row, Shown,
-    Version, Whitespace, WordMode, fold, fold_lines,
+    Content, DiffLine, DiffOptions, FileDiff, FileDiffSpec, LineKind, LoadedDiff, Note, Rev, Row,
+    Shown, Version, Whitespace, WordMode, fold, fold_lines,
 };
 use parterre_core::glyphs;
 use parterre_core::{Oid, Repo};
@@ -65,6 +65,10 @@ impl DiffWindows {
         ctx: &egui::Context,
     ) {
         if let Some(w) = self.windows.iter_mut().find(|w| w.spec == spec) {
+            // Files on disk may have changed since: load them again, in the same window.
+            if spec.reads_working_tree() {
+                *w = DiffWindow::new(w.id, repo, spec, settings, ctx);
+            }
             w.focus = true;
             return;
         }
@@ -315,7 +319,10 @@ impl DiffWindow {
             .new
             .as_ref()
             .or(self.spec.old.as_ref())
-            .map(|v| v.rev.short(self.repo.abbrev_len))
+            .map(|v| match v.rev {
+                Rev::Commit(oid) => oid.short(self.repo.abbrev_len),
+                Rev::WorkingTree => "working tree".to_owned(),
+            })
             .unwrap_or_default();
         format!("{file} ({rev}) – {} – Diff", self.repo.display_name())
     }
@@ -1013,12 +1020,15 @@ impl DiffWindow {
         }
     }
 
-    /// `<short hash>  <subject>`, and the path where it differs from the other side's.
+    /// `<short hash>  <subject>`, or "Working tree".
     fn version_title(&self, v: &Version) -> String {
-        let short = v.rev.short(self.repo.abbrev_len);
+        let Rev::Commit(oid) = v.rev else {
+            return "Working tree".to_owned();
+        };
+        let short = oid.short(self.repo.abbrev_len);
         let subject = self
             .repo
-            .lookup(&v.rev)
+            .lookup(&oid)
             .map(|c| self.repo.commit(c).subject.clone())
             .unwrap_or_default();
         format!("{short}   {subject}")
@@ -1706,7 +1716,7 @@ mod tests {
 
     /// A window with a loaded diff of `old` against `new`, without git.
     fn window(old: &str, new: &str, settings: &DiffWindowSettings) -> DiffWindow {
-        let rev = Oid::from_hex("0123456789012345678901234567890123456789").unwrap();
+        let rev = Rev::Commit(Oid::from_hex("0123456789012345678901234567890123456789").unwrap());
         let v = || Version {
             rev,
             path: "a.txt".into(),
