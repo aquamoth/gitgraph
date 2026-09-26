@@ -14,6 +14,7 @@ crates/parterre-core   GUI-free; everything testable lives here
   changed_files.rs     changed-file types, `diff-tree -z` parser, files-before-folders order,
                        the log window's file filter and column sort
   text.rs              URLs in commit messages, paths cut at the start, thousands separators
+  text_size.rs         the text size's steps, and Ctrl+wheel and pinch turned into steps
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
   pattern.rs           branch-name wildcards, for hiding and colouring branches
   forge.rs             open pull requests: the model, where each is shown (head commit and
@@ -54,7 +55,10 @@ crates/parterre        the binary (eframe/egui)
                        an offscreen egui context, sized to stay within 100 megapixels
   raster.rs            software rasteriser for egui's meshes (for PNG and WebP, with no GPU
                        or window)
-  view.rs              pan/zoom transform
+  view.rs              pan/zoom transform; the graph keeps its size on screen whatever the
+                       text size
+  text_size.rs         text size input (Ctrl+wheel off the graph, Ctrl+plus/minus/0) into
+                       the setting, which is egui's zoom factor for every window
   theme.rs             TortoiseGit colours (light, and dark via lightness inversion)
   system_theme.rs      light or dark desktop preference on Linux (XDG portal)
   menu.rs              the look of menus and popovers, menu items

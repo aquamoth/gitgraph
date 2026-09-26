@@ -9,6 +9,7 @@ use super::ParterreApp;
 use super::log_window::layout_picker;
 use super::toolbar::{HIDE_TIP, REF_FILTER_TIP, REMEMBER_TIP};
 use crate::settings::{Arrows, EdgeStyle, Look};
+use crate::text_size;
 use crate::theme::{BranchColor, ThemeChoice};
 use crate::widgets::{self, text_segmented};
 
@@ -56,6 +57,9 @@ impl SettingsPage {
 const SIDEBAR: f32 = 150.0;
 
 const THEME_TIP: &str = "Follow system switches along with the desktop's light or dark mode.";
+const TEXT_SIZE_TIP: &str = "The size of the text, buttons and menus in every window. The graph \
+    has its own zoom. Also Ctrl+wheel anywhere but over the graph, and Ctrl+plus, minus and 0 \
+    in the log, diff and settings windows.";
 const ARROWS_TIP: &str = "Which way the arrowheads on edges point.";
 const HIGHLIGHT_TIP: &str =
     "Draw the edges of the hovered and selected nodes in the selection colour.";
@@ -83,13 +87,18 @@ impl ParterreApp {
     pub(super) fn settings_window(&mut self, ctx: &egui::Context) {
         if !self.show_settings {
             self.settings_window_theme = None;
+            self.settings_window_text_size = None;
             return;
         }
+        // No larger than the screen, at a large text size: the page scrolls.
+        let screen = ctx.input(|i| i.viewport().monitor_size);
+        let size = vec2(SIDEBAR + PAGE + 56.0, 480.0);
+        let size = screen.map_or(size, |s| size.min(s * 0.9));
         let builder = egui::ViewportBuilder::default()
             .with_title("Settings – parterre")
             .with_app_id(crate::settings::APP_ID)
             .with_icon(self.window_icon.clone())
-            .with_inner_size([SIDEBAR + PAGE + 56.0, 480.0])
+            .with_inner_size(size)
             .with_resizable(false)
             // A dialog: nothing to minimize or maximize (maximizing broke its layout). winit
             // 0.30 does this on Windows and macOS only; on Linux (X11 and Wayland) it ignores
@@ -113,11 +122,23 @@ impl ParterreApp {
                             .send_viewport_cmd(egui::ViewportCommand::SetTheme(theme));
                     }
                 }
+                // Fixed in size, so it grows and shrinks with the text size.
+                let text_size = ui.ctx().zoom_factor();
+                if self
+                    .settings_window_text_size
+                    .replace(text_size)
+                    .is_some_and(|shown| shown != text_size)
+                {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+                }
                 let closing = ui
                     .input(|i| i.viewport().close_requested() || i.key_pressed(egui::Key::Escape));
                 if closing {
                     self.show_settings = false;
                 }
+                // Embedded, it is in the main window, which reads the text size input.
+                text_size::read_input(ui, &mut self.settings.text_size, true);
             }
             egui::CentralPanel::default()
                 .frame(egui::Frame::central_panel(&ui.ctx().global_style()).inner_margin(12))
@@ -170,6 +191,16 @@ impl ParterreApp {
                 group(ui, |rows| {
                     rows.row("Theme", THEME_TIP, |ui| {
                         text_segmented(ui, &mut s.theme, &ThemeChoice::ALL.map(|t| (t, t.label())));
+                    });
+                    rows.row("Text size", TEXT_SIZE_TIP, |ui| {
+                        let percent = |size: f32| format!("{:.0}%", size * 100.0);
+                        egui::ComboBox::from_id_salt("text-size")
+                            .selected_text(percent(s.text_size))
+                            .show_ui(ui, |ui| {
+                                for size in parterre_core::text_size::STEPS {
+                                    ui.selectable_value(&mut s.text_size, size, percent(size));
+                                }
+                            });
                     });
                     rows.row(
                         "Style",

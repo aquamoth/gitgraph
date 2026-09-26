@@ -34,6 +34,7 @@ use crate::render::{self, Marks};
 use crate::scene::{FONT_SIZE, Scene, to_point};
 use crate::settings::{MOVES_KEY, RECENT_KEY, RememberedMoves, STORAGE_KEY, Settings, load_moves};
 use crate::system_theme::SystemTheme;
+use crate::text_size;
 use crate::theme::{Palette, ThemeChoice};
 use crate::view::View;
 
@@ -218,6 +219,8 @@ pub struct ParterreApp {
     view: View,
     needs_initial_view: bool,
     canvas: Rect,
+    /// The pointer is over the graph (or its overview map), where Ctrl+wheel is the graph's.
+    graph_hovered: bool,
     hovered: Option<usize>,
     hovered_edge: Option<usize>,
     selection: Selection,
@@ -268,6 +271,8 @@ pub struct ParterreApp {
     window_theme: Option<egui::SystemTheme>,
     /// The same for the settings window, while it is open.
     settings_window_theme: Option<egui::SystemTheme>,
+    /// The text size the settings window was last shown at, while it is open.
+    settings_window_text_size: Option<f32>,
     window_icon: Arc<egui::IconData>,
     /// What is typed into the zoom level, while it has the focus.
     zoom_text: String,
@@ -302,6 +307,8 @@ impl ParterreApp {
         overrides(&mut settings);
         // Settings edited by hand or saved by another version may put a divider out of reach.
         settings.log_window.dividers = settings.log_window.dividers.clamped();
+        settings.text_size = parterre_core::text_size::sanitize(settings.text_size);
+        cc.egui_ctx.set_zoom_factor(settings.text_size);
         let moves: RememberedMoves = cc
             .storage
             .filter(|_| persist)
@@ -358,6 +365,7 @@ impl ParterreApp {
             view: View::default(),
             needs_initial_view: true,
             canvas: Rect::NOTHING,
+            graph_hovered: false,
             hovered: None,
             hovered_edge: None,
             selection: Selection::default(),
@@ -389,6 +397,7 @@ impl ParterreApp {
             system_theme: SystemTheme::watch(&cc.egui_ctx),
             window_theme: None,
             settings_window_theme: None,
+            settings_window_text_size: None,
             window_icon: Arc::new(crate::icon::icon()),
             zoom_text: String::new(),
             automation,
@@ -662,7 +671,8 @@ impl ParterreApp {
             ctx.global_style().visuals.dark_mode,
             &self.settings.branch_colors,
         );
-        let ppp = ctx.pixels_per_point();
+        // The graph's size on screen leaves the text size out.
+        let ppp = ctx.native_pixels_per_point().unwrap_or(1.0);
         self.status = Some(
             match export::write(&path, scene, &self.settings, &palette, zoom, ppp) {
                 Ok(what) => (format!("Saved {} ({what})", path.display()), false),
@@ -1245,6 +1255,8 @@ impl ParterreApp {
         let (canvas, response) =
             ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.canvas = canvas;
+        // The overview map, drawn over the graph, counts as the graph.
+        self.graph_hovered = ui.rect_contains_pointer(canvas);
         if self.needs_initial_view && canvas.is_positive() && self.scene.is_some() {
             self.needs_initial_view = false;
             if self.automation.fit {
@@ -1273,7 +1285,7 @@ impl ParterreApp {
                 self.settings.edge_style,
                 |w| view.to_screen(canvas, w),
                 p,
-                5.0,
+                view.fixed(5.0),
             ),
             _ => None,
         };
@@ -1896,6 +1908,11 @@ impl ParterreApp {
                         ("Wheel / Shift+wheel", "Scroll vertically / horizontally"),
                         ("Ctrl+wheel, pinch", "Zoom around the pointer"),
                         ("+ / - / 0", "Zoom in / out / 100%"),
+                        (
+                            "Ctrl+wheel off the graph",
+                            "Text size of every window (Settings → Appearance); Ctrl+plus / \
+                             minus / 0 in the log, diff and settings windows",
+                        ),
                         ("F, double-click background", "Fit the whole graph"),
                         ("Home, H", "Go to HEAD"),
                         ("Ctrl+F", "Find; Enter / Shift+Enter for next / previous"),
@@ -2042,6 +2059,8 @@ impl eframe::App for ParterreApp {
         }
         let ctx = ui.ctx().clone();
         self.apply_theme(&ctx);
+        self.view.text_size = ctx.zoom_factor();
+        self.graph_hovered = false;
         let title = window_title(self.repo.as_deref());
         if self.title != title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -2065,6 +2084,9 @@ impl eframe::App for ParterreApp {
             egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
         } else {
             egui::CentralPanel::default().show(ui, |ui| self.welcome(ui));
+        }
+        if !self.graph_hovered {
+            text_size::read_input(ui, &mut self.settings.text_size, false);
         }
         self.shortcuts_window(&ctx);
         self.pull_requests_dialog(&ctx);
@@ -2092,6 +2114,10 @@ impl eframe::App for ParterreApp {
         }
 
         self.file_dialogs(&ctx, frame);
+        // Takes effect from the next frame on, in every window.
+        if ctx.zoom_factor() != self.settings.text_size {
+            ctx.set_zoom_factor(self.settings.text_size);
+        }
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
