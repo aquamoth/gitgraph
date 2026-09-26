@@ -1,0 +1,413 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Question (#29): what should parterre's log window look and feel like,
+  given the scope decided in #27 and #28? Three structurally different layouts of the same
+  content: A stacked (TortoiseGit's order), B side by side, C inline (details open under the
+  selected row). Switch with ?variant=A|B|C, the arrows in the bottom bar, or the ← → keys.
+  ?theme=light|dark. Live, read-only data from the repository serve.py was started on.
+  The bottom bar also stands in for the graph: pick the node (or two nodes) to "Show log" on.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>parterre – log window prototype</title>
+<style>
+@font-face { font-family: "egui"; src: url("Ubuntu-Light.ttf"); }
+@font-face { font-family: "eguimono"; src: url("Hack-Regular.ttf"); }
+.light {
+  --desk: #c9c3d6; --panel: #f7f7f7; --base: #ffffff; --text: #262626; --weak: #8a8a8a;
+  --line: rgba(0,0,0,.10); --hover: rgba(0,0,0,.045); --sel: #d7e8fd; --sel-fg: #0b3d7a;
+  --field: #ffffff; --field-line: rgba(0,0,0,.14); --title: #ebebeb; --title-btn: rgba(0,0,0,.08);
+  --accent: #3584e4; --link: #1a5fb4; --stripe: rgba(0,0,0,.018);
+  --add: #2e7d32; --del: #c62828; --ren: #6a1b9a;
+}
+.dark {
+  --desk: #2a2536; --panel: #1f1f1f; --base: #1b1b1b; --text: #dcdcdc; --weak: #8e8e8e;
+  --line: rgba(255,255,255,.09); --hover: rgba(255,255,255,.05); --sel: #213a57; --sel-fg: #cfe5ff;
+  --field: #2a2a2a; --field-line: rgba(255,255,255,.12); --title: #2e2e2e; --title-btn: rgba(255,255,255,.10);
+  --accent: #3584e4; --link: #8ec2ff; --stripe: rgba(255,255,255,.02);
+  --add: #7bd88f; --del: #ff8a80; --ren: #d1a5ff;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--desk); font: 13px/1.25 "egui", "Ubuntu", sans-serif; color: var(--text);
+  display: flex; align-items: center; justify-content: center; }
+.mono { font-family: eguimono, monospace; font-size: 12px; }
+.win { width: min(1320px, 97vw); height: min(860px, calc(100vh - 70px)); margin-bottom: 50px;
+  background: var(--panel); border-radius: 12px 12px 0 0; overflow: hidden; display: flex;
+  flex-direction: column; box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+/* Stand-in for the OS title bar (Adwaita); not part of the question. */
+.titlebar { height: 46px; flex: none; background: var(--title); display: flex; align-items: center;
+  justify-content: center; font: bold 14.5px "Cantarell", "Ubuntu", sans-serif; position: relative; }
+.titlebar .wb { position: absolute; right: 10px; display: flex; gap: 12px; }
+.titlebar .wb span { width: 24px; height: 24px; border-radius: 50%; background: var(--title-btn);
+  display: grid; place-items: center; font-size: 11px; font-weight: normal; }
+.head { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border-bottom: 1px solid var(--line); min-height: 40px; }
+.range { color: var(--link); font-size: 13.5px; }
+.range .dots { color: var(--weak); padding: 0 2px; }
+.head .count { color: var(--weak); margin-left: auto; font-variant-numeric: tabular-nums; }
+.body { flex: 1; min-height: 0; display: flex; }
+.col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.pane { min-height: 0; min-width: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--base); }
+.split-h { flex: none; height: 6px; background: var(--panel); cursor: row-resize; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.split-v { flex: none; width: 6px; background: var(--panel); cursor: col-resize; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+.split-h:hover, .split-v:hover { background: var(--accent); }
+
+/* Commit list */
+.list { flex: 1; min-height: 0; overflow: auto; position: relative; outline: none; }
+.lhead, .row { display: grid; grid-template-columns: 76px minmax(200px, 1fr) 170px 128px; align-items: center; }
+.list.narrow .lhead, .list.narrow .row { grid-template-columns: 70px minmax(150px, 1fr) 128px 118px; }
+.lhead { position: sticky; top: 0; z-index: 2; background: var(--panel); height: 26px; border-bottom: 1px solid var(--line); color: var(--weak); font-size: 12px; }
+.lhead > div, .row > div { padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row { position: absolute; left: 0; right: 0; height: 24px; cursor: default; }
+.row:nth-child(even) { background: var(--stripe); }
+.row:hover { background: var(--hover); }
+.row.sel { background: var(--sel); color: var(--sel-fg); }
+.row .hash { color: var(--weak); }
+.row.sel .hash { color: inherit; }
+.row .date { font-variant-numeric: tabular-nums; color: var(--weak); }
+.row.sel .date { color: inherit; }
+.badge { display: inline-block; padding: 0 5px; margin-right: 4px; border-radius: 3px; font-size: 11.5px;
+  line-height: 17px; vertical-align: 1px; border: 1px solid rgba(0,0,0,.25); }
+.row .subj { display: flex; align-items: center; min-width: 0; }
+.row .subj .t { overflow: hidden; text-overflow: ellipsis; }
+.row .subj .badge { flex: none; }
+.empty { padding: 30px; color: var(--weak); text-align: center; }
+
+/* Details */
+.details { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; user-select: text; }
+.details .meta { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin-bottom: 10px; color: var(--weak); }
+.details .meta b { font-weight: normal; color: var(--text); }
+.details pre { margin: 0; white-space: pre-wrap; font: 12.5px/1.45 eguimono, monospace; }
+.details pre .subject { font-weight: bold; }
+.details a { color: var(--link); }
+
+/* Files */
+.fbar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.filter { display: flex; align-items: center; height: 28px; border-radius: 7px; background: var(--field);
+  border: 1px solid var(--field-line); padding: 0 8px; gap: 6px; width: 280px; }
+.filter:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.filter svg { width: 15px; height: 15px; color: var(--weak); flex: none; }
+.filter input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; }
+.filter input::placeholder { color: var(--weak); }
+.fbar .note { color: var(--weak); font-size: 12px; }
+.fbar .fcount { margin-left: auto; color: var(--weak); font-size: 12px; font-variant-numeric: tabular-nums; }
+.files { flex: 1; min-height: 0; overflow: auto; }
+table.ft { width: 100%; border-collapse: collapse; }
+.ft th { position: sticky; top: 0; background: var(--panel); font-weight: normal; color: var(--weak); font-size: 12px;
+  text-align: left; height: 26px; padding: 0 8px; border-bottom: 1px solid var(--line); cursor: default; white-space: nowrap; user-select: none; }
+.ft th:hover { color: var(--text); }
+.ft th.num, .ft td.num { text-align: right; width: 1%; }
+.ft th .arrow { font-size: 10px; margin-left: 3px; }
+.ft td { height: 23px; padding: 0 8px; white-space: nowrap; }
+.ft tr:nth-child(even) td { background: var(--stripe); }
+.ft tbody tr:hover td { background: var(--hover); }
+/* Long paths lose their start, not the file name. */
+.ft td.path { max-width: 0; width: 70%; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.ft td.path .dir { color: var(--weak); }
+.ft td.ext { color: var(--weak); width: 1%; }
+.ft td.st { width: 1%; }
+.st-A { color: var(--add); } .st-D { color: var(--del); } .st-R, .st-C { color: var(--ren); }
+.ft td.num { font-variant-numeric: tabular-nums; }
+.ft td.plus { color: var(--add); } .ft td.minus { color: var(--del); }
+.loading { padding: 16px; color: var(--weak); }
+
+/* Variant C: the inline panel */
+.inline { position: absolute; left: 0; right: 0; background: var(--panel); border-top: 1px solid var(--accent);
+  border-bottom: 1px solid var(--line); display: grid; grid-template-columns: minmax(300px, 40%) 1fr; }
+.inline .details { border-right: 1px solid var(--line); background: var(--base); }
+.inline .fpane { display: flex; flex-direction: column; min-height: 0; background: var(--base); }
+
+/* Prototype chrome: the floating switcher and the stand-in for the graph. */
+.proto { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 100;
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 999px;
+  background: #111; color: #fff; box-shadow: 0 4px 18px rgba(0,0,0,.4); font: 12.5px system-ui, sans-serif; white-space: nowrap; }
+.proto button { background: #333; color: #fff; border: 0; border-radius: 999px; width: 28px; height: 26px; font-size: 14px; }
+.proto button:hover { background: #555; }
+.proto .lbl { min-width: 150px; text-align: center; }
+.proto .sep { width: 1px; height: 18px; background: #444; }
+.proto select { background: #222; color: #fff; border: 1px solid #444; border-radius: 6px; height: 26px; max-width: 220px; font: inherit; }
+.proto .dim { color: #aaa; }
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="titlebar"><span id="title">Log</span><div class="wb"><span>—</span><span>▢</span><span>✕</span></div></div>
+  <div class="head"><span class="range" id="range"></span><span class="count" id="count"></span></div>
+  <div class="body" id="body"></div>
+</div>
+<div class="proto">
+  <button id="prev" title="Previous variant (←)">‹</button>
+  <span class="lbl" id="vlabel"></span>
+  <button id="next" title="Next variant (→)">›</button>
+  <span class="sep"></span>
+  <span class="dim">Show log on</span>
+  <select id="first" title="First selected node (optional)"></select>
+  <span class="dim">..</span>
+  <select id="second" title="Node"></select>
+  <span class="sep"></span>
+  <button id="theme" title="Theme" style="width:auto;padding:0 10px">◐</button>
+</div>
+<script>
+const VARIANTS = { A: "Stacked", B: "Side by side", C: "Inline" };
+const params = new URLSearchParams(location.search);
+let variant = VARIANTS[params.get("variant")] ? params.get("variant") : "A";
+let theme = params.get("theme") === "dark" ? "dark" : "light";
+document.body.className = theme;
+
+const ROW = 24;
+const INLINE_H = 330;
+const S = {
+  repo: null, refs: {}, rows: [], sel: 0, spec: "", label: "",
+  messages: new Map(), files: new Map(),
+  filter: "", sort: null, // {key, dir}
+  sizes: { A: [45, 22], B: [56, 38] }, // A: list %, details % ; B: list width %, details height %
+};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const api = (path) => fetch(path).then((r) => { if (!r.ok) throw new Error(path); return r.json(); });
+
+// parterre's label colours (theme.rs); dark = lightness inverted, as theme.rs does.
+const FILL = { current: [200, 0, 0], local: [0, 195, 0], remote: [255, 221, 170], tag: [255, 255, 0] };
+function invertL([r, g, b]) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b); let h = 0, s = 0; const l = (max + min) / 2;
+  if (max !== min) { const d = max - min; s = l > .5 ? d / (2 - max - min) : d / (max + min);
+    h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4; h /= 6; }
+  const L = 1 - l; const q = L < .5 ? L * (1 + s) : L + s - L * s, p = 2 * L - q;
+  const f = (t) => { t = (t + 1) % 1; return t < 1/6 ? p + (q - p) * 6 * t : t < .5 ? q : t < 2/3 ? p + (q - p) * (2/3 - t) * 6 : p; };
+  return [f(h + 1/3), f(h), f(h - 1/3)].map((v) => Math.round(v * 255));
+}
+function badge(r) {
+  const c = theme === "dark" ? invertL(FILL[r.kind]) : FILL[r.kind];
+  const lum = (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255;
+  return `<span class="badge" style="background:rgb(${c});color:${lum < .55 ? "#fff" : "#000"}" title="${esc(r.full)}">${esc(r.name)}</span>`;
+}
+const short = (h) => h.slice(0, 7);
+function refLabel(h) { const rs = S.refs[h]; return rs && rs.length ? rs[0].name : short(h); }
+
+// ---------- data ----------
+async function showLog() {
+  let first = $("first").value, second = $("second").value;
+  const b = await api("/api/resolve?rev=" + encodeURIComponent(second));
+  let spec, label;
+  if (first) {
+    let a = await api("/api/resolve?rev=" + encodeURIComponent(first));
+    let bb = b;
+    // #28: when the second node is an ancestor of the first, swap (TortoiseGit shows nothing).
+    if (a !== bb && await api(`/api/is-ancestor?a=${bb}&b=${a}`)) [a, bb] = [bb, a];
+    spec = `${a}..${bb}`;
+    label = `${esc(refLabel(a))}<span class="dots">..</span>${esc(refLabel(bb))}`;
+  } else {
+    spec = b; label = esc(refLabel(b));
+  }
+  S.spec = spec; S.label = label;
+  $("range").innerHTML = label;
+  $("count").textContent = "Loading…";
+  S.rows = await api("/api/log?spec=" + encodeURIComponent(spec));
+  S.sel = 0;
+  $("count").textContent = `${S.rows.length.toLocaleString("en")} commit${S.rows.length === 1 ? "" : "s"}`;
+  render();
+}
+function need(h) {
+  if (!S.messages.has(h)) { S.messages.set(h, null); api("/api/message?h=" + h).then((m) => { S.messages.set(h, m); refreshSelection(); }); }
+  if (!S.files.has(h)) { S.files.set(h, null); api("/api/files?h=" + h).then((f) => { S.files.set(h, f); refreshSelection(); }); }
+}
+
+// ---------- pieces ----------
+function linkify(s) {
+  return esc(s).replace(/https?:\/\/[^\s<>"')\]]+/g, (u) => `<a href="${u}" target="_blank" rel="noreferrer">${u}</a>`);
+}
+function detailsHTML() {
+  const r = S.rows[S.sel]; if (!r) return "";
+  const [h, an, ae, ad, subj] = r;
+  const msg = S.messages.get(h);
+  const text = msg == null ? subj : msg.replace(/\s+$/, "");
+  const nl = text.indexOf("\n");
+  const body = nl < 0 ? `<span class="subject">${linkify(text)}</span>`
+    : `<span class="subject">${linkify(text.slice(0, nl))}</span>${linkify(text.slice(nl))}`;
+  return `<div class="meta"><span>Commit</span><b class="mono">${h}</b><span>Author</span><b>${esc(an)} &lt;${esc(ae)}&gt;</b><span>Date</span><b>${esc(ad)}</b></div><pre>${body}</pre>`;
+}
+const STATUS = { A: "Added", M: "Modified", D: "Deleted", R: "Renamed", C: "Copied", T: "Type changed", U: "Unmerged" };
+const extOf = (p) => { const b = p.split("/").pop(); const i = b.lastIndexOf("."); return i > 0 ? b.slice(i) : ""; };
+function filesHTML() {
+  const r = S.rows[S.sel]; if (!r) return { bar: "", table: "" };
+  const f = S.files.get(r[0]);
+  const icon = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>`;
+  let note = "", count = "", table;
+  if (f == null) table = `<div class="loading">Loading…</div>`;
+  else {
+    if (f.parents > 1) note = "Merge: compared with its first parent";
+    const q = S.filter.toLowerCase();
+    let list = f.files.filter((x) => !q || x.path.toLowerCase().includes(q) || (x.old || "").toLowerCase().includes(q));
+    count = q ? `${list.length} of ${f.files.length} files` : `${f.files.length} file${f.files.length === 1 ? "" : "s"}`;
+    if (S.sort) {
+      const k = S.sort.key, d = S.sort.dir;
+      const val = (x) => k === "path" ? x.path.toLowerCase() : k === "ext" ? extOf(x.path).toLowerCase()
+        : k === "status" ? STATUS[x.status] : k === "added" ? (x.added === "-" ? -1 : +x.added) : (x.removed === "-" ? -1 : +x.removed);
+      list = list.map((x, i) => [x, i]).sort((a, b) => { const va = val(a[0]), vb = val(b[0]); return (va < vb ? -1 : va > vb ? 1 : a[1] - b[1]) * d; }).map((p) => p[0]);
+    }
+    const th = (key, text, cls = "") => {
+      const a = S.sort && S.sort.key === key ? `<span class="arrow">${S.sort.dir > 0 ? "▲" : "▼"}</span>` : "";
+      return `<th class="${cls}" data-sort="${key}">${text}${a}</th>`;
+    };
+    const pathCell = (p) => { const i = p.lastIndexOf("/"); return i < 0 ? esc(p) : `<span class="dir">${esc(p.slice(0, i + 1))}</span>${esc(p.slice(i + 1))}`; };
+    const rows = list.map((x) => `<tr><td class="path" title="${esc(x.old ? x.old + " → " + x.path : x.path)}"><span dir="ltr">${x.old ? pathCell(x.old) + " → " : ""}${pathCell(x.path)}</span></td>`
+      + `<td class="ext">${esc(extOf(x.path))}</td><td class="st st-${x.status}">${STATUS[x.status] || x.status}</td>`
+      + `<td class="num plus">${x.added === "-" ? "–" : x.added}</td><td class="num minus">${x.removed === "-" ? "–" : x.removed}</td></tr>`).join("");
+    table = `<table class="ft"><thead><tr>${th("path", "Path")}${th("ext", "Extension")}${th("status", "Status")}${th("added", "Lines added", "num")}${th("removed", "Lines removed", "num")}</tr></thead><tbody>${rows}</tbody></table>`
+      + (list.length ? "" : `<div class="loading">${f.files.length ? "No file matches the filter." : "No changes."}</div>`);
+  }
+  const bar = `<label class="filter">${icon}<input id="pathfilter" placeholder="Filter paths" value="${esc(S.filter)}"></label><span class="note">${note}</span><span class="fcount">${count}</span>`;
+  return { bar, table };
+}
+
+// ---------- the virtualised list ----------
+function listHTML(narrow) {
+  return `<div class="list${narrow ? " narrow" : ""}" id="list" tabindex="0"><div class="lhead"><div>Hash</div><div>Subject</div><div>Author</div><div>Date</div></div><div id="rows" style="position:relative"></div></div>`;
+}
+function rowHTML(i, top) {
+  const [h, an, , ad, subj] = S.rows[i];
+  const refs = (S.refs[h] || []).map(badge).join("");
+  return `<div class="row${i === S.sel ? " sel" : ""}" data-i="${i}" style="top:${top}px"><div class="hash mono">${short(h)}</div><div class="subj">${refs}<span class="t">${esc(subj)}</span></div><div>${esc(an)}</div><div class="date">${esc(ad)}</div></div>`;
+}
+function inlineOpen() { return variant === "C" && S.rows.length > 0; }
+const rowTop = (i) => i * ROW + (inlineOpen() && i > S.sel ? INLINE_H : 0);
+function drawRows() {
+  const list = $("list"), host = $("rows"); if (!list) return;
+  const total = S.rows.length * ROW + (inlineOpen() ? INLINE_H : 0);
+  host.style.height = total + "px";
+  if (!S.rows.length) { host.innerHTML = `<div class="empty">No commits.</div>`; return; }
+  const top = list.scrollTop, bottom = top + list.clientHeight;
+  // Find the visible index range, allowing for the inline panel's extra height.
+  const idx = (y) => { let i = Math.floor(y / ROW); if (inlineOpen() && i > S.sel) i = Math.max(S.sel, Math.floor((y - INLINE_H) / ROW)); return Math.max(0, Math.min(S.rows.length - 1, i)); };
+  const a = Math.max(0, idx(top) - 5), b = Math.min(S.rows.length - 1, idx(bottom) + 5);
+  let html = "";
+  for (let i = a; i <= b; i++) html += rowHTML(i, rowTop(i));
+  if (inlineOpen() && S.sel >= a - 1 && S.sel <= b + 1) {
+    const f = filesHTML();
+    html += `<div class="inline" style="top:${rowTop(S.sel) + ROW}px;height:${INLINE_H}px"><div class="details" id="details">${detailsHTML()}</div><div class="fpane"><div class="fbar" id="fbar">${f.bar}</div><div class="files" id="files">${f.table}</div></div></div>`;
+  }
+  const hadFocus = document.activeElement && document.activeElement.id === "pathfilter";
+  const caret = hadFocus ? document.activeElement.selectionStart : 0;
+  host.innerHTML = html;
+  if (hadFocus && $("pathfilter")) { $("pathfilter").focus(); $("pathfilter").setSelectionRange(caret, caret); }
+}
+
+// ---------- layouts ----------
+function render() {
+  $("vlabel").textContent = `${variant} — ${VARIANTS[variant]}`;
+  $("title").textContent = `${S.repo || ""} – Log`;
+  const body = $("body");
+  if (variant === "A") {
+    const [l, d] = S.sizes.A;
+    body.innerHTML = `<div class="col" style="flex:1">
+      <div class="pane" style="flex:0 0 ${l}%">${listHTML(false)}</div>
+      <div class="split-h" data-split="A0"></div>
+      <div class="pane" style="flex:0 0 ${d}%"><div class="details" id="details"></div></div>
+      <div class="split-h" data-split="A1"></div>
+      <div class="pane" style="flex:1"><div class="fbar" id="fbar"></div><div class="files" id="files"></div></div></div>`;
+  } else if (variant === "B") {
+    const [w, d] = S.sizes.B;
+    body.innerHTML = `<div class="pane" style="flex:0 0 ${w}%">${listHTML(true)}</div>
+      <div class="split-v" data-split="B0"></div>
+      <div class="col" style="flex:1">
+        <div class="pane" style="flex:0 0 ${d}%"><div class="details" id="details"></div></div>
+        <div class="split-h" data-split="B1"></div>
+        <div class="pane" style="flex:1"><div class="fbar" id="fbar"></div><div class="files" id="files"></div></div></div>`;
+  } else {
+    body.innerHTML = `<div class="pane" style="flex:1">${listHTML(false)}</div>`;
+  }
+  $("list").addEventListener("scroll", drawRows);
+  refreshSelection(true);
+  $("list").focus();
+}
+function refreshSelection(scroll) {
+  const r = S.rows[S.sel];
+  if (r) need(r[0]);
+  if (variant !== "C") {
+    if ($("details")) $("details").innerHTML = detailsHTML();
+    const f = filesHTML();
+    const hadFocus = document.activeElement && document.activeElement.id === "pathfilter";
+    const caret = hadFocus ? document.activeElement.selectionStart : 0;
+    if ($("fbar")) $("fbar").innerHTML = f.bar;
+    if ($("files")) $("files").innerHTML = f.table;
+    if (hadFocus) { $("pathfilter").focus(); $("pathfilter").setSelectionRange(caret, caret); }
+  }
+  if (scroll) scrollToSel();
+  drawRows();
+}
+function scrollToSel() {
+  const list = $("list"); if (!list) return;
+  const head = 26, t = rowTop(S.sel), b = t + ROW + (inlineOpen() ? INLINE_H : 0);
+  if (t < list.scrollTop) list.scrollTop = t;
+  else if (b > list.scrollTop + list.clientHeight - head) list.scrollTop = Math.min(t, b - list.clientHeight + head);
+}
+function select(i) { S.sel = Math.max(0, Math.min(S.rows.length - 1, i)); refreshSelection(true); }
+
+// ---------- events ----------
+document.addEventListener("click", (e) => {
+  const row = e.target.closest(".row"); if (row) { select(+row.dataset.i); $("list").focus(); return; }
+  const th = e.target.closest("th[data-sort]");
+  if (th) { const k = th.dataset.sort; S.sort = S.sort && S.sort.key === k ? { key: k, dir: -S.sort.dir } : { key: k, dir: 1 }; refreshSelection(); }
+});
+document.addEventListener("input", (e) => { if (e.target.id === "pathfilter") { S.filter = e.target.value; refreshSelection(); } });
+document.addEventListener("keydown", (e) => {
+  const typing = e.target.matches("input, textarea, select, [contenteditable]");
+  if (!typing && e.key === "ArrowLeft") return cycle(-1);
+  if (!typing && e.key === "ArrowRight") return cycle(1);
+  if (typing) return;
+  const page = Math.max(1, Math.floor(($("list").clientHeight - 26) / ROW) - 1);
+  const k = { ArrowDown: 1, ArrowUp: -1, PageDown: page, PageUp: -page }[e.key];
+  if (k) { e.preventDefault(); select(S.sel + k); }
+  if (e.key === "Home") { e.preventDefault(); select(0); }
+  if (e.key === "End") { e.preventDefault(); select(S.rows.length - 1); }
+});
+// Draggable dividers.
+document.addEventListener("pointerdown", (e) => {
+  const sp = e.target.closest("[data-split]"); if (!sp) return;
+  e.preventDefault();
+  const which = sp.dataset.split, box = $("body").getBoundingClientRect();
+  const move = (ev) => {
+    if (which === "B0") S.sizes.B[0] = clamp((ev.clientX - box.left) / box.width * 100, 25, 80);
+    else {
+      const pct = (ev.clientY - box.top) / box.height * 100;
+      if (which === "A0") S.sizes.A[0] = clamp(pct, 15, 80 - S.sizes.A[1]);
+      if (which === "A1") S.sizes.A[1] = clamp(pct - S.sizes.A[0], 8, 80 - S.sizes.A[0]);
+      if (which === "B1") S.sizes.B[1] = clamp(pct, 10, 85);
+    }
+    render();
+  };
+  const up = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); };
+  addEventListener("pointermove", move); addEventListener("pointerup", up);
+});
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function cycle(d) {
+  const keys = Object.keys(VARIANTS); variant = keys[(keys.indexOf(variant) + d + keys.length) % keys.length];
+  params.set("variant", variant); history.replaceState(null, "", "?" + params); render();
+}
+$("prev").onclick = () => cycle(-1);
+$("next").onclick = () => cycle(1);
+$("theme").onclick = () => { theme = theme === "dark" ? "light" : "dark"; document.body.className = theme; params.set("theme", theme); history.replaceState(null, "", "?" + params); render(); };
+$("first").onchange = $("second").onchange = () => { params.set("first", $("first").value); params.set("second", $("second").value); history.replaceState(null, "", "?" + params); showLog(); };
+
+(async function init() {
+  const repo = await api("/api/repo");
+  S.repo = repo.name; S.refs = repo.refs;
+  const names = [];
+  for (const rs of Object.values(repo.refs)) for (const r of rs) names.push(r);
+  const order = { current: 0, local: 1, remote: 2, tag: 3 };
+  names.sort((a, b) => order[a.kind] - order[b.kind] || a.name.localeCompare(b.name));
+  const opts = names.map((r) => `<option value="${esc(r.full)}">${esc(r.name)}</option>`).join("");
+  $("first").innerHTML = `<option value="">— (one node)</option>` + opts;
+  $("second").innerHTML = `<option value="HEAD">HEAD</option>` + opts;
+  if (params.get("first")) $("first").value = params.get("first");
+  if (params.get("second")) $("second").value = params.get("second");
+  else { const cur = names.find((r) => r.kind === "current"); if (cur) $("second").value = cur.full; }
+  await showLog();
+})();
+</script>
+</body>
+</html>
