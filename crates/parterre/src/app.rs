@@ -16,6 +16,7 @@ use parterre_core::{Oid, Repo};
 
 mod auto_reload;
 mod diff_window;
+mod file_table;
 mod log_window;
 mod pull_requests;
 mod settings_window;

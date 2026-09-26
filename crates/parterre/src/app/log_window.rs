@@ -7,37 +7,31 @@
 //! separate functions that a [`LogLayout`] arranges; the layout is picked in the header or in
 //! the settings, and it and the dividers of each layout are saved with the settings.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
 
 use eframe::egui::text::{LayoutJob, TextFormat, TextWrapping};
 use eframe::egui::{
     self, Color32, CornerRadius, CursorIcon, FontId, Galley, Id, Key, Margin, Modifiers, Rangef,
     Rect, Response, RichText, ScrollArea, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2,
 };
-use parterre_core::changed_files::{
-    ChangedFile, FileColumn, FileOrder, FileStatus, filter_and_sort,
-};
 use parterre_core::file_diff::FileDiffSpec;
 use parterre_core::glyphs::{self, Glyph};
 use parterre_core::log::LogQuery;
 use parterre_core::log_layout::LogLayout;
 use parterre_core::revgraph::GraphOptions;
-use parterre_core::text::{elide_start, find_urls, thousands};
+use parterre_core::text::{find_urls, thousands};
 use parterre_core::{CommitIx, GitRef, Oid, Repo};
 
+use super::file_table::{DiffQueue, FileTable, Lister, Listing};
 use super::{Messages, ParterreApp};
 use crate::settings::LogWindowSettings;
 use crate::theme::{Palette, text_on};
 use crate::widgets;
 
-/// Opening more diff windows than this at once asks first, as TortoiseGit does.
-const MANY_DIFFS: usize = 10;
-/// Height of a commit row and of a changed-file row.
+/// Height of a commit row.
 const ROW: f32 = 24.0;
-const FILE_ROW: f32 = 23.0;
 /// Height of a table's column headings.
-const HEADING: f32 = 26.0;
+pub(super) const HEADING: f32 = 26.0;
 /// Thickness of the draggable dividers between panes.
 const DIVIDER: f32 = 6.0;
 const AUTHOR_WIDTH: f32 = 170.0;
@@ -47,7 +41,7 @@ const DATE_WIDTH: f32 = 128.0;
 const NARROW_LIST: f32 = 720.0;
 const NARROW_AUTHOR_WIDTH: f32 = 128.0;
 const NARROW_DATE_WIDTH: f32 = 118.0;
-const CELL_PAD: f32 = 8.0;
+pub(super) const CELL_PAD: f32 = 8.0;
 /// How long a Copy button says "Copied".
 const COPIED_SECONDS: f64 = 1.2;
 
@@ -72,9 +66,8 @@ pub fn layout_glyph(layout: LogLayout) -> Glyph {
 pub struct LogWindow {
     /// What the window shows; `None` while it is closed.
     view: Option<LogView>,
-    order: FileOrder,
-    filter: String,
-    files: ChangedFiles,
+    table: FileTable,
+    files: Lister<Oid, Listing>,
     /// The size the window opened with. The viewport builder must not change while the window
     /// is open, or egui would resize it.
     size: Vec2,
@@ -84,28 +77,8 @@ pub struct LogWindow {
     copied: Option<(Copied, f64)>,
     /// How many logs were opened, to give each its own scroll positions.
     opened: u64,
-    /// The changed files chosen in the list.
-    selection: FileSelection,
     /// Diff windows to open, for the app to take.
-    diff_requests: Vec<(Arc<Repo>, FileDiffSpec)>,
-    /// Diff windows waiting for "Open all?" to be answered.
-    confirm: Option<Vec<(Arc<Repo>, FileDiffSpec)>>,
-}
-
-/// Changed files chosen in the list, by path, for the commit they belong to. Changing the
-/// commit clears it.
-#[derive(Debug, Default)]
-struct FileSelection {
-    commit: Option<Oid>,
-    paths: HashSet<String>,
-    /// Where a Shift+click range starts.
-    anchor: Option<String>,
-}
-
-/// What a click in the changed files asked for, by row in the list as shown.
-enum FileClick {
-    Select(usize, Modifiers),
-    Open(usize),
+    diffs: DiffQueue<(Arc<Repo>, FileDiffSpec)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,67 +149,6 @@ impl LogView {
                 self.selected = Some(i);
             }
         }
-    }
-}
-
-/// A commit's changed files, or why they could not be listed.
-type Listing = Result<Vec<ChangedFile>, String>;
-
-/// Changed files per commit, listed by git on a worker thread when first needed.
-#[derive(Debug, Default)]
-struct ChangedFiles {
-    /// `None` while git works on it.
-    cache: HashMap<Oid, Option<Listing>>,
-    /// Results; `None` for a request dropped because a newer one came in.
-    rx: Option<mpsc::Receiver<(Oid, Option<Listing>)>>,
-    tx: Option<mpsc::Sender<Oid>>,
-}
-
-impl ChangedFiles {
-    /// The changed files of `oid` if they are known; otherwise asks git for them.
-    fn get(
-        &mut self,
-        repo_path: &std::path::Path,
-        oid: Oid,
-        ctx: &egui::Context,
-    ) -> Option<&Listing> {
-        while let Some(Ok((oid, files))) = self.rx.as_ref().map(|rx| rx.try_recv()) {
-            match files {
-                Some(files) => self.cache.insert(oid, Some(files)),
-                None => self.cache.remove(&oid),
-            };
-        }
-        if let std::collections::hash_map::Entry::Vacant(slot) = self.cache.entry(oid) {
-            slot.insert(None);
-            let tx = self.tx.get_or_insert_with(|| {
-                let (req_tx, req_rx) = mpsc::channel::<Oid>();
-                let (res_tx, res_rx) = mpsc::channel();
-                let git = parterre_core::git::Git::new(repo_path);
-                let ctx = ctx.clone();
-                std::thread::spawn(move || {
-                    while let Ok(mut oid) = req_rx.recv() {
-                        // Holding an arrow key asks for one commit after another; only the
-                        // newest request still matters. The others are forgotten, so they are
-                        // asked for again if they show up once more.
-                        while let Ok(newer) = req_rx.try_recv() {
-                            if res_tx.send((oid, None)).is_err() {
-                                return;
-                            }
-                            oid = newer;
-                        }
-                        let files = git.changed_files(&oid).map_err(|e| e.to_string());
-                        if res_tx.send((oid, Some(files))).is_err() {
-                            return;
-                        }
-                        ctx.request_repaint();
-                    }
-                });
-                self.rx = Some(res_rx);
-                req_tx
-            });
-            let _ = tx.send(oid);
-        }
-        self.cache.get(&oid).and_then(Option::as_ref)
     }
 }
 
@@ -392,22 +304,22 @@ fn arrange(layout: LogLayout, [a, b]: [f32; 2], body: Rect) -> Arrangement {
 }
 
 /// Colours of the log window beyond egui's visuals, after the prototype.
-struct Colors {
+pub(super) struct Colors {
     /// Background of the panes (the chrome around them is the panel colour).
-    pane: Color32,
-    stripe: Color32,
-    hover: Color32,
-    line: Color32,
-    selected_bg: Color32,
-    selected_fg: Color32,
+    pub(super) pane: Color32,
+    pub(super) stripe: Color32,
+    pub(super) hover: Color32,
+    pub(super) line: Color32,
+    pub(super) selected_bg: Color32,
+    pub(super) selected_fg: Color32,
     /// The range label.
-    link: Color32,
-    added: Color32,
-    removed: Color32,
-    renamed: Color32,
+    pub(super) link: Color32,
+    pub(super) added: Color32,
+    pub(super) removed: Color32,
+    pub(super) renamed: Color32,
 }
 
-fn colors(ui: &Ui) -> Colors {
+pub(super) fn colors(ui: &Ui) -> Colors {
     let t = widgets::tones(ui);
     if ui.visuals().dark_mode {
         Colors {
@@ -455,14 +367,14 @@ impl LogWindow {
     /// Closes the window and forgets the changed files listed for the repository it showed.
     pub fn close(&mut self) {
         self.view = None;
-        self.files = ChangedFiles::default();
-        self.selection = FileSelection::default();
-        self.confirm = None;
+        self.files = Lister::default();
+        self.table.clear_selection();
+        self.diffs.cancel();
     }
 
     /// The diff windows asked for since the last call.
     pub fn take_diff_requests(&mut self) -> Vec<(Arc<Repo>, FileDiffSpec)> {
-        std::mem::take(&mut self.diff_requests)
+        self.diffs.take()
     }
 
     /// After F5: re-runs the query on the new snapshot.
@@ -529,31 +441,7 @@ impl LogWindow {
         self.header(ui, &c, env);
         let body = ui.available_rect_before_wrap();
         self.body(ui, body, env);
-        self.confirm_many(ui);
-    }
-
-    /// Asks before opening more than [`MANY_DIFFS`] diff windows at once.
-    fn confirm_many(&mut self, ui: &mut Ui) {
-        let Some(pending) = &self.confirm else { return };
-        let n = pending.len();
-        let (mut open, mut cancel) = (false, false);
-        let modal = egui::Modal::new(Id::new("log-many-diffs")).show(ui.ctx(), |ui| {
-            ui.set_width(340.0);
-            ui.label(RichText::new(format!("Open {n} diff windows?")).strong());
-            ui.add_space(4.0);
-            ui.label("A window opens for every selected file.");
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                open = widgets::text_button(ui, "Open all").clicked();
-                cancel = widgets::text_button(ui, "Cancel").clicked();
-            });
-        });
-        if open {
-            self.diff_requests
-                .extend(self.confirm.take().unwrap_or_default());
-        } else if cancel || modal.should_close() {
-            self.confirm = None;
-        }
+        self.diffs.confirm_many(ui, Id::new("log-many-diffs"));
     }
 
     /// The range at the top left, as TortoiseGit shows it; on the right the commit count, the
@@ -904,407 +792,38 @@ impl LogWindow {
         };
         let commit = view.repo.commit(ix);
         let merge = commit.parents.len() > 1;
-        if self.selection.commit != Some(commit.oid) {
-            self.selection = FileSelection {
-                commit: Some(commit.oid),
-                ..FileSelection::default()
-            };
-        }
         let ctx = ui.ctx().clone();
-        let files = self.files.get(&view.repo.path, commit.oid, &ctx);
-        let shown = match files {
-            Some(Ok(files)) => Some(filter_and_sort(files, &self.filter, self.order)),
-            _ => None,
-        };
+        let files = self
+            .files
+            .get(&view.repo.path, commit.oid, &ctx, |git, oid| {
+                git.changed_files(oid).map_err(|e| e.to_string())
+            });
         let weak = ui.visuals().weak_text_color();
-
-        // The bar: filter, merge note, count.
-        let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
-        heading_background(ui, bar, c);
-        let mut bar_ui = ui.new_child(
-            UiBuilder::new()
-                .max_rect(bar.shrink2(vec2(8.0, 0.0)))
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        );
-        filter_field(&mut bar_ui, &mut self.filter, 280.0);
-        if merge {
-            bar_ui.label(
-                RichText::new("Merge: compared with its first parent")
-                    .size(12.0)
-                    .color(weak),
-            );
-        }
-        if let (Some(Ok(files)), Some(shown)) = (files, &shown) {
-            let count = if self.filter.is_empty() {
-                let n = files.len();
-                format!("{} file{}", thousands(n), if n == 1 { "" } else { "s" })
-            } else {
-                format!(
-                    "{} of {} files",
-                    thousands(shown.len()),
-                    thousands(files.len())
-                )
-            };
-            bar_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(count).size(12.0).color(weak));
-            });
-        }
-
-        let files = match files {
-            None => {
-                ui.add_space(16.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    ui.weak("Loading…");
-                });
-                return;
-            }
-            Some(Err(e)) => {
-                ui.add_space(16.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    ui.colored_label(c.removed, format!("Could not list the changed files: {e}"));
-                });
-                return;
-            }
-            Some(Ok(files)) => files,
-        };
-        let shown = shown.unwrap_or_default();
-
-        // Headings; a click sorts, another reverses.
-        let (head, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADING), Sense::hover());
-        heading_background(ui, head, c);
-        let (x, w) = file_columns(head.width(), head.left());
-        let compact = compact_files(head.width());
-        let heading_font = FontId::proportional(12.0);
-        for (i, column) in FileColumn::ALL.into_iter().enumerate() {
-            let rect = Rect::from_x_y_ranges(x[i]..=x[i] + w[i], head.y_range());
-            let mut response = ui.interact(rect, Id::new(("log-sort", i)), Sense::click());
-            let heading = file_heading(column, compact);
-            if heading != column.title() {
-                response = response.on_hover_text(column.title());
-            }
-            if response.clicked() {
-                self.order.click(column);
-            }
-            let color = if response.hovered() {
-                ui.visuals().text_color()
-            } else {
-                weak
-            };
-            let g = cell(
-                ui,
-                heading,
-                heading_font.clone(),
-                color,
-                w[i] - 2.0 * CELL_PAD - 12.0,
-            );
-            let numeric = matches!(column, FileColumn::Added | FileColumn::Removed);
-            let arrow_room = if self.order.column == column {
-                12.0
-            } else {
-                0.0
-            };
-            let left = if numeric {
-                rect.right() - CELL_PAD - g.size().x - arrow_room
-            } else {
-                rect.left() + CELL_PAD
-            };
-            let text_width = g.size().x;
-            ui.painter()
-                .galley(pos2(left, rect.center().y - g.size().y / 2.0), g, color);
-            if self.order.column == column {
-                let at = pos2(left + text_width + 7.0, rect.center().y);
-                sort_arrow(ui, at, self.order.descending, color);
-            }
-        }
-
-        if shown.is_empty() {
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                ui.add_space(16.0);
-                ui.weak(if files.is_empty() {
-                    "No changes."
-                } else {
-                    "No file matches the filter."
-                });
-            });
-            return;
-        }
-
-        ui.spacing_mut().item_spacing.y = 0.0;
-        let body = egui::TextStyle::Body.resolve(ui.style());
-        let text = ui.visuals().text_color();
-        let mut click = None;
-        let selection = &self.selection;
-        ScrollArea::vertical()
-            .id_salt(("log-files", commit.oid))
-            .auto_shrink(false)
-            .show_rows(ui, FILE_ROW, shown.len(), |ui, range| {
-                for row in range {
-                    let file = &files[shown[row]];
-                    let (rect, response) = ui
-                        .allocate_exact_size(vec2(ui.available_width(), FILE_ROW), Sense::click());
-                    if response.double_clicked() {
-                        click = Some(FileClick::Open(row));
-                    } else if response.clicked() {
-                        click = Some(FileClick::Select(row, ui.input(|i| i.modifiers)));
-                    }
-                    if selection.paths.contains(&file.path) {
-                        ui.painter().rect_filled(rect, 0.0, c.selected_bg);
-                    }
-                    if response.hovered() {
-                        ui.painter().rect_filled(rect, 0.0, c.hover);
-                    } else if row % 2 == 1 {
-                        ui.painter().rect_filled(rect, 0.0, c.stripe);
-                    }
-                    let (x, w) = file_columns(rect.width(), rect.left());
-                    let y = rect.center().y;
-                    let put = |g: Arc<Galley>, x: f32| {
-                        ui.painter().galley(pos2(x, y - g.size().y / 2.0), g, text);
-                    };
-                    let put_right = |g: Arc<Galley>, right: f32| {
-                        ui.painter().galley(
-                            pos2(right - g.size().x, y - g.size().y / 2.0),
-                            g,
-                            text,
-                        );
-                    };
-                    let pieces = path_pieces(file);
-                    let (path, elided) =
-                        path_galley(ui, &pieces, &body, w[0] - 2.0 * CELL_PAD, text, weak);
-                    put(path, x[0] + CELL_PAD);
-                    put(
-                        cell(
-                            ui,
-                            file.extension(),
-                            body.clone(),
-                            weak,
-                            w[1] - 2.0 * CELL_PAD,
-                        ),
-                        x[1] + CELL_PAD,
+        let open = self
+            .table
+            .show(ui, c, Id::new(("log-files", commit.oid)), files, |ui| {
+                if merge {
+                    ui.label(
+                        RichText::new("Merge: compared with its first parent")
+                            .size(12.0)
+                            .color(weak),
                     );
-                    let status_color = match file.status {
-                        FileStatus::Added => c.added,
-                        FileStatus::Deleted => c.removed,
-                        FileStatus::Renamed | FileStatus::Copied => c.renamed,
-                        _ => text,
-                    };
-                    put(
-                        cell(
-                            ui,
-                            file.status.name(),
-                            body.clone(),
-                            status_color,
-                            w[2] - 2.0 * CELL_PAD,
-                        ),
-                        x[2] + CELL_PAD,
-                    );
-                    // Binary files have no line counts.
-                    let count = |n: Option<u32>, color| {
-                        let (s, color) = match n {
-                            Some(n) => (thousands(n as usize), color),
-                            None => ("–".to_owned(), weak),
-                        };
-                        ui.painter().layout_no_wrap(s, body.clone(), color)
-                    };
-                    put_right(count(file.added, c.added), x[3] + w[3] - CELL_PAD);
-                    put_right(count(file.removed, c.removed), x[4] + w[4] - CELL_PAD);
-                    let path_rect = Rect::from_x_y_ranges(x[0]..=x[0] + w[0], rect.y_range());
-                    if elided && response.hover_pos().is_some_and(|p| path_rect.contains(p)) {
-                        response.on_hover_ui(|ui| {
-                            ui.label(path_job(&pieces, 0, &body, text, weak));
-                        });
-                    }
                 }
             });
-
-        // Enter opens every selected file; a double-click opens one.
-        let enter = !ui.ctx().egui_wants_keyboard_input()
-            && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
         let parent = commit.parents.first().map(|&p| view.repo.commit(p).oid);
-        let spec = |f: &ChangedFile| {
-            (
-                view.repo.clone(),
-                FileDiffSpec::of_commit(commit.oid, parent, f),
-            )
-        };
-        let sel = &mut self.selection;
-        let mut open: Vec<(Arc<Repo>, FileDiffSpec)> = Vec::new();
-        match click {
-            Some(FileClick::Open(row)) => {
-                let file = &files[shown[row]];
-                sel.paths = HashSet::from([file.path.clone()]);
-                sel.anchor = Some(file.path.clone());
-                open.push(spec(file));
-            }
-            Some(FileClick::Select(row, mods)) => {
-                let path = files[shown[row]].path.clone();
-                let anchor = sel
-                    .anchor
-                    .as_ref()
-                    .and_then(|a| shown.iter().position(|&i| &files[i].path == a));
-                if mods.command {
-                    if !sel.paths.remove(&path) {
-                        sel.paths.insert(path.clone());
-                    }
-                    sel.anchor = Some(path);
-                } else if mods.shift
-                    && let Some(from) = anchor
-                {
-                    let (a, b) = (from.min(row), from.max(row));
-                    sel.paths = shown[a..=b]
-                        .iter()
-                        .map(|&i| files[i].path.clone())
-                        .collect();
-                } else {
-                    sel.paths = HashSet::from([path.clone()]);
-                    sel.anchor = Some(path);
-                }
-            }
-            None => {}
-        }
-        if enter {
-            open.extend(
-                shown
-                    .iter()
-                    .map(|&i| &files[i])
-                    .filter(|f| sel.paths.contains(&f.path))
-                    .map(spec),
-            );
-        }
-        if open.len() > MANY_DIFFS {
-            self.confirm = Some(open);
-        } else {
-            self.diff_requests.extend(open);
-        }
+        let open = open
+            .into_iter()
+            .map(|f| {
+                let spec = FileDiffSpec::of_commit(commit.oid, parent, f);
+                (view.repo.clone(), spec)
+            })
+            .collect();
+        self.diffs.push(open);
     }
-}
-
-/// A piece of a path cell.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PathPiece {
-    Folder,
-    Name,
-    /// The ` → ` between the old and new path of a rename.
-    Arrow,
-}
-
-/// A file's path in pieces: `old → new` for renames and copies.
-fn path_pieces(file: &ChangedFile) -> Vec<(String, PathPiece)> {
-    let mut pieces = Vec::new();
-    let push_path = |pieces: &mut Vec<(String, PathPiece)>, path: &str| match path.rfind('/') {
-        Some(i) => {
-            pieces.push((path[..=i].to_owned(), PathPiece::Folder));
-            pieces.push((path[i + 1..].to_owned(), PathPiece::Name));
-        }
-        None => pieces.push((path.to_owned(), PathPiece::Name)),
-    };
-    if let Some(old) = &file.old_path {
-        push_path(&mut pieces, old);
-        pieces.push((" → ".to_owned(), PathPiece::Arrow));
-    }
-    push_path(&mut pieces, &file.path);
-    pieces
-}
-
-/// The pieces from byte `from` of their text on, after an ellipsis if `from` isn't 0: folders
-/// weak, file names in the text colour. The arrow is monospaced: the proportional font has
-/// none.
-fn path_job(
-    pieces: &[(String, PathPiece)],
-    from: usize,
-    font: &FontId,
-    text: Color32,
-    weak: Color32,
-) -> LayoutJob {
-    let mut job = LayoutJob::default();
-    if from > 0 {
-        job.append("…", 0.0, TextFormat::simple(font.clone(), weak));
-    }
-    let mut at = 0;
-    for (piece, kind) in pieces {
-        let (start, end) = (at, at + piece.len());
-        at = end;
-        if end <= from {
-            continue;
-        }
-        let piece = &piece[start.max(from) - start..];
-        let format = match kind {
-            PathPiece::Folder => TextFormat::simple(font.clone(), weak),
-            PathPiece::Name => TextFormat::simple(font.clone(), text),
-            PathPiece::Arrow => TextFormat::simple(FontId::monospace(font.size), weak),
-        };
-        job.append(piece, 0.0, format);
-    }
-    job
-}
-
-/// The path cell, cut at the start when it is too long so that the file name stays in view.
-/// Also says whether it was cut.
-fn path_galley(
-    ui: &Ui,
-    pieces: &[(String, PathPiece)],
-    font: &FontId,
-    width: f32,
-    text: Color32,
-    weak: Color32,
-) -> (Arc<Galley>, bool) {
-    let full: String = pieces.iter().map(|(s, _)| s.as_str()).collect();
-    let painter = ui.painter();
-    // A candidate is `full`, or "…" and an end of `full`.
-    let job = |shown: &str| {
-        let from = if shown == full {
-            0
-        } else {
-            full.len() + '…'.len_utf8() - shown.len()
-        };
-        path_job(pieces, from, font, text, weak)
-    };
-    let shown = elide_start(&full, |s| painter.layout_job(job(s)).size().x <= width);
-    (painter.layout_job(job(&shown)), shown != full)
-}
-
-/// Whether a changed-files table `width` wide is compact: in a narrow pane (beside another
-/// one in layouts B and D) the columns after the path shrink, with shorter headings, so that
-/// the path keeps room.
-fn compact_files(width: f32) -> bool {
-    const ROOMY_PATH: f32 = 260.0;
-    width - FILE_COLUMNS.iter().sum::<f32>() < ROOMY_PATH
-}
-
-/// Widths of the columns after the path: extension, status, lines added, lines removed.
-const FILE_COLUMNS: [f32; 4] = [90.0, 100.0, 100.0, 110.0];
-const COMPACT_FILE_COLUMNS: [f32; 4] = [56.0, 78.0, 66.0, 82.0];
-
-/// A changed-files column's heading; shorter in a compact table.
-fn file_heading(column: FileColumn, compact: bool) -> &'static str {
-    match column {
-        FileColumn::Extension if compact => "Ext.",
-        FileColumn::Added if compact => "Added",
-        FileColumn::Removed if compact => "Removed",
-        _ => column.title(),
-    }
-}
-
-/// x and widths of the changed-files columns: the path takes what the others leave.
-fn file_columns(width: f32, left: f32) -> ([f32; 5], [f32; 5]) {
-    let fixed = if compact_files(width) {
-        COMPACT_FILE_COLUMNS
-    } else {
-        FILE_COLUMNS
-    };
-    let path = (width - fixed.iter().sum::<f32>()).max(120.0);
-    let w = [path, fixed[0], fixed[1], fixed[2], fixed[3]];
-    let mut x = [left; 5];
-    for i in 1..5 {
-        x[i] = x[i - 1] + w[i - 1];
-    }
-    (x, w)
 }
 
 /// `text` on one line, cut with an ellipsis at `width`.
-fn cell(ui: &Ui, text: &str, font: FontId, color: Color32, width: f32) -> Arc<Galley> {
+pub(super) fn cell(ui: &Ui, text: &str, font: FontId, color: Color32, width: f32) -> Arc<Galley> {
     let mut job = LayoutJob::simple_singleline(text.to_owned(), font, color);
     job.wrap = TextWrapping {
         max_width: width.max(1.0),
@@ -1347,7 +866,7 @@ fn badge(ui: &Ui, git_ref: &GitRef, palette: &Palette, at: egui::Pos2, max_width
 }
 
 /// The background of column headings and bars: the panel colour with a line below.
-fn heading_background(ui: &Ui, rect: Rect, c: &Colors) {
+pub(super) fn heading_background(ui: &Ui, rect: Rect, c: &Colors) {
     let painter = ui.painter();
     painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
     painter.hline(
@@ -1355,26 +874,6 @@ fn heading_background(ui: &Ui, rect: Rect, c: &Colors) {
         rect.bottom() - 0.5,
         Stroke::new(1.0, c.line),
     );
-}
-
-/// A small triangle: up for ascending, down for descending.
-fn sort_arrow(ui: &Ui, at: egui::Pos2, descending: bool, color: Color32) {
-    let (w, h) = (3.5, 3.0);
-    let points = if descending {
-        vec![
-            at + vec2(-w, -h / 2.0),
-            at + vec2(w, -h / 2.0),
-            at + vec2(0.0, h),
-        ]
-    } else {
-        vec![
-            at + vec2(-w, h / 2.0),
-            at + vec2(w, h / 2.0),
-            at + vec2(0.0, -h),
-        ]
-    };
-    ui.painter()
-        .add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
 }
 
 /// A divider between two panes. While it is dragged, returns where its middle should go: the
@@ -1443,44 +942,6 @@ pub fn layout_picker(ui: &mut Ui, current: LogLayout) -> Option<LogLayout> {
     widgets::segmented(ui, current, &items, |layout, response| {
         response.on_hover_text(layout.label())
     })
-}
-
-/// The filter field of the changed files, with a magnifier.
-fn filter_field(ui: &mut Ui, text: &mut String, width: f32) -> Response {
-    let id = Id::new("log-filter");
-    let focused = ui.memory(|m| m.has_focus(id));
-    let t = widgets::tones(ui);
-    let stroke = if focused {
-        Stroke::new(1.5, t.accent)
-    } else {
-        Stroke::new(1.0, t.field_line)
-    };
-    egui::Frame::new()
-        .fill(t.field)
-        .stroke(stroke)
-        .corner_radius(7)
-        .inner_margin(Margin {
-            left: 8,
-            right: 6,
-            top: 0,
-            bottom: 0,
-        })
-        .show(ui, |ui| {
-            ui.set_width(width - 14.0);
-            ui.set_height(28.0);
-            ui.spacing_mut().item_spacing.x = 6.0;
-            let weak = ui.visuals().weak_text_color();
-            let (icon, _) = ui.allocate_exact_size(Vec2::splat(15.0), Sense::hover());
-            widgets::paint_glyph(ui.painter(), icon, parterre_core::glyphs::SEARCH, weak);
-            ui.add(
-                egui::TextEdit::singleline(text)
-                    .id(id)
-                    .frame(egui::Frame::NONE)
-                    .hint_text("Filter paths")
-                    .desired_width(ui.available_width()),
-            )
-        })
-        .inner
 }
 
 /// A small, flat "Copy" button, which says "Copied" for a moment after a click.
@@ -1668,57 +1129,6 @@ impl ParterreApp {
 mod tests {
     use super::*;
     use parterre_core::log_layout::Dividers;
-
-    fn renamed() -> ChangedFile {
-        ChangedFile {
-            path: "src/new.rs".into(),
-            old_path: Some("lib/old.rs".into()),
-            status: FileStatus::Renamed,
-            modes: [0o100644; 2],
-            added: Some(1),
-            removed: Some(0),
-        }
-    }
-
-    #[test]
-    fn renames_show_old_and_new_path_with_folders_apart() {
-        let pieces = path_pieces(&renamed());
-        let kinds: Vec<_> = pieces.iter().map(|(s, k)| (s.as_str(), *k)).collect();
-        assert_eq!(
-            kinds,
-            [
-                ("lib/", PathPiece::Folder),
-                ("old.rs", PathPiece::Name),
-                (" → ", PathPiece::Arrow),
-                ("src/", PathPiece::Folder),
-                ("new.rs", PathPiece::Name),
-            ]
-        );
-        let job = path_job(
-            &pieces,
-            0,
-            &FontId::default(),
-            Color32::WHITE,
-            Color32::GRAY,
-        );
-        assert_eq!(job.text, "lib/old.rs → src/new.rs");
-    }
-
-    #[test]
-    fn a_cut_path_keeps_its_end_after_an_ellipsis() {
-        let pieces = path_pieces(&renamed());
-        let (text, weak) = (Color32::WHITE, Color32::GRAY);
-        // Cut inside the first file name, then inside the second folder.
-        let job = path_job(&pieces, 6, &FontId::default(), text, weak);
-        assert_eq!(job.text, "…d.rs → src/new.rs");
-        assert_eq!(job.sections[1].format.color, text);
-        let from = "lib/old.rs → s".len();
-        let job = path_job(&pieces, from, &FontId::default(), text, weak);
-        assert_eq!(job.text, "…rc/new.rs");
-        // The ellipsis and the folder share one weak section.
-        let colors: Vec<_> = job.sections.iter().map(|s| s.format.color).collect();
-        assert_eq!(colors, [weak, text]);
-    }
 
     #[test]
     fn layouts_tile_the_body_with_their_panes_and_dividers() {
