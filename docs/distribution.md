@@ -9,17 +9,17 @@ before acting on an old fact.
 | Channel | Name | When | Issue |
 |---|---|---|---|
 | GitHub Releases | zip (Windows), tar.gz (Linux, macOS), `SHA256SUMS` | as today | |
-| crates.io | `parterre`, `parterre-core` | now (0.4.0) | #13 |
-| Windows MSI on GitHub Releases | Manufacturer "Trustfall AB" | with the new icon | #15 |
-| winget | `Trustfall.Parterre`, moniker `parterre` | with the new icon | #16 |
-| Chocolatey | `parterre` | with the new icon | #17 |
-| .deb and .rpm on GitHub Releases | `parterre`, app ID `se.trustfall.parterre` | with the new icon | #18 |
-| Snap Store | `parterre` | with the new icon | #19 |
+| crates.io | `parterre`, `parterre-core` | 0.4.0 | #13 |
+| Windows MSI on GitHub Releases | Manufacturer "Trustfall AB" | next | #15 |
+| winget | `Trustfall.Parterre`, moniker `parterre` | next | #16 |
+| Chocolatey | `parterre` | next | #17 |
+| .deb and .rpm on GitHub Releases | `parterre`, app ID `se.trustfall.parterre` | next | #18 |
+| Snap Store | `parterre` | next | #19 |
 | Flathub | `se.trustfall.parterre` | later | #21 |
 
-Everything except crates.io waits for the new icon (#14), not for 1.0. After the first,
-hand-made submission to each channel, a tag push publishes to all of them behind one approval
-(#20). Not planned for now:
+Everything except crates.io waited for the new icon (#14, now in), not for 1.0. After the
+first, hand-made submission to each channel, a tag push publishes to all of them behind one
+approval (#20). Not planned for now:
 
 - **AUR**: not until someone asks. New AUR accounts can't be registered at the moment anyway
   (closed after the summer 2026 malware incidents).
