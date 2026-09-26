@@ -267,36 +267,30 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       parterre under *Open With* for folders, but some desktops then make it the default
       folder handler (VS Code had that bug), so it needs trying on GNOME and KDE first.
 
+21. **Reloading automatically** (from the planned list, 2026-09-26). TortoiseGit reloads only on F5; parterre now also
+    reloads by itself when the branches, tags or HEAD change, as after a commit, checkout or
+    fetch in another program. Decisions you may want to overrule:
+    - **On by default.** ☰ → *Reload automatically* and *Settings → Graph* turn it off.
+    - **How it notices:** every second it looks at the files git keeps refs in (`HEAD`,
+      `packed-refs`, `refs/`, reftable), without running git and without a file-watching
+      crate. Only when they change, and have stayed unchanged for 0.3 s (so a rebase is loaded
+      once, at its end), is the repository loaded again, on a worker thread. If refs and HEAD
+      turn out the same (`git gc`, `git pack-refs`), nothing happens.
+    - **Not during a drag:** a reload waits until the node is dropped.
+    - **Moved nodes survive a reload,** also on F5, even with *Remember moved nodes* off. Before,
+      F5 put every node back into the layout. Undo history does not survive.
+    - The status bar says "Reloaded: the refs changed".
+
 ## Planned
 
-- [x] Show log window, as planned in the map *Revision-graph node menu: roadmap to TortoiseGit
-      parity* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
-      from TortoiseGit (decided in #28): when the second of two selected nodes is an ancestor
-      of the first, the two are swapped instead of showing an empty list.
-  - [x] Layout A (stacked) and its entry points: *Show log* first in the node menu, `L` and
-        double-click ([#39](https://github.com/aquamoth/parterre/issues/39); see question 20).
-  - [x] Layouts B, C and D, the layout picker (in the window's header and in *Settings →
-        Appearance*) and reset, and the layout and divider positions per layout saved with the
-        settings ([#40](https://github.com/aquamoth/parterre/issues/40); see question 19).
-- [x] Wayland freeze ([#38](https://github.com/aquamoth/parterre/issues/38)). On Wayland the
-      whole app froze when one of its windows was minimized while another was open; it
-      happened with Settings already. Worked around (see `frame_pacing.rs`, and
-      `docs/research/wayland-viewport-freeze.md` on the branch
-      `research/wayland-viewport-freeze`): on Wayland only, vsync off and frames capped at about
-      8 ms. Not verified on Wayland after the change (no headless Wayland to test with).
-  - [ ] **Check regularly, and on every eframe upgrade, whether the upstream fix has shipped:**
-        <https://github.com/emilk/egui/pull/8631> (bug:
-        <https://github.com/emilk/egui/issues/5145>). Once it is in a released eframe, remove
-        the frame cap and turn vsync back on.
+- [ ] Wayland freeze workaround (#38, see Done). **Check regularly, and on every eframe
+      upgrade, whether the upstream fix has shipped:**
+      <https://github.com/emilk/egui/pull/8631> (bug:
+      <https://github.com/emilk/egui/issues/5145>). Once it is in a released eframe, remove
+      the frame cap and turn vsync back on.
 - [ ] Short hashes in the graph as long as git makes them for the repository (`core.abbrev`
       auto: 9 on Apps), as the log window will. Today the graph uses a fixed 8, and 10 in one
       place.
-- [x] Settings window without minimize and maximize buttons. It is a dialog, and maximizing it
-      breaks its layout. Asked of winit, which (0.30) does this on Windows and macOS only. On
-      Linux it ignores the request: there the window loses only its maximize button, because it
-      can't be resized (winit's own Wayland title bar, as on GNOME, leaves maximize out, and X11
-      window managers get a "not maximizable" hint), and minimize stays. Not checked by hand on
-      any platform.
 - [ ] Toolbar merged into the title bar, with ☰, the repository name and the window buttons in
       one row (wanted 2026-09-26, postponed as too big a change for now). Native on macOS
       (content under a transparent title bar, the traffic lights stay). Elsewhere parterre
@@ -304,8 +298,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       Windows 11 snap-layout popup; on GNOME no compositor shadow. See the "Title bar: merged"
       toggle in the prototype on the branch `prototype/menus`.
 - [ ] PNG export: SVG exists; TortoiseGit also offers raster formats.
-- [ ] Reload automatically when refs change; TortoiseGit only reloads on F5.
-- [ ] Tooltip on edges showing the collapsed commits.
 - [ ] Less memory for all-commits views of huge repositories (compact adjacency).
 - [ ] Distribution, as decided in `docs/distribution.md`: crates.io (#13), Windows MSI (#15),
       winget (#16), Chocolatey (#17), .deb and .rpm (#18), Snap (#19), publishing behind one
@@ -424,3 +416,27 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] A menu or popover taller than the window scrolls, with a visible thin scroll bar, instead
       of being cut off at the bottom; one that fits but not below its button slides up to the
       window's bottom edge, as before.
+- [x] Show log window, as planned in the map *Revision-graph node menu: roadmap to TortoiseGit
+      parity* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
+      from TortoiseGit (decided in #28): when the second of two selected nodes is an ancestor
+      of the first, the two are swapped instead of showing an empty list.
+  - [x] Layout A (stacked) and its entry points: *Show log* first in the node menu, `L` and
+        double-click ([#39](https://github.com/aquamoth/parterre/issues/39); see question 20).
+  - [x] Layouts B, C and D, the layout picker (in the window's header and in *Settings →
+        Appearance*) and reset, and the layout and divider positions per layout saved with the
+        settings ([#40](https://github.com/aquamoth/parterre/issues/40); see question 19).
+- [x] Wayland freeze ([#38](https://github.com/aquamoth/parterre/issues/38)). On Wayland the
+      whole app froze when one of its windows was minimized while another was open; it
+      happened with Settings already. Worked around (see `frame_pacing.rs`, and
+      `docs/research/wayland-viewport-freeze.md` on the branch
+      `research/wayland-viewport-freeze`): on Wayland only, vsync off and frames capped at about
+      8 ms. Not verified on Wayland after the change (no headless Wayland to test with).
+- [x] Settings window without minimize and maximize buttons. It is a dialog, and maximizing it
+      breaks its layout. Asked of winit, which (0.30) does this on Windows and macOS only. On
+      Linux it ignores the request: there the window loses only its maximize button, because it
+      can't be resized (winit's own Wayland title bar, as on GNOME, leaves maximize out, and X11
+      window managers get a "not maximizable" hint), and minimize stays. Not checked by hand on
+      any platform.
+- [x] Reloading automatically when a commit, checkout or fetch outside parterre changes the
+      refs or HEAD (question 21); TortoiseGit reloads only on F5. The ref files are looked at
+      every second, without running git; moved nodes and the selection survive a reload.

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use parterre_core::recent::Recent;
 use parterre_core::{Oid, Repo};
 
+mod auto_reload;
 mod log_window;
 mod settings_window;
 mod toolbar;
@@ -232,6 +233,11 @@ pub struct ParterreApp {
     focus_log: bool,
     /// Dragged nodes of every repository, kept when `remember_moves` is on.
     moves: RememberedMoves,
+    /// Moved nodes to put back in the next scene: after a reload, when `remember_moves` is
+    /// off.
+    carried_moves: Option<std::collections::HashMap<String, (f32, f32, bool)>>,
+    /// Reloads when the refs change, if `settings.auto_reload` is on.
+    watcher: Option<auto_reload::Watcher>,
     system_theme: SystemTheme,
     /// The theme last given to the window (its title bar), if any.
     window_theme: Option<egui::SystemTheme>,
@@ -343,6 +349,8 @@ impl ParterreApp {
             log: log_window::LogWindow::default(),
             focus_log: false,
             moves,
+            carried_moves: None,
+            watcher: None,
             system_theme: SystemTheme::watch(&cc.egui_ctx),
             window_theme: None,
             settings_window_theme: None,
@@ -446,14 +454,17 @@ impl ParterreApp {
         Some(self.repo.as_ref()?.path.display().to_string())
     }
 
-    /// Puts remembered nodes back where they were in a freshly laid-out scene.
+    /// Puts remembered nodes, or those carried over a reload, back where they were in a
+    /// freshly laid-out scene.
     fn restore_moves(&mut self) {
-        if !self.settings.remember_moves {
-            return;
-        }
-        let Some(moves) = self.repo_key().and_then(|key| self.moves.get(&key)) else {
-            return;
+        let carried = self.carried_moves.take();
+        let moves = if self.settings.remember_moves {
+            self.repo_key()
+                .and_then(|key| self.moves.get(&key).cloned())
+        } else {
+            carried
         };
+        let Some(moves) = moves else { return };
         let Some(scene) = &mut self.scene else { return };
         let saved: Vec<_> = moves
             .iter()
@@ -471,13 +482,10 @@ impl ParterreApp {
         scene.net.restore(saved);
     }
 
-    /// Records where the current scene's nodes rest, for this repository.
-    fn record_moves(&mut self) {
-        if !self.settings.remember_moves {
-            return;
-        }
-        let Some(scene) = &self.scene else { return };
-        let offsets: std::collections::HashMap<String, (f32, f32, bool)> = scene
+    /// Where the current scene's moved nodes rest, by commit.
+    fn rest_offsets(&self) -> Option<std::collections::HashMap<String, (f32, f32, bool)>> {
+        let scene = self.scene.as_ref()?;
+        let offsets = scene
             .net
             .rest_offsets()
             .map(|(node, d, by_hand)| {
@@ -491,6 +499,17 @@ impl ParterreApp {
                 )
             })
             .collect();
+        Some(offsets)
+    }
+
+    /// Records where the current scene's nodes rest, for this repository.
+    fn record_moves(&mut self) {
+        if !self.settings.remember_moves {
+            return;
+        }
+        let Some(offsets) = self.rest_offsets() else {
+            return;
+        };
         let Some(key) = self.repo_key() else { return };
         if offsets.is_empty() {
             self.moves.remove(&key);
@@ -638,16 +657,54 @@ impl ParterreApp {
         };
         match parterre_core::git::load_repo(&path) {
             Ok(repo) => {
-                // The scene on screen keeps its own snapshot until the new layout replaces it;
-                // the selection is carried over by commit id.
-                self.pending_select = self.selected_commits();
-                let repo = Arc::new(repo);
-                self.log.reload(&repo);
-                self.repo = Some(repo);
-                self.requested = None;
-                self.status = Some(("Reloaded".into(), false));
+                self.install_reloaded(repo, "Reloaded");
+                // Anything the watcher has loaded meanwhile may be older than this.
+                self.watcher = None;
             }
             Err(e) => self.status = Some((format!("Reload failed: {e}"), true)),
+        }
+    }
+
+    /// Shows a newer snapshot of the same repository. The scene on screen keeps its own
+    /// snapshot until the new layout replaces it; the selection and moved nodes are carried
+    /// over by commit id.
+    fn install_reloaded(&mut self, repo: Repo, status: &str) {
+        self.pending_select = self.selected_commits();
+        if !self.settings.remember_moves {
+            self.carried_moves = self.rest_offsets();
+        }
+        let repo = Arc::new(repo);
+        self.log.reload(&repo);
+        self.repo = Some(repo);
+        self.requested = None;
+        self.status = Some((status.into(), false));
+    }
+
+    /// Starts or stops watching the repository shown, and shows what the watcher loaded once
+    /// no drag is going on.
+    fn auto_reload(&mut self, ctx: &egui::Context) {
+        let path = match &self.repo {
+            Some(repo) if self.settings.auto_reload => repo.path.clone(),
+            _ => {
+                self.watcher = None;
+                return;
+            }
+        };
+        if self.watcher.as_ref().is_none_or(|w| w.path() != path) {
+            self.watcher = Some(auto_reload::Watcher::start(&path, ctx));
+        }
+        if self.drag.is_some() {
+            return;
+        }
+        let Some(repo) = self.watcher.as_ref().and_then(auto_reload::Watcher::take) else {
+            return;
+        };
+        if !self
+            .repo
+            .as_ref()
+            .is_some_and(|shown| shown.same_refs(&repo))
+        {
+            self.install_reloaded(repo, "Reloaded: the refs changed");
         }
     }
 
@@ -1733,6 +1790,7 @@ impl eframe::App for ParterreApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.title = title;
         }
+        self.auto_reload(&ctx);
         self.ensure_scene(&ctx);
         self.handle_keys(&ctx);
 

@@ -186,6 +186,25 @@ impl Repo {
         on
     }
 
+    /// True if both snapshots have the same refs pointing at the same commits, and the same
+    /// HEAD. The commits are then the same too, as a snapshot holds exactly what its refs reach.
+    pub fn same_refs(&self, other: &Repo) -> bool {
+        let refs = |repo: &Repo| -> Vec<(String, Oid, bool)> {
+            repo.refs
+                .iter()
+                .map(|r| (r.full_name.clone(), repo.commit(r.target).oid, r.annotated))
+                .collect()
+        };
+        let head = |repo: &Repo| {
+            let branch = match &repo.head {
+                Head::Branch { name, .. } => Some(name.clone()),
+                Head::Detached(_) => None,
+            };
+            (branch, repo.head_commit().map(|c| repo.commit(c).oid))
+        };
+        head(self) == head(other) && refs(self) == refs(other)
+    }
+
     /// Display name for the repository (directory name).
     pub fn display_name(&self) -> String {
         self.path

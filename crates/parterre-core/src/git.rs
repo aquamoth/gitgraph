@@ -148,6 +148,21 @@ impl Git {
         })
     }
 
+    /// The repository's git dir and common dir: the same directory, except in a linked
+    /// worktree, whose own git dir holds its HEAD while the refs are shared.
+    pub fn git_dirs(&self) -> Result<(PathBuf, PathBuf), GitError> {
+        let Some(out) = self.query(&["rev-parse", "--absolute-git-dir", "--git-common-dir"])?
+        else {
+            return Err(GitError::NotARepository(self.dir.clone()));
+        };
+        let mut lines = out.lines();
+        let (Some(git_dir), Some(common)) = (lines.next(), lines.next()) else {
+            return Err(GitError::Parse("rev-parse printed no git dir".into()));
+        };
+        // The common dir is printed relative to the directory git ran in.
+        Ok((PathBuf::from(git_dir), self.dir.join(common)))
+    }
+
     /// Loads all refs (notes excluded) and every commit reachable from them.
     ///
     /// Refs and HEAD are read first and the log is then walked from exactly those commits, so

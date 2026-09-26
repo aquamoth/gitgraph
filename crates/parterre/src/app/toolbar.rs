@@ -391,6 +391,10 @@ impl ParterreApp {
         if reload.inner.clicked() {
             self.reload();
         }
+        let auto = self.settings.auto_reload;
+        if menu::item(ui, "Reload automatically", "", Mark::Check(auto)).clicked() {
+            self.settings.auto_reload = !auto;
+        }
         let export = ui.add_enabled_ui(has_repo, |ui| {
             menu::item(ui, "Export as SVG…", "", Mark::None)
         });

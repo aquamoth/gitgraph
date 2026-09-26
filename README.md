@@ -69,7 +69,7 @@ In the window:
 | Right-click a node | Show log; copy its hash, ref names or subject; select its subtree; return it to the layout |
 | `R` | Return all nodes to the layout |
 | `Esc` | Clear the selection |
-| `F5` | Reload the repository |
+| `F5` | Reload the repository (it also reloads by itself when branches, tags or HEAD change) |
 | `Ctrl+O` / `Ctrl+W` | Open / close a folder; the ☰ menu also lists the recent ones |
 | `Ctrl+,` | Settings |
 
