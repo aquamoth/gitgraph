@@ -7,6 +7,7 @@ mod app;
 mod automation;
 mod console;
 mod export;
+mod frame_pacing;
 mod icon;
 mod menu;
 mod render;
@@ -230,7 +231,10 @@ fn main() -> ExitCode {
     }
 
     let (w, h) = cli.window_size.unwrap_or((1400.0, 900.0));
-    let options = eframe::NativeOptions {
+    // On Wayland a vsync'ed swap of a hidden window blocks the whole app (egui#5145); see
+    // `frame_pacing`. eframe reads this once, when it creates the GL context.
+    let vsync = !frame_pacing::wayland_session();
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(format!("{} – parterre", repo.display_name()))
             .with_app_id(settings::APP_ID)
@@ -239,6 +243,7 @@ fn main() -> ExitCode {
             .with_icon(std::sync::Arc::new(icon::icon())),
         ..Default::default()
     };
+    options.glow_options.vsync = vsync;
     let mut automation = Automation::new(
         cli.screenshot.clone(),
         cli.fit,
@@ -259,7 +264,7 @@ fn main() -> ExitCode {
         options,
         Box::new(move |cc| {
             Ok(Box::new(app::ParterreApp::new(
-                cc, path, repo, overrides, automation,
+                cc, path, repo, overrides, automation, vsync,
             )))
         }),
     );

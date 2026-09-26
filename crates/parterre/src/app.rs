@@ -21,6 +21,7 @@ pub use toolbar::popup_id;
 use settings_window::SettingsPage;
 
 use crate::automation::Automation;
+use crate::frame_pacing::FrameLimiter;
 use crate::menu;
 use crate::render::{self, Marks};
 use crate::scene::{FONT_SIZE, Scene, to_point};
@@ -229,6 +230,8 @@ pub struct ParterreApp {
     /// What is typed into the zoom level, while it has the focus.
     zoom_text: String,
     automation: Automation,
+    /// Caps the frame rate where vsync is off (Wayland, see `frame_pacing`).
+    frame_limiter: Option<FrameLimiter>,
 }
 
 impl std::fmt::Debug for ParterreApp {
@@ -246,6 +249,7 @@ impl ParterreApp {
         repo: Repo,
         overrides: impl FnOnce(&mut Settings),
         automation: Automation,
+        vsync: bool,
     ) -> ParterreApp {
         let persist = !automation.is_active();
         let mut settings: Settings = cc
@@ -267,6 +271,9 @@ impl ParterreApp {
             .as_deref()
             .and_then(|o| o.strip_prefix("settings"))
             .map(|page| SettingsPage::named(page.trim_start_matches(':')).unwrap_or_default());
+        // Automated runs are short and show one window (viewports are embedded), so they neither
+        // freeze nor need their frame rate capped: they run as fast as they can.
+        let frame_limiter = (!vsync && !automation.is_active()).then(FrameLimiter::default);
         ParterreApp {
             repo_path,
             repo: Arc::new(repo),
@@ -302,6 +309,7 @@ impl ParterreApp {
             window_icon: Arc::new(crate::icon::icon()),
             zoom_text: String::new(),
             automation,
+            frame_limiter,
         }
     }
 
@@ -1467,6 +1475,10 @@ enum MenuAction {
 
 impl eframe::App for ParterreApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        // One pass paints the main window and every immediate viewport, so this paces them all.
+        if let Some(limiter) = &mut self.frame_limiter {
+            limiter.wait();
+        }
         let ctx = ui.ctx().clone();
         self.apply_theme(&ctx);
         self.ensure_scene(&ctx);
