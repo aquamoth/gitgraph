@@ -75,3 +75,28 @@ cargo run --release -- ~/repo --screenshot out.png --window-size 1400x900 [--fit
 
 This renders a few frames, saves the window to `out.png`, and exits. `--demo-drag DX,DY` drags
 the centre node first, to show the physics.
+
+## Icon
+
+`crates/parterre-core/src/icon.rs` draws the app icon in code. The window icon is rasterised
+from it at startup, and
+
+```sh
+cargo run --release -p parterre-core --example icon_assets
+```
+
+writes `packaging/icon/`: the SVG, PNGs from 16 to 512 px, `parterre.ico` and `parterre.icns`.
+Rerun it after changing the drawing and commit the results.
+
+`crates/parterre/build.rs` embeds `parterre.ico` in the Windows executable through
+`crates/parterre/parterre.rc`. That needs `rc.exe` from the Windows SDK (installed with the
+build tools above), or `x86_64-w64-mingw32-windres` for the GNU target; without one the build
+only warns and the `.exe` has no icon. The `.icns` waits for a macOS `.app` bundle.
+
+On Linux, `packaging/linux/install.sh` installs the release binary into `~/.local/bin`, and the
+desktop entry and the icon where the desktop finds them; `--uninstall` removes them again. A
+desktop shows a window's icon through the desktop entry, which it loads only if the entry's
+`Exec` can be found, so the script writes the binary's absolute path into the entry rather than
+relying on `~/.local/bin` being on the session's PATH. On Wayland the entry is the only source
+of the icon, since GNOME never uses the icon a window sets on itself. A running parterre shows
+it after a restart.

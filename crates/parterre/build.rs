@@ -1,4 +1,5 @@
-//! Sets `PARTERRE_VERSION`, the version string `--version` and Help show (see `src/version.rs`).
+//! Sets `PARTERRE_VERSION`, the version string `--version` and Help show (see `src/version.rs`),
+//! and gives the Windows executable its icon.
 //!
 //! The release workflow sets `PARTERRE_RELEASE_TAG` to the pushed tag; the build then fails
 //! unless that tag matches `Cargo.toml` and the commit being built.
@@ -15,8 +16,9 @@ const RELEASE_TAG: &str = "PARTERRE_RELEASE_TAG";
 
 /// What goes into the binary, relative to the workspace root. Only changes here make a build
 /// dirty, and they rerun this script so the flag stays current.
-const SOURCES: [&str; 5] = [
+const SOURCES: [&str; 6] = [
     "crates",
+    "packaging/icon",
     "Cargo.toml",
     "Cargo.lock",
     ".cargo",
@@ -37,6 +39,26 @@ fn main() {
     let version = version::describe(&pkg_version, release_tag.as_deref(), git.as_ref())
         .unwrap_or_else(|e| panic!("{e}"));
     println!("cargo:rustc-env=PARTERRE_VERSION={version}");
+
+    windows_icon(&manifest_dir);
+}
+
+/// Embeds `packaging/icon/parterre.ico` in the Windows executable (`parterre.rc`). Cosmetic, so
+/// a missing resource compiler only warns: `rc.exe` comes with the Windows SDK, and checking
+/// the `windows-gnu` target from Linux needs `x86_64-w64-mingw32-windres`. On other targets
+/// this does nothing.
+fn windows_icon(manifest_dir: &Path) {
+    let rc = manifest_dir.join("parterre.rc");
+    println!("cargo:rerun-if-changed={}", rc.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir
+            .join("../../packaging/icon/parterre.ico")
+            .display()
+    );
+    embed_resource::compile(rc, embed_resource::NONE)
+        .manifest_optional()
+        .unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// `None` if this isn't a git checkout (e.g. a source archive) or git isn't installed.

@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 15._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 16._
 
 1. **Default look: "Modern" or "Classic"?** The toolbar has a Look selector.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -151,6 +151,11 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     arrowheads are 13 px instead of TortoiseGit's 8. TortoiseGit instead clips each edge where
     it meets the box border, so edges can end on any side. Should Classic keep TortoiseGit's
     clipping?
+15. **App icon.** Decided 2026-09-25: the revision graph planted as a parterre, seen from
+    above, on the dark theme's slate (variant C1). The prototype with every candidate, the
+    verdicts and a head-to-head of the last two is on the branch `prototype/app-icon`
+    (`packaging/icon-prototype/index.html`). Nothing is taken from the publisher's name. macOS
+    26 could also take a dark appearance; nothing else can, so one icon serves everywhere.
 
 ## Planned
 
@@ -158,7 +163,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [ ] Reload automatically when refs change; TortoiseGit only reloads on F5.
 - [ ] Tooltip on edges showing the collapsed commits.
 - [ ] Less memory for all-commits views of huge repositories (compact adjacency).
-- [ ] Windows `.exe` icon resource; try on macOS.
+- [ ] macOS `.app` bundle, so the Dock shows `packaging/icon/parterre.icns`; the release ships
+      a bare binary, which gets the generic icon.
 - [ ] After some sequences of drags, undo and redo, a reset leaves an edge with a route of
       its own. `physics_random_drags` finds one with seed 31337 (iteration 247), on main before
       the child-above-parent ordering was merged too.
@@ -198,6 +204,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] Filters: current branch only, and a ref-name filter.
 - [x] Full commit messages in tooltips, loaded on demand.
 - [x] Window icon drawn in code; Linux `.desktop` entry; pre-commit hook (fmt and clippy).
+- [x] App icon (`parterre-core::icon`): the window icon, the SVG, PNGs, the `.ico` embedded in
+      the Windows `.exe` and the `.icns` are all generated from one drawing.
 - [x] Hovering an edge lists the commits collapsed into it. Help → Legend explains the colours.
 - [x] Independent code review. Fixed:
   - a crash when reloading after deleting a branch or tag
