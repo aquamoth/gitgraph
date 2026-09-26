@@ -937,7 +937,7 @@ impl ParterreApp {
                 }
                 if let Some(sel) = self.selection.current() {
                     let commit = scene.repo.commit(scene.graph.nodes[sel].commit);
-                    ui.monospace(commit.oid.short(10));
+                    ui.monospace(commit.oid.short(scene.repo.abbrev_len));
                     ui.label(format!(
                         "{} — {}, {}",
                         commit.subject, commit.author_name, commit.author_date
@@ -1341,7 +1341,7 @@ impl ParterreApp {
                 for c in &hidden {
                     let commit = scene.repo.commit(*c);
                     ui.horizontal(|ui| {
-                        ui.monospace(commit.oid.short(8));
+                        ui.monospace(commit.oid.short(scene.repo.abbrev_len));
                         ui.label(&commit.subject);
                     });
                 }
@@ -1734,7 +1734,11 @@ fn node_name(scene: &Scene, node: u32) -> String {
     let node = &scene.graph.nodes[node as usize];
     match node.refs.first() {
         Some(&r) => scene.repo.refs[r].name.clone(),
-        None => scene.repo.commit(node.commit).oid.short(8),
+        None => scene
+            .repo
+            .commit(node.commit)
+            .oid
+            .short(scene.repo.abbrev_len),
     }
 }
 

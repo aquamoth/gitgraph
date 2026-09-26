@@ -267,9 +267,9 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       parterre under *Open With* for folders, but some desktops then make it the default
       folder handler (VS Code had that bug), so it needs trying on GNOME and KDE first.
 
-21. **Reloading automatically** (from the planned list, 2026-09-26). TortoiseGit reloads only on F5; parterre now also
-    reloads by itself when the branches, tags or HEAD change, as after a commit, checkout or
-    fetch in another program. Decisions you may want to overrule:
+21. **Reloading automatically** (from the planned list, 2026-09-26). TortoiseGit reloads
+    only on F5; parterre now also reloads by itself when the branches, tags or HEAD change, as
+    after a commit, checkout or fetch in another program. Decisions you may want to overrule:
     - **On by default.** ☰ → *Reload automatically* and *Settings → Graph* turn it off.
     - **How it notices:** every second it looks at the files git keeps refs in (`HEAD`,
       `packed-refs`, `refs/`, reftable), without running git and without a file-watching
@@ -288,9 +288,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       <https://github.com/emilk/egui/pull/8631> (bug:
       <https://github.com/emilk/egui/issues/5145>). Once it is in a released eframe, remove
       the frame cap and turn vsync back on.
-- [ ] Short hashes in the graph as long as git makes them for the repository (`core.abbrev`
-      auto: 9 on Apps), as the log window will. Today the graph uses a fixed 8, and 10 in one
-      place.
 - [ ] Toolbar merged into the title bar, with ☰, the repository name and the window buttons in
       one row (wanted 2026-09-26, postponed as too big a change for now). Native on macOS
       (content under a transparent title bar, the traffic lights stay). Elsewhere parterre
@@ -440,3 +437,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] Reloading automatically when a commit, checkout or fetch outside parterre changes the
       refs or HEAD (question 21); TortoiseGit reloads only on F5. The ref files are looked at
       every second, without running git; moved nodes and the selection survive a reload.
+- [x] Short hashes in the graph as long as git makes them for the repository (`core.abbrev`,
+      9 on Apps), like the log window: node labels, tooltips, the status bar and the SVG
+      export. Deliberate deviation from TortoiseGit, which always shows 8.
