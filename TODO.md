@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 23._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 24._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -269,7 +269,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       parterre under *Open With* for folders, but some desktops then make it the default
       folder handler (VS Code had that bug), so it needs trying on GNOME and KDE first.
 
-21. **Reloading automatically** (from the planned list, 2026-09-26). TortoiseGit reloads
+22. **Reloading automatically** (from the planned list, 2026-09-26). TortoiseGit reloads
     only on F5; parterre now also reloads by itself when the branches, tags or HEAD change, as
     after a commit, checkout or fetch in another program. Decisions you may want to overrule:
     - **On by default.** ☰ → *Reload automatically* and *Settings → Graph* turn it off.
@@ -283,7 +283,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       F5 put every node back into the layout. Undo history does not survive.
     - The status bar says "Reloaded: the refs changed".
 
-22. **PNG export.** ☰ → *Export* → *SVG…* or *PNG…* opens the system's save dialog, as
+23. **PNG export.** ☰ → *Export* → *SVG…* or *PNG…* opens the system's save dialog, as
     TortoiseGit's "Save graph as..." does. Calls you may want to overrule:
     - **A submenu** rather than a file-type list in the save dialog (your request of
       2026-09-26: not two *Export* items). Such a list only works on Windows: rfd merges the
@@ -461,7 +461,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       window managers get a "not maximizable" hint), and minimize stays. Not checked by hand on
       any platform.
 - [x] Reloading automatically when a commit, checkout or fetch outside parterre changes the
-      refs or HEAD (question 21); TortoiseGit reloads only on F5. The ref files are looked at
+      refs or HEAD (question 22); TortoiseGit reloads only on F5. The ref files are looked at
       every second, without running git; moved nodes and the selection survive a reload.
 - [x] Short hashes in the graph as long as git makes them for the repository (`core.abbrev`,
       9 on Apps), like the log window: node labels, tooltips, the status bar and the SVG
@@ -475,7 +475,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       and the drag net's neighbour lists are stored flat, which took the 100k-commit
       all-commits view from 900 to 740 MB and its layout from about 3 s to 2 s. What is left
       is mostly the drag net (about 170 bytes for each of 1.6M particles); question 11.
-- [x] PNG and WebP export (question 22): ☰ → *Export* → *PNG…* or *WebP…*, and
+- [x] PNG and WebP export (question 23): ☰ → *Export* → *PNG…* or *WebP…*, and
       `--export out.png` or `out.webp` (with `--zoom`). Drawn by the window's own painting
       code, rasterised without a GPU, so labels look as on screen. Every export now uses the
       system's save dialog instead of a path field.
