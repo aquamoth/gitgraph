@@ -213,6 +213,13 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [ ] After some sequences of drags, undo and redo, a reset leaves an edge with a route of
       its own. `physics_random_drags` finds one with seed 31337 (iteration 247), on main before
       the child-above-parent ordering was merged too.
+- [ ] Open GitHub PRs in the graph (`docs/research/github-forks-and-pull-requests.md`, §12,
+      §14). TortoiseGit has no such feature.
+  - [ ] Slice 1: PR-icon tags on nodes whose commit is a PR head, opening the PR in the browser;
+        a toolbar toggle, disabled without a GitHub connection; only PRs of `origin` (plus
+        the fork's own PRs into its parent) whose base branch is visible. No fetching.
+  - [ ] Slice 2: fetch other PR heads commits-only into a private cache; greyed-out nodes,
+        dashed edges.
 
 ## Done
 
