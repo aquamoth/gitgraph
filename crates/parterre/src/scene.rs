@@ -37,6 +37,8 @@ pub enum RowKind {
 pub struct Row {
     pub label: String,
     pub kind: RowKind,
+    /// The label's width at 100%.
+    pub width: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -124,6 +126,7 @@ impl Scene {
                             kind: r.kind,
                             head: r.is_head,
                         },
+                        width: 0.0,
                     }
                 });
                 let pulls = node.pull_requests.iter().map(|&index| Row {
@@ -132,6 +135,7 @@ impl Scene {
                         index,
                         draft: pull_requests[index].draft,
                     },
+                    width: 0.0,
                 });
                 let mut rows: Vec<Row> = refs.chain(pulls).collect();
                 // Like a ref, a pull request stands in for the hash.
@@ -139,12 +143,13 @@ impl Scene {
                     rows.push(Row {
                         label: repo.commit(node.commit).oid.short(repo.abbrev_len),
                         kind: RowKind::Hash,
+                        width: 0.0,
                     });
                 }
-                let widest = rows
-                    .iter()
-                    .map(|r| text_width(&r.label))
-                    .fold(hash_width, f32::max);
+                for row in &mut rows {
+                    row.width = text_width(&row.label);
+                }
+                let widest = rows.iter().map(|r| r.width).fold(hash_width, f32::max);
                 let size = vec2(widest + 2.0 * MARGIN_X, row_height * rows.len() as f32);
                 NodeVisual { rows, size }
             })

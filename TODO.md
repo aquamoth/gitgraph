@@ -350,9 +350,9 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       they show only if a remote (such as `upstream`) points at the parent: a clone with only
       `origin` doesn't show them. Treating `origin/main` as the parent's `main` would be a
       guess.
-    - **The label:** a row below the node's refs with the pull-request glyph in the left
-      margin and the number, pale blue, drafts pale grey (both lightness-inverted in the dark
-      theme). A commit whose only label is a pull request shows no hash, as with a ref. Several
+    - **The label:** a row below the node's refs with the number right-aligned (your request
+      of 2026-09-26) after the pull-request glyph, pale blue, drafts pale grey (both
+      lightness-inverted in the dark theme). Hovering underlines the number, as a link. A commit whose only label is a pull request shows no hash, as with a ref. Several
       on one commit get a row each.
     - **Clicking the number opens the pull request** and also selects the node; Ctrl or Shift
       clicks only select, and a double-click opens it once and no log. Hovering shows a hand

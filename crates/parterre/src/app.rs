@@ -1391,6 +1391,7 @@ impl ParterreApp {
         }
         let marks = Marks {
             hovered: self.hovered,
+            hovered_pull_request,
             hovered_edge: self.hovered_edge,
             selected,
             preview,
@@ -1740,18 +1741,20 @@ impl ParterreApp {
                         let (rect, _) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::hover());
                         let text = crate::theme::text_on(fill);
                         ui.painter().rect_filled(rect, 4.0, fill);
-                        let icon = render::pull_request_icon(rect.translate(vec2(-4.0, 0.0)), 1.0);
+                        // As in the graph: the number right-aligned, after the glyph.
+                        let (end, _) = render::pull_request_label(rect, 0.0, 1.0);
+                        let number = ui.painter().text(
+                            end,
+                            egui::Align2::RIGHT_CENTER,
+                            "12",
+                            FontId::monospace(12.0),
+                            text,
+                        );
+                        let (_, icon) = render::pull_request_label(rect, number.width(), 1.0);
                         crate::widgets::paint_glyph(
                             ui.painter(),
                             icon,
                             parterre_core::glyphs::PULL_REQUEST,
-                            text,
-                        );
-                        ui.painter().text(
-                            rect.left_center() + vec2(crate::scene::MARGIN_X, 0.0),
-                            egui::Align2::LEFT_CENTER,
-                            "12",
-                            FontId::monospace(12.0),
                             text,
                         );
                         ui.label(what);
