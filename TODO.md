@@ -331,6 +331,11 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       errors say that `gh auth login` would help.
     - **Which repository:** `origin` only, as §12 says; gh's `gh-resolved` and remote ranking
       (§7) aren't used. A renamed repository is followed under its new name.
+    - **A fork's pull requests into its parent** are asked for branch by branch
+      (`head=owner:branch`) when `origin` has at most 10 branches fetched here, rather than
+      picked out of all of the parent's: pingdotgg/t3code's 15 pages (2 MB each) took 23 s,
+      the two branches of a fork of it 1.3 s. With more branches, the whole list. Either way
+      every pull request that can be shown is found, as only fetched branches can be.
     - **Base branch shown** means: a remote-tracking branch of the base branch, in any remote
       pointing at the pull request's repository, or a local branch whose upstream that is.
       So with remote branches hidden, `main` tracking `origin/main` still counts.

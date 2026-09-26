@@ -20,6 +20,12 @@ const WEB: &str = "https://github.com/";
 /// Pages of 100 pull requests fetched at most per repository: a guard against a server that
 /// keeps linking to a next page, not a cap (no repository has 10,000 open pull requests).
 const MAX_PAGES: usize = 100;
+/// A fork with at most this many branches on `origin` has its pull requests into its parent
+/// asked for branch by branch, rather than picked out of all of the parent's. Either finds
+/// every one this slice can show, as a pull request is shown only if its branch has been
+/// fetched. A busy parent's full list takes long: pingdotgg/t3code's 15 pages of 2 MB took 20 s,
+/// where one branch takes a third of a second.
+const MAX_BRANCH_QUERIES: usize = 10;
 
 /// A repository on github.com.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,7 +115,9 @@ pub fn load(git: &Git) -> Result<PullRequests, ForgeError> {
         .and_then(|(_, url)| GithubRepo::from_url(url))
         .ok_or(ForgeError::NoForge)?;
     let upstreams = super::upstreams(git)?;
-    let (canonical, list) = with_api(|api| open_pull_requests(api, &origin))?;
+    let branches = remote_branches(git, "origin")?;
+    let branches = (branches.len() <= MAX_BRANCH_QUERIES).then_some(branches.as_slice());
+    let (canonical, list) = with_api(|api| open_pull_requests(api, &origin, branches))?;
     let remotes = urls
         .iter()
         .filter_map(|(name, url)| {
@@ -146,33 +154,84 @@ pub(crate) trait Api {
     fn get(&self, url: &str) -> Result<Page, ForgeError>;
 }
 
+/// The branches of the remote `remote` (`refs/remotes/<remote>/*`, without `HEAD`).
+fn remote_branches(git: &Git, remote: &str) -> Result<Vec<String>, crate::git::GitError> {
+    let prefix = format!("refs/remotes/{remote}/");
+    let out = git.run(&["for-each-ref", "--format=%(refname)%00%(symref)", &prefix])?;
+    Ok(out
+        .lines()
+        .filter_map(|line| {
+            let (name, symref) = line.split_once('\0')?;
+            // `origin/HEAD` names another branch.
+            if !symref.is_empty() {
+                return None;
+            }
+            name.strip_prefix(&prefix).map(str::to_owned)
+        })
+        .collect())
+}
+
 /// The repository's `owner/name` as GitHub has it now, and the pull requests of `origin`,
-/// plus its own ones into its parent if it is a fork. Newest first, `origin`'s first.
+/// plus its own ones into its parent if it is a fork. Newest first, `origin`'s first. A fork's
+/// ones are asked for by `branches` if given (see [`MAX_BRANCH_QUERIES`]), else picked out of
+/// all of the parent's.
 pub(crate) fn open_pull_requests(
     api: &dyn Api,
     origin: &GithubRepo,
+    branches: Option<&[String]>,
 ) -> Result<(String, Vec<PullRequest>), ForgeError> {
     let info: json::Repository = parse(&api.get(&format!("{API}repos/{}", origin.full_name()))?)?;
-    let mut list = pull_requests(api, &info.full_name)?;
+    let mut list = pull_requests(api, &info.full_name, "")?;
     if let Some(parent) = &info.parent {
-        let ours = pull_requests(api, &parent.full_name)?
-            .into_iter()
-            .filter(|pr| {
-                pr.head_repo
-                    .as_deref()
-                    .is_some_and(|r| r.eq_ignore_ascii_case(&info.full_name))
-            });
-        list.extend(ours);
+        let ours = match branches {
+            Some(branches) => {
+                let owner = info.full_name.split('/').next().unwrap_or_default();
+                let mut ours = Vec::new();
+                for branch in branches {
+                    let head = query_value(&format!("{owner}:{branch}"));
+                    ours.extend(pull_requests(
+                        api,
+                        &parent.full_name,
+                        &format!("&head={head}"),
+                    )?);
+                }
+                ours
+            }
+            None => pull_requests(api, &parent.full_name, "")?,
+        };
+        list.extend(ours.into_iter().filter(|pr| {
+            pr.head_repo
+                .as_deref()
+                .is_some_and(|r| r.eq_ignore_ascii_case(&info.full_name))
+        }));
     }
     Ok((info.full_name, list))
 }
 
-/// Every open pull request of the repository `full_name`, newest first.
-fn pull_requests(api: &dyn Api, full_name: &str) -> Result<Vec<PullRequest>, ForgeError> {
+/// Percent-encodes a query parameter's value: everything but letters, digits and `-._~`.
+fn query_value(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// Every open pull request of the repository `full_name` (narrowed by `filter`, extra query
+/// parameters such as `&head=owner:branch`), newest first.
+fn pull_requests(
+    api: &dyn Api,
+    full_name: &str,
+    filter: &str,
+) -> Result<Vec<PullRequest>, ForgeError> {
     let repo = GithubRepo::from_full_name(full_name)
         .ok_or_else(|| ForgeError::Parse(format!("odd repository name {full_name:?}")))?;
     let mut url = format!(
-        "{API}repos/{}/pulls?state=open&per_page=100",
+        "{API}repos/{}/pulls?state=open&per_page=100{filter}",
         repo.full_name()
     );
     let mut list = Vec::new();
@@ -622,7 +681,7 @@ mod tests {
                 Some("https://evil.example/pulls?page=3"),
             ),
         ]);
-        let (name, list) = open_pull_requests(&api, &repo("Me", "Repo").unwrap()).unwrap();
+        let (name, list) = open_pull_requests(&api, &repo("Me", "Repo").unwrap(), None).unwrap();
         assert_eq!(name, "me/repo");
         let numbers: Vec<u64> = list.iter().map(|pr| pr.number).collect();
         assert_eq!(numbers, [12, 11, 3]);
@@ -668,7 +727,7 @@ mod tests {
                 None,
             ),
         ]);
-        let (_, list) = open_pull_requests(&api, &repo("me", "fork").unwrap()).unwrap();
+        let (_, list) = open_pull_requests(&api, &repo("me", "fork").unwrap(), None).unwrap();
         let found: Vec<(u64, &str)> = list
             .iter()
             .map(|pr| (pr.number, pr.base_repo.as_str()))
@@ -679,15 +738,52 @@ mod tests {
 
     #[cfg(feature = "github")]
     #[test]
+    fn a_fork_with_few_branches_asks_for_them_one_by_one() {
+        let topic = format!("[{}]", pr_json(39, "Me/Fork", 'c', false));
+        let api = Fake::new(&[
+            (
+                "https://api.github.com/repos/me/fork",
+                r#"{"full_name":"me/fork","fork":true,"parent":{"full_name":"up/stream"}}"#,
+                None,
+            ),
+            (
+                "https://api.github.com/repos/me/fork/pulls?state=open&per_page=100",
+                "[]",
+                None,
+            ),
+            (
+                "https://api.github.com/repos/up/stream/pulls?state=open&per_page=100\
+                 &head=me%3Atopic%2Fx",
+                &topic,
+                None,
+            ),
+            (
+                "https://api.github.com/repos/up/stream/pulls?state=open&per_page=100\
+                 &head=me%3Aa%26b%23c%2B",
+                "[]",
+                None,
+            ),
+        ]);
+        let branches = ["topic/x".to_owned(), "a&b#c+".to_owned()];
+        let (_, list) =
+            open_pull_requests(&api, &repo("me", "fork").unwrap(), Some(&branches)).unwrap();
+        let numbers: Vec<u64> = list.iter().map(|pr| pr.number).collect();
+        assert_eq!(numbers, [39]);
+        // Not the parent's whole list.
+        assert_eq!(api.asked.borrow().len(), 4);
+    }
+
+    #[cfg(feature = "github")]
+    #[test]
     fn errors_are_passed_on() {
         let api = Fake::new(&[]);
         assert!(matches!(
-            open_pull_requests(&api, &repo("me", "gone").unwrap()),
+            open_pull_requests(&api, &repo("me", "gone").unwrap(), None),
             Err(ForgeError::NotFound { .. })
         ));
         let api = Fake::new(&[("https://api.github.com/repos/me/odd", "<html>", None)]);
         assert!(matches!(
-            open_pull_requests(&api, &repo("me", "odd").unwrap()),
+            open_pull_requests(&api, &repo("me", "odd").unwrap(), None),
             Err(ForgeError::Parse(_))
         ));
     }
