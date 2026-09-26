@@ -7,6 +7,7 @@ mod app;
 mod automation;
 mod console;
 mod export;
+mod file_dialog;
 mod frame_pacing;
 mod icon;
 mod menu;

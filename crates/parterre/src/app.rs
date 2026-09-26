@@ -25,6 +25,7 @@ use settings_window::SettingsPage;
 
 use crate::automation::Automation;
 use crate::export::{self, Format};
+use crate::file_dialog::Pending;
 use crate::frame_pacing::FrameLimiter;
 use crate::menu;
 use crate::render::{self, Marks};
@@ -33,6 +34,13 @@ use crate::settings::{MOVES_KEY, RECENT_KEY, RememberedMoves, STORAGE_KEY, Setti
 use crate::system_theme::SystemTheme;
 use crate::theme::{Palette, ThemeChoice};
 use crate::view::View;
+
+/// What a file dialog is picking for.
+#[derive(Clone, Copy, Debug)]
+enum Picked {
+    Folder,
+    Export(Format),
+}
 
 #[derive(Clone, Copy, Debug)]
 enum Drag {
@@ -194,6 +202,8 @@ pub struct ParterreApp {
     recent: Recent,
     /// Show the folder picker at the end of this frame.
     pick_folder: bool,
+    /// The file dialog that is open, if any.
+    file_dialog: Option<Pending<Picked>>,
     /// The window title last set.
     title: String,
     settings: Settings,
@@ -324,6 +334,7 @@ impl ParterreApp {
             repo: repo.map(Arc::new),
             recent,
             pick_folder: false,
+            file_dialog: None,
             settings,
             persist,
             scene: None,
@@ -583,20 +594,20 @@ impl ParterreApp {
         Some((oid(edge.child), oid(edge.parent)))
     }
 
-    /// Shows the save dialog, then writes the whole graph in `format`, as TortoiseGit's "Save
-    /// graph as" does. It blocks until the dialog closes. PNG is drawn at the current zoom, as
-    /// in TortoiseGit, and with the display's pixels per point, so it looks as on screen.
-    fn export(&mut self, format: Format, ctx: &egui::Context, frame: &eframe::Frame) {
-        let (Some(repo), Some(scene)) = (&self.repo, &self.scene) else {
+    /// The save dialog for exporting the whole graph in `format`, as TortoiseGit's "Save graph
+    /// as" does; `None` if there is nothing to export yet.
+    fn export_dialog(
+        &mut self,
+        format: Format,
+        frame: &eframe::Frame,
+    ) -> Option<rfd::AsyncFileDialog> {
+        let (Some(repo), Some(_)) = (&self.repo, &self.scene) else {
             self.status = Some(("Nothing to export yet".into(), true));
-            return;
+            return None;
         };
         let ext = format.extension();
-        let (kind, zoom) = match format {
-            Format::Svg => ("SVG", 1.0),
-            Format::Png => ("PNG", self.view.zoom),
-        };
-        let mut dialog = rfd::FileDialog::new()
+        let kind = ext.to_uppercase();
+        let mut dialog = rfd::AsyncFileDialog::new()
             .set_title(format!("Export the graph as {kind}"))
             .set_parent(frame)
             .add_filter(format!("{kind} image"), &[ext])
@@ -605,16 +616,24 @@ impl ParterreApp {
         if let Some(dir) = self.export_dir.as_deref().or_else(|| repo.path.parent()) {
             dialog = dialog.set_directory(dir);
         }
-        let Some(mut path) = dialog.save_file() else {
-            return;
-        };
+        Some(dialog)
+    }
+
+    /// Writes the whole graph to `path` in `format`. PNG is drawn at the current zoom, as in
+    /// TortoiseGit, and with the display's pixels per point, so it looks as on screen.
+    fn export(&mut self, format: Format, mut path: PathBuf, ctx: &egui::Context) {
+        let Some(scene) = &self.scene else { return };
         // A name typed without the extension, or with another one, gets it added.
         if path.extension().is_none() || Format::from_path(&path) != Some(format) {
             let mut name = path.file_name().unwrap_or_default().to_owned();
-            name.push(format!(".{ext}"));
+            name.push(format!(".{}", format.extension()));
             path.set_file_name(name);
         }
         self.export_dir = path.parent().map(Path::to_owned);
+        let zoom = match format {
+            Format::Svg => 1.0,
+            Format::Png => self.view.zoom,
+        };
         let palette = Palette::new(
             ctx.global_style().visuals.dark_mode,
             &self.settings.branch_colors,
@@ -673,9 +692,9 @@ impl ParterreApp {
         self.log.close();
     }
 
-    /// Shows the folder picker, then opens what was picked. It blocks until closed.
-    fn pick_folder(&mut self, frame: &eframe::Frame) {
-        let mut dialog = rfd::FileDialog::new()
+    /// The folder picker for opening a repository.
+    fn folder_dialog(&self, frame: &eframe::Frame) -> rfd::AsyncFileDialog {
+        let mut dialog = rfd::AsyncFileDialog::new()
             .set_title("Open a git repository")
             .set_parent(frame);
         // Start next to the repository shown, or the one opened last.
@@ -687,8 +706,34 @@ impl ParterreApp {
         if let Some(dir) = near.and_then(Path::parent) {
             dialog = dialog.set_directory(dir);
         }
-        if let Some(dir) = dialog.pick_folder() {
-            self.open_folder(&dir);
+        dialog
+    }
+
+    /// Opens a requested file dialog, and acts on the answer of the one that was open. Only
+    /// one is open at a time; requests made meanwhile are dropped.
+    fn file_dialogs(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        let (folder, export) = (std::mem::take(&mut self.pick_folder), self.export.take());
+        if let Some(pending) = &self.file_dialog {
+            let Some(answer) = pending.answer() else {
+                return;
+            };
+            let what = pending.what;
+            self.file_dialog = None;
+            match (what, answer) {
+                (Picked::Folder, Some(dir)) => self.open_folder(&dir),
+                (Picked::Export(format), Some(path)) => self.export(format, path, ctx),
+                (_, None) => {}
+            }
+            return;
+        }
+        if folder {
+            let dialog = self.folder_dialog(frame).pick_folder();
+            self.file_dialog = Some(Pending::start(Picked::Folder, dialog, ctx));
+        } else if let Some(format) = export
+            && let Some(dialog) = self.export_dialog(format, frame)
+        {
+            let what = Picked::Export(format);
+            self.file_dialog = Some(Pending::start(what, dialog.save_file(), ctx));
         }
     }
 
@@ -1831,13 +1876,7 @@ impl eframe::App for ParterreApp {
             );
         }
 
-        // Last, as the dialog holds up the frame until it closes.
-        if std::mem::take(&mut self.pick_folder) {
-            self.pick_folder(frame);
-        }
-        if let Some(format) = self.export.take() {
-            self.export(format, &ctx, frame);
-        }
+        self.file_dialogs(&ctx, frame);
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
