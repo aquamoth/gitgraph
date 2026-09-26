@@ -283,12 +283,14 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       F5 put every node back into the layout. Undo history does not survive.
     - The status bar says "Reloaded: the refs changed".
 
-22. **PNG export.** ☰ → *Export as SVG…* and *Export as PNG…* each open the system's save
-    dialog, as TortoiseGit's "Save graph as..." does. Calls you may want to overrule:
-    - **Two menu items** rather than one with a file-type list: the save dialog can't tell
-      parterre which type was picked, only the name typed. A name without the right extension
-      gets it added. The dialog starts in the folder exported to last, else next to the
-      repository.
+22. **PNG export.** ☰ → *Export* → *SVG…* or *PNG…* opens the system's save dialog, as
+    TortoiseGit's "Save graph as..." does. Calls you may want to overrule:
+    - **A submenu** rather than a file-type list in the save dialog (your request of
+      2026-09-26: not two *Export* items). Such a list only works on Windows: rfd merges the
+      types into one allowed list on macOS, which shows no list, and on Linux it never says
+      which type was picked, while GNOME doesn't change the name's extension to match. A name
+      without the right extension gets it added. The dialog starts in the folder exported to
+      last, else next to the repository.
     - **Current zoom,** as in TortoiseGit, times the display scale (2 on a HiDPI screen), so
       the PNG looks as the window does. Zoomed out, labels under 4 px are left out, as on
       screen. SVG stays at 100%. `--export out.png` draws at 100%, or at `--zoom`. The status
@@ -468,6 +470,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       and the drag net's neighbour lists are stored flat, which took the 100k-commit
       all-commits view from 900 to 740 MB and its layout from about 3 s to 2 s. What is left
       is mostly the drag net (about 170 bytes for each of 1.6M particles); question 11.
-- [x] PNG export (question 22): ☰ → *Export as PNG…*, and `--export out.png` (with `--zoom`).
+- [x] PNG export (question 22): ☰ → *Export* → *PNG…*, and `--export out.png` (with `--zoom`).
       Drawn by the window's own painting code, rasterised without a GPU, so labels look as on
       screen. Both exports now use the system's save dialog instead of a path field.

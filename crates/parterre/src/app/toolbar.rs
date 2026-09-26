@@ -396,15 +396,17 @@ impl ParterreApp {
         if menu::item(ui, "Reload automatically", "", Mark::Check(auto)).clicked() {
             self.settings.auto_reload = !auto;
         }
-        for (format, label) in [
-            (Format::Svg, "Export as SVG…"),
-            (Format::Png, "Export as PNG…"),
-        ] {
-            let export = ui.add_enabled_ui(has_repo, |ui| menu::item(ui, label, "", Mark::None));
-            if export.inner.clicked() {
-                self.export = Some(format);
-            }
-        }
+        // One item per format rather than a file-type list in the save dialog: rfd doesn't say
+        // which type was picked, and macOS shows no list at all.
+        ui.add_enabled_ui(has_repo, |ui| {
+            menu::submenu(ui, "Export", |ui| {
+                for (format, label) in [(Format::Svg, "SVG…"), (Format::Png, "PNG…")] {
+                    if menu::item(ui, label, "", Mark::None).clicked() {
+                        self.export = Some(format);
+                    }
+                }
+            });
+        });
         menu::separator(ui);
 
         // In the toolbar's order.
