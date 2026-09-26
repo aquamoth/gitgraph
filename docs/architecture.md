@@ -16,6 +16,9 @@ crates/parterre-core   GUI-free; everything testable lives here
   compare.rs           comparing two commits, or a commit and the working tree: which goes
                        left, and the files between them (`git diff-tree A B`, `git diff A`,
                        or from `git merge-base`)
+  blame.rs             blaming a file (`git blame --line-porcelain`): each line's origin
+                       (commit, path, the version before), and where a line leads: its
+                       change, and the blame before it
   text.rs              URLs in commit messages, paths cut at the start, thousands separators
   text_size.rs         the text size's steps, and Ctrl+wheel and pinch turned into steps
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
@@ -56,6 +59,9 @@ crates/parterre        the binary (eframe/egui)
                        worker thread that asks git for such lists
     compare_window.rs  the compare window (Compare revisions, with HEAD, with the marked
                        commit): two commits and the files they differ in
+    blame_window.rs    blame windows: a file's lines with a gutter naming their commits,
+                       shaded by age; a line's menu blames the version before (with Back),
+                       shows its change, or its log
   scene.rs             node contents and sizes + layout + physics net, hit testing
   render.rs            painting nodes, edges, arrows, overview
   export.rs            SVG export, and PNG and WebP export: render.rs painted in tiles by
@@ -73,8 +79,8 @@ crates/parterre        the binary (eframe/egui)
   widgets.rs           icon buttons, segmented buttons, switches, text fields
   settings.rs          persisted settings and the Classic/Modern looks
   automation.rs        --screenshot / --demo-drag / --demo-menu / --demo-open / --demo-log /
-                       --demo-compare / --demo-mark scripted runs (the log window's layout:
-                       --log-layout)
+                       --demo-compare / --demo-mark / --demo-blame scripted runs (the log
+                       window's layout: --log-layout)
 ```
 
 ## Data flow

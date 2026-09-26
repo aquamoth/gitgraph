@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 28._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 29._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -482,6 +482,53 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
         *Since common ancestor* takes the working tree's fork point from `HEAD`, as `git diff
         --merge-base` does.
 
+28. **Blame** (your request of 2026-09-26: "the one feature I am truly missing"). Built
+    without a grilling, on TortoiseGitBlame's model (research on the branch
+    `research/tortoisegit-log-diffs`, §8). Calls you may want to overrule:
+    - **Where it is offered:** *Blame* in a right-click menu on the changed files of the log
+      and compare windows (with *Show changes* and *Copy path*; the table had no menu before),
+      and a *Blame* button in the diff window's toolbar. Not in the node menu, which has no
+      file to blame; opening it for a file from outside parterre is left for later.
+      - **The log** blames the file at the selected commit, as TortoiseGit does.
+      - **The compare window** blames the right-hand side's version (TortoiseGit's "Blame
+        revisions" blames the newer one), the working tree included.
+      - **The diff window** blames the new version (the old one of a deleted file), chosen at
+        the change in view.
+      - **Greyed out** for deleted files, binary files and submodules, with a tooltip saying why.
+    - **A window per file,** like the diff windows: several at once, closing with the
+      repository; the same file at the same commit brings its window forward. `Esc` closes,
+      `F5` blames again.
+    - **The gutter** shows the short hash, the author and the date (without the time) once per
+      run of lines from one commit, and again on the first line in view. A line between runs
+      separates them. No file name or original line number columns (TortoiseGitBlame can switch
+      them on); the bar at the bottom names the file when a line comes from another path.
+    - **Age shading:** the gutter goes from plain (oldest) to amber (newest), by the rank of the
+      commit's date among the file's commits rather than by the date itself, so that one
+      ancient commit doesn't wash out the rest. TortoiseGitBlame goes from white to yellow.
+      Uncommitted lines count as the newest and say "Not committed yet".
+    - **Clicking a line** chooses it and highlights every line of its commit in pale blue.
+      Dragging or `Shift`+click chooses more; `Ctrl+C` copies whole lines as in the file.
+      Choosing part of a line, as the diff window allows, is not there.
+    - **A line's menu:** *Blame previous revision* (in the same window, at the line's place in
+      that commit's version; a Back button and `Alt+Left` return), *Show changes* (the commit's
+      diff of the file, scrolled to the line's change), *Show log* (the log window from the
+      commit: the whole history, not the file's, which the log can't filter by path yet),
+      *Copy hash*, *Copy line(s)*.
+    - **No log pane** beside the text. TortoiseGitBlame shows the file's log and the chosen
+      commit's message there; here the bar at the bottom and the gutter's tooltip describe a
+      commit, and *Show log* opens the log window.
+    - **Options in the toolbar**, remembered for the next window: *whitespace counts* or
+      *ignore whitespace* (`git blame -w`) and *moved lines*: off, within the file (`-M`), or
+      across files the same commit changed (`-M -C`). All off by default, as in TortoiseGit.
+      TortoiseGit's two further levels of copy detection (`-C -C`, `-C -C -C`) and "only first
+      parents" are left out.
+    - **Root commits own their lines** (`--root`); only a shallow clone's oldest commit is a
+      boundary, whose *Blame previous revision* and *Show changes* are greyed out.
+    - **Dates** are the log's (local time) for commits the snapshot has; for any other commit
+      they are in the author's time zone.
+    - **git's own settings apply:** `blame.ignoreRevsFile` and the file's textconv filter (as
+      in the diff window).
+
 ## Planned
 
 - [ ] Reopen a repository at the zoom and position it last had, stored per repository like
@@ -491,7 +538,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       parity: revision graph and log* ([#25](https://github.com/aquamoth/parterre/issues/25)):
       read-only, one diff window per file, diffed by `imara-diff` (lines and words; decided in
       [#44](https://github.com/aquamoth/parterre/issues/44); what the window shows and does in
-      [#45](https://github.com/aquamoth/parterre/issues/45)). Blame is a stretch goal.
+      [#45](https://github.com/aquamoth/parterre/issues/45)).
   - [ ] Optional, deferred: *Open in external diff tool*, handing both versions to the user's
         configured diff tool, as TortoiseGit does by default. Not behind the built-in view;
         decided in [#44](https://github.com/aquamoth/parterre/issues/44).
@@ -519,6 +566,10 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
   - [x] Comparing two commits' files: Compare revisions, with HEAD, and with a commit marked
         for comparison, in a compare window (wanted 2026-09-26; question 27).
   - [x] Compare with working tree (wanted 2026-09-26; question 27).
+  - [x] Blame, from the changed files and the diff window (wanted 2026-09-26; question 28).
+  - [ ] Later, for blame: a log of the file's history (the log window filtered by path), go to
+        line, find (Ctrl+F), blaming a file picked from the repository's tree, and choosing
+        part of a line (question 28).
   - [ ] Later: *Unified diff* of two commits (#25); a diff window that reloads by itself
         when its working-tree file changes.
   - [ ] The `+`/`−` sign by the pointer doesn't look good on Windows (reported 2026-09-26,
