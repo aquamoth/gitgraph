@@ -105,12 +105,14 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
     - Loading takes 0.6 s.
     - "Labelled commits" (3.6k nodes) lays out in 0.15 s, "Branchings and merges" (7.3k nodes)
       in 0.2 s.
-    - "All commits" takes 2.8 s on a background thread, because long-lived branches create
-      1.5M bend points. Peak memory is then about 880 MB.
+    - "All commits" takes 1.5–2 s on a background thread, because long-lived branches create
+      1.5M bend points. Peak memory is then about 740 MB (was 2.8 s and 900 MB before the
+      layout and the drag net stored their neighbour lists flat, 2026-09-26). About 200 MB of
+      that is the window itself, as for any repository; most of the rest is the drag net.
     - Dragging runs at 8 ms per frame.
 
-    Is 2.8 s and 880 MB for the all-commits view of a 100k repo acceptable, or worth more
-    work? (Apps, at 15k commits, needs 0.2 s.)
+    Is 2 s and 740 MB for the all-commits view of a 100k repo acceptable, or worth more
+    work? (Apps, at 15k commits, needs 0.2 s and about 210 MB, 150 MB in "Labelled commits".)
 12. **Releases** (`docs/releasing.md`). Decisions you may want to overrule:
     - **Version in the UI:** besides `--version`, the ☰ menu ends with a greyed
       `parterre 0.3.0 (a1b2c3d)` line, for users who start parterre from a file manager or
@@ -295,7 +297,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       Windows 11 snap-layout popup; on GNOME no compositor shadow. See the "Title bar: merged"
       toggle in the prototype on the branch `prototype/menus`.
 - [ ] PNG export: SVG exists; TortoiseGit also offers raster formats.
-- [ ] Less memory for all-commits views of huge repositories (compact adjacency).
 - [ ] Distribution, as decided in `docs/distribution.md`: crates.io (#13), Windows MSI (#15),
       winget (#16), Chocolatey (#17), .deb and .rpm (#18), Snap (#19), publishing behind one
       approval (#20), Flathub later (#21). The MSI (#15) is built by CI and attached to
@@ -442,3 +443,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       jumped clear in one frame, or that covered the layout route away from the new one, left
       it routed. Now the node's old place counts too, and the layout route as well as the new
       one. `physics_random_drags` takes `PHYSICS_SEED` and `PHYSICS_ITERS`.
+- [x] Less memory for all-commits views of huge repositories (compact adjacency): the layout's
+      and the drag net's neighbour lists are stored flat, which took the 100k-commit
+      all-commits view from 900 to 740 MB and its layout from about 3 s to 2 s. What is left
+      is mostly the drag net (about 170 bytes for each of 1.6M particles); question 11.

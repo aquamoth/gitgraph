@@ -181,6 +181,42 @@ struct Spring {
     along_edge: bool,
 }
 
+/// Spring ids at every particle, stored flat: particle `i`'s are `ids[start[i]..start[i + 1]]`.
+/// A `Vec` per particle would cost 24 bytes plus a heap block each, for millions of particles
+/// in all-commits views of big repositories.
+#[derive(Clone, Debug)]
+struct SpringsAt {
+    start: Vec<u32>,
+    ids: Vec<u32>,
+}
+
+impl SpringsAt {
+    fn new(particle_count: usize, springs: &[Spring]) -> SpringsAt {
+        let mut start = vec![0u32; particle_count + 1];
+        for s in springs {
+            start[s.a as usize + 1] += 1;
+            start[s.b as usize + 1] += 1;
+        }
+        for i in 0..particle_count {
+            start[i + 1] += start[i];
+        }
+        let mut next = start.clone();
+        let mut ids = vec![0; start[particle_count] as usize];
+        for (i, s) in springs.iter().enumerate() {
+            for p in [s.a, s.b] {
+                let slot = &mut next[p as usize];
+                ids[*slot as usize] = i as u32;
+                *slot += 1;
+            }
+        }
+        SpringsAt { start, ids }
+    }
+
+    fn get(&self, particle: usize) -> &[u32] {
+        &self.ids[self.start[particle] as usize..self.start[particle + 1] as usize]
+    }
+}
+
 /// A drag in progress.
 #[derive(Clone, Debug)]
 struct Grab {
@@ -238,7 +274,7 @@ pub struct Net {
     moved: Vec<bool>,
     springs: Vec<Spring>,
     /// Spring ids per particle.
-    adjacent: Vec<Vec<u32>>,
+    adjacent: SpringsAt,
     /// Particles of every edge, child node first, parent node last.
     chains: Vec<Vec<u32>>,
     /// Edges at every node.
@@ -367,11 +403,7 @@ impl Net {
         }
 
         let count = origin.len();
-        let mut adjacent = vec![Vec::new(); count];
-        for (i, s) in springs.iter().enumerate() {
-            adjacent[s.a as usize].push(i as u32);
-            adjacent[s.b as usize].push(i as u32);
-        }
+        let adjacent = SpringsAt::new(count, &springs);
         Net {
             node_count: n,
             origin,
@@ -884,7 +916,7 @@ impl Net {
                 break;
             }
             self.activate(q);
-            for &s in &self.adjacent[q] {
+            for &s in self.adjacent.get(q) {
                 let s = self.springs[s as usize];
                 let other = if s.a as usize == q { s.b } else { s.a } as usize;
                 if seen.insert(other) {
@@ -1211,7 +1243,7 @@ impl Net {
                 let k_home = if i < n { k_anchor } else { k_anchor * 0.5 };
                 let mut num = scale(self.home[i], k_home);
                 let mut den = k_home;
-                for &si in &self.adjacent[i] {
+                for &si in self.adjacent.get(i) {
                     let s = &self.springs[si as usize];
                     let (a, b) = (s.a as usize, s.b as usize);
                     let rest = sub(self.home[b], self.home[a]);
@@ -1490,7 +1522,7 @@ impl Net {
     fn flow_segments(&self) -> FlowSegments {
         let mut forward = Vec::new();
         for &i in &self.active {
-            for &si in &self.adjacent[i as usize] {
+            for &si in self.adjacent.get(i as usize) {
                 let s = &self.springs[si as usize];
                 // Each segment once: from its newer end, or its older end if the newer rests.
                 let from_here = s.a == i || (s.b == i && !self.is_active[s.a as usize]);
