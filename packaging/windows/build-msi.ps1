@@ -12,6 +12,10 @@
 #
 # The MSI version is the Cargo.toml version without its pre-release part: MSI versions are
 # numbers only.
+#
+# The MSI is then checked with the ICE rules (`wix msi validate`). Two are suppressed, for the
+# reasons given in parterre.wxs: ICE57 (the dual-purpose Start menu shortcut) and ICE61 (same
+# version upgrades).
 [CmdletBinding()]
 param(
     [string]$Stage,
@@ -20,6 +24,10 @@ param(
 $ErrorActionPreference = 'Stop'
 # Native commands that fail stop the script too (PowerShell 7.3 and newer).
 $PSNativeCommandUseErrorActionPreference = $true
+
+# Relative paths are the caller's, not the repository root's.
+if ($Stage) { $Stage = (Resolve-Path $Stage).Path }
+if ($Out) { $Out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Out) }
 
 $root = (Resolve-Path "$PSScriptRoot\..\..").Path
 Push-Location $root
@@ -35,7 +43,6 @@ try {
         cargo about generate --locked -c packaging/about.toml packaging/about.hbs `
             -o "$Stage\THIRD-PARTY-NOTICES.html"
     }
-    $Stage = (Resolve-Path $Stage).Path
     if (-not $Out) {
         New-Item -ItemType Directory -Force "$root\target\msi" | Out-Null
         $Out = "$root\target\msi\parterre-$version-x86_64-pc-windows-msvc.msi"
@@ -51,6 +58,7 @@ try {
         -d "Icon=$root\packaging\icon\parterre.ico" `
         -o $Out `
         packaging\windows\parterre.wxs
+    wix msi validate -acceptEula wix7 -sice ICE57 -sice ICE61 $Out
     Write-Host "Built $Out"
 }
 finally {

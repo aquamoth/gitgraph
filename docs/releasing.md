@@ -18,7 +18,11 @@ it (`version = "=X.Y.Z"`, which crates.io needs); the build fails until the two 
    publishes a GitHub Release. The release has one archive per target
    (`parterre-0.3.0-<target>.tar.gz`, or `.zip` for Windows) and a `SHA256SUMS` file. Each
    archive holds the binary, the README, `LICENSE`, `NOTICE` and `THIRD-PARTY-NOTICES.html`.
-   A tag with a pre-release part, such as `v0.3.0-rc.1`, publishes a pre-release.
+   Windows also gets an installer built from the same files,
+   `parterre-0.3.0-x86_64-pc-windows-msvc.msi` (see
+   [building.md](building.md#windows-installer)). A tag with a pre-release part, such as
+   `v0.3.0-rc.1`, publishes a pre-release; its MSI has version `0.3.0`, since MSI versions are
+   numbers only.
 
 The build fails if the tag isn't `v` + the `Cargo.toml` version, doesn't point at the commit
 being built, or the sources have local changes. In that case delete the tag

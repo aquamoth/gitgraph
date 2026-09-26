@@ -23,7 +23,8 @@ yellow, the current branch red.)_
 
 Download the archive for your system from the
 [releases page](https://github.com/aquamoth/parterre/releases) and put `parterre` on your
-`PATH`. The Linux build needs glibc 2.35 or newer (Debian 12, Ubuntu 22.04 and later). With a
+`PATH`. On Windows the `.msi` next to it does that for you, and adds a Start menu entry; it
+installs for the current user without asking for admin rights. The Linux build needs glibc 2.35 or newer (Debian 12, Ubuntu 22.04 and later). With a
 Rust toolchain you can also install it from crates.io:
 
 ```sh
@@ -31,7 +32,7 @@ cargo install --locked parterre    # build from source; installs only the binary
 cargo binstall parterre            # or download the release binary with cargo-binstall
 ```
 
-parterre also needs `git`. Installers and packages for Windows and Linux are on their way; see
+parterre also needs `git`. Packages for winget, Chocolatey and Linux are on their way; see
 [docs/distribution.md](docs/distribution.md).
 
 ## Usage

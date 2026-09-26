@@ -22,7 +22,8 @@
       Scope="perUserOrMachine"
       Language="1033">
     <!-- A release candidate and its release share a version (MSI versions have no pre-release
-         part), so the same version must upgrade too, instead of installing side by side. -->
+         part), so the same version must upgrade too, instead of installing side by side.
+         ICE61 warns about exactly that, so build-msi.ps1 suppresses it. -->
     <MajorUpgrade
         AllowSameVersionUpgrades="yes"
         DowngradeErrorMessage="A newer version of parterre is already installed." />
@@ -57,13 +58,17 @@
         <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
       </Component>
 
-      <!-- A Start menu entry of its own, no folder; no desktop shortcut. -->
+      <!-- A Start menu entry of its own, no folder; no desktop shortcut.
+           ICE57 calls this component per-user data with a key path that may be per-machine. It
+           can't tell that ProgramMenuFolder and HKMU both follow ALLUSERS, so build-msi.ps1
+           suppresses it. The target names the folder rather than the file ([#parterre.exe]),
+           which ICE69 would flag as a reference into another component. -->
       <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder">
         <RegistryValue Root="HKMU" Key="Software\Trustfall AB\parterre" Name="StartMenuShortcut"
                        Type="integer" Value="1" KeyPath="yes" />
         <Shortcut Id="StartMenuShortcut" Name="parterre"
                   Description="Revision graph viewer for git repositories"
-                  Target="[#parterre.exe]" WorkingDirectory="INSTALLFOLDER" />
+                  Target="[INSTALLFOLDER]parterre.exe" WorkingDirectory="INSTALLFOLDER" />
       </Component>
 
       <!-- parterre on PATH: the user's PATH for a per-user install, the system's for a
@@ -75,7 +80,9 @@
                      Action="set" System="no" Permanent="no" />
       </Component>
       <Component Id="SystemPath" Directory="INSTALLFOLDER" Condition="ALLUSERS = 1">
-        <RegistryValue Root="HKLM" Key="Software\Trustfall AB\parterre" Name="SystemPath"
+        <!-- HKMU rather than HKLM, which is the same here but which ICE105 accepts in a package
+             that can install per-user. -->
+        <RegistryValue Root="HKMU" Key="Software\Trustfall AB\parterre" Name="SystemPath"
                        Type="integer" Value="1" KeyPath="yes" />
         <Environment Id="SystemPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last"
                      Action="set" System="yes" Permanent="no" />
