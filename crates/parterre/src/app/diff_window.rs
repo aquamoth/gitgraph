@@ -13,7 +13,6 @@
 //! they differ; changed words pair similar lines rather than lines by position; the change
 //! marks are an overview strip on the right instead of a locator bar on the left.
 
-use std::collections::HashSet;
 use std::sync::{Arc, mpsc};
 
 use eframe::egui::text::{LayoutJob, TextFormat};
@@ -24,7 +23,7 @@ use eframe::egui::{
 use parterre_core::changed_files::FileStatus;
 use parterre_core::file_diff::{
     Content, DiffLine, DiffOptions, FileDiff, FileDiffSpec, LineKind, LoadedDiff, Note, Row, Shown,
-    Version, Whitespace, WordMode, fold,
+    Version, Whitespace, WordMode, fold, fold_lines,
 };
 use parterre_core::glyphs;
 use parterre_core::{Oid, Repo};
@@ -151,8 +150,10 @@ struct DiffWindow {
     form: DiffForm,
     options: DiffOptions,
     fold: bool,
-    /// Folds opened by a click, by their first row, per form.
-    expanded: [HashSet<usize>; 2],
+    /// Lines of the new version whose folds were opened by a click. Kept by line, so they stay
+    /// open when the form, word mode or whitespace setting changes; the fold button folds them
+    /// again.
+    open: Vec<std::ops::Range<u32>>,
     /// The rows shown in the current form, folds included; rebuilt when `dirty`.
     shown: Vec<Shown>,
     /// Where each change's first row is in `shown`.
@@ -201,6 +202,17 @@ impl DiffWindow {
             let _ = tx.send(result);
             ctx.request_repaint();
         });
+        DiffWindow::new_loading(id, repo, spec, settings, rx)
+    }
+
+    /// A window waiting for `rx` to bring its diff.
+    fn new_loading(
+        id: u64,
+        repo: Arc<Repo>,
+        spec: FileDiffSpec,
+        settings: &DiffWindowSettings,
+        rx: mpsc::Receiver<Result<Ready, String>>,
+    ) -> DiffWindow {
         let [w, h] = settings.size;
         DiffWindow {
             id,
@@ -209,9 +221,12 @@ impl DiffWindow {
             size: vec2(w, h),
             load: Load::Loading(rx),
             form: settings.form,
-            options,
+            options: DiffOptions {
+                words: settings.words,
+                whitespace: settings.whitespace,
+            },
             fold: settings.fold,
-            expanded: Default::default(),
+            open: Vec::new(),
             shown: Vec::new(),
             positions: Vec::new(),
             dirty: true,
@@ -262,8 +277,6 @@ impl DiffWindow {
         {
             let loaded = ready.loaded.clone();
             **ready = Ready::new(loaded, self.options);
-            self.expanded = Default::default();
-            self.selection = None;
             self.dirty = true;
             self.jump = Some(self.current.unwrap_or(0));
         }
@@ -304,7 +317,7 @@ impl DiffWindow {
         };
         let (rows, _) = Self::rows_and_changes(&ready.diff, self.form);
         let shown = if self.fold {
-            fold(rows, &ready.diff, &self.expanded[self.form_ix()])
+            fold(rows, &ready.diff, &self.open)
         } else {
             (0..rows.len()).map(Shown::Row).collect()
         };
@@ -344,6 +357,17 @@ impl DiffWindow {
             self.selection = None;
             self.jump = Some(self.current.unwrap_or(0));
         }
+    }
+
+    /// The fold button: off → on, on → off, and on with folds opened by hand → all folded.
+    fn toggle_fold(&mut self, settings: &mut DiffWindowSettings) {
+        if !(self.fold && !self.open.is_empty()) {
+            self.fold = !self.fold;
+            settings.fold = self.fold;
+        }
+        self.open.clear();
+        self.dirty = true;
+        self.jump = Some(self.current.unwrap_or(0));
     }
 
     fn step(&mut self, forward: bool, changes: usize) {
@@ -503,17 +527,26 @@ impl DiffWindow {
         );
         ui.add_space(14.0);
 
-        let r = widgets::tip_explained(
-            widgets::icon_button(ui, glyphs::FOLD, self.fold),
-            "Fold unchanged lines",
-            "",
-            "Hide the unchanged stretches between changes; click a fold to open it.",
-        );
+        // Three states: off, on, and on with folds opened by hand, which a click folds again.
+        let opened = self.fold && !self.open.is_empty();
+        let r = fold_button(ui, self.fold, opened);
+        let r = if opened {
+            widgets::tip_explained(
+                r,
+                "Fold unchanged lines",
+                "",
+                "Some folds are open. Click to fold them all again.",
+            )
+        } else {
+            widgets::tip_explained(
+                r,
+                "Fold unchanged lines",
+                "",
+                "Hide the unchanged stretches between changes; click a fold to open it.",
+            )
+        };
         if r.clicked() {
-            self.fold = !self.fold;
-            settings.fold = self.fold;
-            self.dirty = true;
-            self.jump = Some(self.current.unwrap_or(0));
+            self.toggle_fold(settings);
         }
         ui.add_space(14.0);
 
@@ -635,6 +668,8 @@ impl DiffWindow {
 
     /// The rows, the overview strip and the horizontal scrollbar.
     fn body(&mut self, ui: &mut Ui, full: Rect, c: &Colors) {
+        // The toolbar, drawn just before, may have changed the form or the folding.
+        self.refresh();
         let positions = self.positions.clone();
         let Load::Ready(ready) = &self.load else {
             return;
@@ -720,7 +755,7 @@ impl DiffWindow {
                         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                         fold_row(ui, rect, hidden.len(), response.hovered(), c);
                         if response.clicked() {
-                            clicked = Some(Click::Fold(hidden.start));
+                            clicked = fold_lines(rows, hidden).map(Click::Fold);
                         }
                     }
                     Shown::Row(r) => {
@@ -787,8 +822,8 @@ impl DiffWindow {
         });
 
         match clicked {
-            Some(Click::Fold(start)) => {
-                self.expanded[self.form_ix()].insert(start);
+            Some(Click::Fold(lines)) => {
+                self.open.push(lines);
                 self.dirty = true;
             }
             Some(Click::Line(side, line, extend)) => {
@@ -994,7 +1029,8 @@ impl DiffWindow {
 }
 
 enum Click {
-    Fold(usize),
+    /// A fold: the lines of the new version it hides.
+    Fold(std::ops::Range<u32>),
     /// A line number: the side, the line, and whether Shift was held.
     Line(Side, u32, bool),
 }
@@ -1094,7 +1130,25 @@ fn paint_line(
         .galley(pos2(x - g.hoff, y), galley, c.text);
 }
 
-/// A fold: `⋯ n unchanged lines`, across the row.
+/// The fold toggle: off, on, or on with some folds opened by hand (shown half on, with a dot).
+fn fold_button(ui: &mut Ui, on: bool, opened: bool) -> egui::Response {
+    let response = widgets::icon_button(ui, glyphs::FOLD, on && !opened);
+    if opened {
+        let t = widgets::tones(ui);
+        let rect = response.rect;
+        let painter = ui.painter();
+        painter.rect_stroke(
+            rect.shrink(0.5),
+            CornerRadius::same(7),
+            Stroke::new(1.0, t.on_fg.gamma_multiply(0.6)),
+            StrokeKind::Inside,
+        );
+        painter.circle_filled(rect.right_top() + vec2(-6.0, 6.0), 3.0, t.on_fg);
+    }
+    response
+}
+
+/// A fold: `n unchanged lines`, across the row.
 fn fold_row(ui: &Ui, rect: Rect, lines: usize, hovered: bool, c: &Colors) {
     let painter = ui.painter();
     painter.rect_filled(rect, 0.0, if hovered { c.fold_hover } else { c.fold });
@@ -1352,5 +1406,158 @@ impl ParterreApp {
         let spec = FileDiffSpec::of_commit(commit.oid, parent, file);
         self.diffs
             .open(repo.clone(), spec, &self.settings.diff_window, ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use parterre_core::file_diff::Version;
+    use parterre_core::repo::Head;
+
+    /// A window with a loaded diff of `old` against `new`, without git.
+    fn window(old: &str, new: &str, settings: &DiffWindowSettings) -> DiffWindow {
+        let rev = Oid::from_hex("0123456789012345678901234567890123456789").unwrap();
+        let v = || Version {
+            rev,
+            path: "a.txt".into(),
+        };
+        let spec = FileDiffSpec {
+            old: Some(v()),
+            new: Some(v()),
+            status: FileStatus::Modified,
+            modes: [0o100644; 2],
+            binary: false,
+        };
+        let loaded = LoadedDiff {
+            spec: spec.clone(),
+            content: Content::Text {
+                old: old.into(),
+                new: new.into(),
+                invalid_bytes: 0,
+            },
+            textconv: None,
+        };
+        let repo = Arc::new(Repo::new(
+            "/nowhere".into(),
+            Vec::new(),
+            Vec::new(),
+            Head::Branch {
+                name: "main".into(),
+                target: None,
+            },
+        ));
+        let (_, rx) = mpsc::channel();
+        let mut w = DiffWindow::new_loading(1, repo, spec, settings, rx);
+        let options = w.options;
+        w.load = Load::Ready(Box::new(Ready::new(loaded, options)));
+        w
+    }
+
+    /// Runs one frame of the window's contents with `events`.
+    fn frame(
+        ctx: &egui::Context,
+        w: &mut DiffWindow,
+        settings: &mut DiffWindowSettings,
+        events: Vec<egui::Event>,
+    ) {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))),
+            events,
+            ..Default::default()
+        };
+        // As `show` does, less the viewport. Nothing is rendered, so the texture updates are
+        // discarded.
+        w.poll();
+        ctx.run_ui(input, |ui| w.contents(ui, settings))
+            .textures_delta
+            .clear();
+    }
+
+    fn click(at: egui::Pos2) -> [Vec<egui::Event>; 2] {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        [
+            vec![egui::Event::PointerMoved(at), button(true)],
+            vec![button(false)],
+        ]
+    }
+
+    fn numbered(n: usize) -> String {
+        (1..=n).map(|i| format!("line {i}\n")).collect()
+    }
+
+    #[test]
+    fn switching_the_form_from_the_toolbar_draws_the_new_form() {
+        // Unified has a row more than side by side: the edited line's two versions.
+        let old = numbered(40);
+        let new = old.replace("line 20\n", "line twenty\n");
+        let mut settings = DiffWindowSettings {
+            form: DiffForm::Unified,
+            fold: false,
+            ..DiffWindowSettings::default()
+        };
+        let mut w = window(&old, &new, &settings);
+        let ctx = egui::Context::default();
+        frame(&ctx, &mut w, &mut settings, Vec::new());
+        // The side-by-side segment is the first in the toolbar.
+        for events in click(pos2(27.0, TOOLBAR / 2.0)) {
+            frame(&ctx, &mut w, &mut settings, events);
+        }
+        frame(&ctx, &mut w, &mut settings, Vec::new());
+        assert_eq!(w.form, DiffForm::SideBySide);
+        assert_eq!(settings.form, DiffForm::SideBySide);
+    }
+
+    fn folds(w: &DiffWindow) -> usize {
+        w.shown
+            .iter()
+            .filter(|s| matches!(s, Shown::Fold(_)))
+            .count()
+    }
+
+    #[test]
+    fn opened_folds_survive_options_until_the_fold_button_folds_them_again() {
+        let old = numbered(40);
+        let new = old.replace("line 20\n", "line twenty\n");
+        let mut settings = DiffWindowSettings::default();
+        let mut w = window(&old, &new, &settings);
+        let ctx = egui::Context::default();
+        frame(&ctx, &mut w, &mut settings, Vec::new());
+        assert_eq!(folds(&w), 2);
+
+        // Open the first fold, as a click on it does.
+        let Some(Shown::Fold(hidden)) = w.shown.first().cloned() else {
+            panic!("expected a fold first: {:?}", w.shown);
+        };
+        let ready = w.ready().unwrap();
+        let lines = fold_lines(&ready.diff.side, &hidden).unwrap();
+        w.open.push(lines);
+        w.dirty = true;
+        frame(&ctx, &mut w, &mut settings, Vec::new());
+        assert_eq!(folds(&w), 1);
+
+        // Another whitespace setting and the other form keep it open.
+        w.options.whitespace = Whitespace::IgnoreAll;
+        w.set_form(DiffForm::Unified);
+        frame(&ctx, &mut w, &mut settings, Vec::new());
+        assert_eq!(w.ready().unwrap().options.whitespace, Whitespace::IgnoreAll);
+        assert_eq!(folds(&w), 1);
+
+        // The button, now in its third state, folds everything again and stays on.
+        w.toggle_fold(&mut settings);
+        frame(&ctx, &mut w, &mut settings, Vec::new());
+        assert!(w.fold && w.open.is_empty());
+        assert_eq!(folds(&w), 2);
+
+        // Then it turns folding off.
+        w.toggle_fold(&mut settings);
+        frame(&ctx, &mut w, &mut settings, Vec::new());
+        assert!(!w.fold && !settings.fold);
+        assert_eq!(folds(&w), 0);
     }
 }

@@ -322,6 +322,10 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 
 ## Planned
 
+- [ ] Text size with `Ctrl`+wheel in every window besides the graph: the log window, the
+      diff windows and the settings, as the graph zooms with it (wanted 2026-09-26). Probably
+      also `Ctrl`+`+`/`-`/`0`. Open: one size shared by all these windows or one each, and
+      whether it is remembered with the settings.
 - [ ] File diffs from the log window, being charted in the map *Roadmap to TortoiseGit
       parity: revision graph and log* ([#25](https://github.com/aquamoth/parterre/issues/25)):
       read-only, one diff window per file, diffed by `imara-diff` (lines and words; decided in

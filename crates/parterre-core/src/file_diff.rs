@@ -10,7 +10,6 @@
 //! two forms the diff window draws: side by side and unified. [`fold`] collapses the unchanged
 //! stretches between changes.
 
-use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::ops::Range;
 
@@ -754,10 +753,19 @@ pub enum Shown {
 }
 
 /// The rows to show when unchanged stretches are folded: [`CONTEXT_LINES`] rows are kept on
-/// each side of a change, and a fold that `expanded` holds (by its first row) stays open.
-/// Stretches of fewer than two rows are never folded, since the fold would take as much room.
-pub fn fold(rows: &[Row], diff: &FileDiff, expanded: &HashSet<usize>) -> Vec<Shown> {
+/// each side of a change, and rows whose line of the new version lies in `open` stay shown
+/// (folds opened by hand; kept by line, so they outlast a change of form or options). What is
+/// left folds, but runs of fewer than two rows never do, since the fold would take as much room.
+pub fn fold(rows: &[Row], diff: &FileDiff, open: &[Range<u32>]) -> Vec<Shown> {
+    let is_open = |row: Row| row.new.is_some_and(|n| open.iter().any(|r| r.contains(&n)));
     let mut shown = Vec::with_capacity(rows.len().min(4096));
+    let hide = |shown: &mut Vec<Shown>, run: Range<usize>| {
+        if run.len() < 2 {
+            shown.extend(run.map(Shown::Row));
+        } else {
+            shown.push(Shown::Fold(run));
+        }
+    };
     let mut i = 0;
     while i < rows.len() {
         if diff.is_changed(rows[i]) {
@@ -771,16 +779,29 @@ pub fn fold(rows: &[Row], diff: &FileDiff, expanded: &HashSet<usize>) -> Vec<Sho
         }
         let keep_before = if start > 0 { CONTEXT_LINES } else { 0 };
         let keep_after = if i < rows.len() { CONTEXT_LINES } else { 0 };
-        let hidden = (start + keep_before)..i.saturating_sub(keep_after).max(start + keep_before);
-        if hidden.len() < 2 || expanded.contains(&hidden.start) {
-            shown.extend((start..i).map(Shown::Row));
-        } else {
-            shown.extend((start..hidden.start).map(Shown::Row));
-            shown.push(Shown::Fold(hidden.clone()));
-            shown.extend((hidden.end..i).map(Shown::Row));
+        // Within the stretch, even when it is shorter than the context on both sides.
+        let from = (start + keep_before).min(i);
+        let hidden = from..i.saturating_sub(keep_after).max(from);
+        shown.extend((start..hidden.start).map(Shown::Row));
+        let mut run = hidden.start;
+        for r in hidden.clone() {
+            if is_open(rows[r]) {
+                hide(&mut shown, run..r);
+                shown.push(Shown::Row(r));
+                run = r + 1;
+            }
         }
+        hide(&mut shown, run..hidden.end);
+        shown.extend((hidden.end..i).map(Shown::Row));
     }
     shown
+}
+
+/// The lines of the new version a fold stands for, to open it with [`fold`].
+pub fn fold_lines(rows: &[Row], hidden: &Range<usize>) -> Option<Range<u32>> {
+    let first = rows.get(hidden.start)?.new?;
+    let last = rows.get(hidden.end.checked_sub(1)?)?.new?;
+    Some(first..last + 1)
 }
 
 #[cfg(test)]
@@ -1030,7 +1051,7 @@ mod tests {
         let old = numbered(30);
         let new = old.replace("line 15\n", "line fifteen\n");
         let d = FileDiff::new(&old, &new, DiffOptions::default());
-        let shown = fold(&d.side, &d, &HashSet::new());
+        let shown = fold(&d.side, &d, &[]);
         // Rows 0..11 fold, 11..14 are context, 14 is the change, 15..18 context, 18..30 fold.
         assert_eq!(shown[0], Shown::Fold(0..11));
         assert_eq!(
@@ -1042,7 +1063,9 @@ mod tests {
         assert_eq!(shown.len(), 9);
 
         // An expanded fold shows its rows again.
-        let open = fold(&d.side, &d, &HashSet::from([18]));
+        let lines = fold_lines(&d.side, &(18..30)).unwrap();
+        assert_eq!(lines, 18..30);
+        let open = fold(&d.side, &d, &[lines]);
         assert_eq!(open.len(), 8 + 12);
         assert!(!open.contains(&Shown::Fold(18..30)));
     }
@@ -1056,7 +1079,7 @@ mod tests {
         let d = FileDiff::new(&old, &new, DiffOptions::default());
         // Seven unchanged rows between the changes: three and three kept, one left to fold,
         // which is not worth a fold.
-        let shown = fold(&d.side, &d, &HashSet::new());
+        let shown = fold(&d.side, &d, &[]);
         assert!(shown.iter().all(|s| matches!(s, Shown::Row(_))));
     }
 
@@ -1064,7 +1087,69 @@ mod tests {
     fn an_unchanged_file_folds_into_one() {
         let text = numbered(10);
         let d = FileDiff::new(&text, &text, DiffOptions::default());
-        assert_eq!(fold(&d.side, &d, &HashSet::new()), [Shown::Fold(0..10)]);
+        assert_eq!(fold(&d.side, &d, &[]), [Shown::Fold(0..10)]);
+    }
+
+    #[test]
+    fn every_row_is_shown_once_between_close_changes() {
+        // One unchanged line between two changes, fewer than the context kept around them.
+        let old = numbered(12);
+        let new = old
+            .replace("line 5\n", "line five\n")
+            .replace("line 7\n", "line seven\n");
+        let d = FileDiff::new(&old, &new, DiffOptions::default());
+        for rows in [&d.side, &d.unified] {
+            let shown = fold(rows, &d, &[]);
+            let mut covered: Vec<usize> = shown
+                .iter()
+                .flat_map(|s| match s {
+                    Shown::Row(r) => *r..*r + 1,
+                    Shown::Fold(range) => range.clone(),
+                })
+                .collect();
+            let in_order = covered.windows(2).all(|w| w[0] < w[1]);
+            covered.dedup();
+            assert!(in_order, "{shown:?}");
+            assert_eq!(covered, (0..rows.len()).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn lines_opened_inside_a_fold_split_it() {
+        let old = numbered(30);
+        let new = old.replace("line 15\n", "line fifteen\n");
+        let d = FileDiff::new(&old, &new, DiffOptions::default());
+        let shown = fold(&d.side, &d, std::slice::from_ref(&(20..22)));
+        let tail: Vec<_> = shown[8..].to_vec();
+        assert_eq!(
+            tail,
+            [
+                Shown::Fold(18..20),
+                Shown::Row(20),
+                Shown::Row(21),
+                Shown::Fold(22..30)
+            ]
+        );
+    }
+
+    #[test]
+    fn opened_lines_stay_open_in_the_other_form_and_whitespace_setting() {
+        let old = numbered(30).replace("line 15\n", "line  15\n");
+        let new = numbered(30).replace("line 5\n", "line five\n");
+        let open = std::slice::from_ref(&(10..20));
+        for ws in Whitespace::ALL {
+            let d = FileDiff::new(&old, &new, opts(WordMode::Similar, ws));
+            for rows in [&d.side, &d.unified] {
+                let shown = fold(rows, &d, open);
+                let row_of_line = |n: u32| rows.iter().position(|r| r.new == Some(n)).unwrap();
+                for n in 10..20 {
+                    assert!(
+                        shown.contains(&Shown::Row(row_of_line(n))),
+                        "{ws:?}: line {n}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
