@@ -67,8 +67,10 @@ impl ParterreApp {
                 widgets::popover_button(ui, Id::new(MENU_ID), Some(glyphs::MENU), false);
             let menu_button = tip(menu_button, "Menu", "");
             Popup::menu(&menu_button).style(menu::style).show(|ui| {
-                ui.set_min_width(menu::MIN_WIDTH);
-                self.main_menu(ui);
+                menu::fit_window(ui, |ui| {
+                    ui.set_min_width(menu::MIN_WIDTH);
+                    self.main_menu(ui);
+                });
             });
             gap(ui);
 
@@ -99,13 +101,15 @@ impl ParterreApp {
             }
             let response = widgets::popover_button(ui, Id::new(FILTER_ID), None, false);
             let response = tip(response, "Filter branches", "");
-            popover(&response, RectAlign::BOTTOM_START).show(|ui| self.filter_popover(ui));
+            popover(&response, RectAlign::BOTTOM_START)
+                .show(|ui| menu::fit_window(ui, |ui| self.filter_popover(ui)));
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 // Right to left from here.
                 let response = widgets::popover_button(ui, Id::new(DRAG_ID), None, false);
                 let response = tip(response, "Dragging options", "");
-                popover(&response, RectAlign::BOTTOM_END).show(|ui| self.drag_popover(ui));
+                popover(&response, RectAlign::BOTTOM_END)
+                    .show(|ui| menu::fit_window(ui, |ui| self.drag_popover(ui)));
                 let items = DRAG.map(|(m, glyph, _)| (m, glyph));
                 let drag = widgets::segmented(ui, self.settings.net.model, &items, |m, r| {
                     let key = DRAG.iter().find(|d| d.0 == m).map_or("", |d| d.2);
@@ -129,7 +133,8 @@ impl ParterreApp {
                 let response =
                     widgets::popover_button(ui, Id::new(ZOOM_ID), Some(glyphs::ZOOM), false);
                 let response = tip(response, "Zoom", "");
-                popover(&response, RectAlign::BOTTOM_END).show(|ui| self.zoom_popover(ui));
+                popover(&response, RectAlign::BOTTOM_END)
+                    .show(|ui| menu::fit_window(ui, |ui| self.zoom_popover(ui)));
 
                 // Find, in the middle of what is left.
                 let room = ui.available_width();

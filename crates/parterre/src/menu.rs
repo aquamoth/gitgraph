@@ -73,6 +73,24 @@ fn frame(style: &mut Style) {
     style.spacing.menu_margin = Margin::same(6);
 }
 
+/// The content of a menu or popover, scrolling if it is taller than the window.
+///
+/// egui keeps a popup inside the window, moving it up when it would overflow the bottom, but it
+/// moves a popup taller than the window to the top and cuts off the bottom. Scrolling keeps
+/// all of it reachable. TortoiseGit's native menus can overflow the window instead; egui draws
+/// inside the one window, and Wayland gives winit no way to place a popup outside it (see
+/// `TODO.md`).
+pub fn fit_window<R>(ui: &mut Ui, content: impl FnOnce(&mut Ui) -> R) -> R {
+    let frame = ui.spacing().menu_margin.sum().y + 2.0 * ui.visuals().window_stroke.width;
+    let max_height = ui.ctx().content_rect().height() - frame;
+    // The scroll area is as tall as the room it is given, and the popup's first, sizing pass
+    // gives it `default_area_size`, which can be less than the window.
+    ui.set_max_height(max_height);
+    // A handle that shows without hovering, so that a menu cut short looks scrollable.
+    ui.spacing_mut().scroll = egui::style::ScrollStyle::thin();
+    egui::ScrollArea::vertical().show(ui, content).inner
+}
+
 /// A line between groups of items, with some air around it.
 pub fn separator(ui: &mut Ui) {
     ui.add(egui::Separator::default().spacing(12.0));
@@ -113,7 +131,8 @@ pub fn submenu(ui: &mut Ui, label: &str, content: impl FnOnce(&mut Ui)) {
     const ARROW: f32 = 12.0;
     let button = Button::new((Atom::custom(Id::new("menu-mark"), Vec2::splat(MARK)), label))
         .right_text(Atom::custom(Id::new("menu-arrow"), Vec2::splat(ARROW)));
-    let (response, _) = egui::containers::menu::SubMenuButton::from_button(button).ui(ui, content);
+    let (response, _) = egui::containers::menu::SubMenuButton::from_button(button)
+        .ui(ui, |ui| fit_window(ui, content));
     let padding = ui.spacing().button_padding.x;
     let center = egui::pos2(
         response.rect.right() - padding - ARROW / 2.0,

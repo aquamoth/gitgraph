@@ -32,6 +32,8 @@ pub struct Automation {
     pub demo_log: Option<String>,
     /// Where the context menu is opened, once chosen.
     menu_at: Option<Pos2>,
+    /// When (in egui's clock) the menu or popover was opened.
+    opened_at: Option<f64>,
     frame: u32,
     requested: bool,
     frame_times: Vec<std::time::Instant>,
@@ -122,6 +124,9 @@ impl Automation {
             view.zoom_around(canvas, canvas.center(), z / view.zoom);
         }
 
+        if self.frame == MENU_START {
+            self.opened_at = Some(ctx.input(|i| i.time));
+        }
         if self.frame == MENU_START
             && let Some(name) = &self.demo_open
             && !name.starts_with("settings")
@@ -167,7 +172,11 @@ impl Automation {
         } else {
             8
         };
-        if self.frame >= shoot_at && !self.requested {
+        // Popups fade in over wall-clock time, which 60 frames of a small window can undercut.
+        let faded_in = self.opened_at.is_none_or(|t| {
+            ctx.input(|i| i.time) - t > 2.0 * f64::from(ctx.global_style().animation_time)
+        });
+        if self.frame >= shoot_at && faded_in && !self.requested {
             self.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }
