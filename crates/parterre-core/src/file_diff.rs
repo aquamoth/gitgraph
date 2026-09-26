@@ -35,10 +35,29 @@ const PAIRING_SIMILARITY: f32 = 0.5;
 /// whole. Keeps pathological changes from stalling the window.
 const MAX_WORD_DIFF_LINES: usize = 5_000;
 
+/// Where a version of a file is read from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Rev {
+    Commit(Oid),
+    /// The files on disk, staged or not, as `git diff` reads them: through the file's clean
+    /// filter and line-ending conversion.
+    WorkingTree,
+}
+
+impl Rev {
+    /// The commit, unless this is the working tree.
+    pub fn commit(self) -> Option<Oid> {
+        match self {
+            Rev::Commit(oid) => Some(oid),
+            Rev::WorkingTree => None,
+        }
+    }
+}
+
 /// One version of a file: a path at a revision.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Version {
-    pub rev: Oid,
+    pub rev: Rev,
     pub path: String,
 }
 
@@ -60,7 +79,13 @@ impl FileDiffSpec {
     /// The change a commit made to one of its changed files, against `parent` (`None` for a
     /// root commit). Renamed and copied files take their old path on the old side.
     pub fn of_commit(commit: Oid, parent: Option<Oid>, file: &ChangedFile) -> FileDiffSpec {
-        let old = match parent {
+        FileDiffSpec::between(parent.map(Rev::Commit), Rev::Commit(commit), file)
+    }
+
+    /// A changed file of a comparison of `old` (`None` for nothing, as for a root commit) with
+    /// `new`. Renamed and copied files take their old path on the old side.
+    pub fn between(old: Option<Rev>, new: Rev, file: &ChangedFile) -> FileDiffSpec {
+        let old = match old {
             Some(rev) if file.status != FileStatus::Added => Some(Version {
                 rev,
                 path: file.old_path.clone().unwrap_or_else(|| file.path.clone()),
@@ -68,7 +93,7 @@ impl FileDiffSpec {
             _ => None,
         };
         let new = (file.status != FileStatus::Deleted).then(|| Version {
-            rev: commit,
+            rev: new,
             path: file.path.clone(),
         });
         FileDiffSpec {
@@ -78,6 +103,14 @@ impl FileDiffSpec {
             modes: file.modes,
             binary: file.is_binary(),
         }
+    }
+
+    /// True if a side is read from the working tree, and so can change after loading.
+    pub fn reads_working_tree(&self) -> bool {
+        [&self.old, &self.new]
+            .into_iter()
+            .flatten()
+            .any(|v| v.rev == Rev::WorkingTree)
     }
 
     /// True if either side is a submodule.
@@ -1223,7 +1256,7 @@ mod tests {
     }
 
     fn spec(old: bool, new: bool, modes: [u32; 2]) -> FileDiffSpec {
-        let rev = Oid::from_hex("0123456789012345678901234567890123456789").unwrap();
+        let rev = Rev::Commit(Oid::from_hex("0123456789012345678901234567890123456789").unwrap());
         let v = |p: &str| Version {
             rev,
             path: p.into(),
@@ -1305,11 +1338,11 @@ mod tests {
         let s = FileDiffSpec::of_commit(c, Some(p), &file);
         assert_eq!(
             s.old.as_ref().map(|v| (v.rev, v.path.as_str())),
-            Some((p, "old.rs"))
+            Some((Rev::Commit(p), "old.rs"))
         );
         assert_eq!(
             s.new.as_ref().map(|v| (v.rev, v.path.as_str())),
-            Some((c, "new.rs"))
+            Some((Rev::Commit(c), "new.rs"))
         );
 
         let added = ChangedFile {

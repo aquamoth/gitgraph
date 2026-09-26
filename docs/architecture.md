@@ -13,8 +13,9 @@ crates/parterre-core   GUI-free; everything testable lives here
   log_layout.rs        the log window's four fixed layouts and their divider positions
   changed_files.rs     changed-file types, `diff-tree -z` parser, files-before-folders order,
                        the log window's file filter and column sort
-  compare.rs           comparing two commits: which goes left, and the files between them
-                       (`git diff-tree A B`, or from `git merge-base`)
+  compare.rs           comparing two commits, or a commit and the working tree: which goes
+                       left, and the files between them (`git diff-tree A B`, `git diff A`,
+                       or from `git merge-base`)
   text.rs              URLs in commit messages, paths cut at the start, thousands separators
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
   pattern.rs           branch-name wildcards, for hiding and colouring branches

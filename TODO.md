@@ -441,8 +441,26 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       than ten diff windows) but keeps its own sort and filter. TortoiseGit's dialog is modal
       and adds editable revisions, a log button, *View Patch*, and per-file revert, blame,
       export and save list: left out.
-    - **No shortcuts** for the new items, and no *Compare with working tree* yet (parterre
-      doesn't read the working tree).
+    - **No shortcuts** for the new items.
+    - **Compare with working tree** (your request of 2026-09-26, the evening after): in the
+      node menu under *Compare with HEAD*, and in the log row menu; greyed out in a bare
+      repository. Calls you may want to overrule:
+      - **The working tree is the files on disk, staged or not,** as `git diff <commit>`
+        compares them, so staged new files are listed. **Untracked files are not**, as in
+        `git diff` and TortoiseGit's dialog. Listing them would need a switch in the window.
+      - **Files are read as git diff reads them:** through the clean filter and line-ending
+        conversion, then textconv. git has no command that prints a working-tree file that
+        way, so parterre diffs it against the empty tree and takes the added lines back out
+        of the patch; anything else in the patch is an error, not a guess. Binary files give
+        their size on disk.
+      - **Nothing is written:** git refreshes the index's stat information in memory only
+        (`--no-optional-locks`), where TortoiseGit refreshes the index first.
+      - **It doesn't follow the disk by itself.** `F5` in the compare window lists the files
+        again (the bar says so); opening a file's diff again reloads its window. The ref
+        watcher doesn't look at the working tree.
+      - **Swap works** (`git diff -R`), where TortoiseGit disables it for the working tree.
+        *Since common ancestor* takes the working tree's fork point from `HEAD`, as `git diff
+        --merge-base` does.
 
 ## Planned
 
@@ -484,7 +502,9 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
   - [x] Free text selection in either pane, copied as in the file (wanted 2026-09-26).
   - [x] Comparing two commits' files: Compare revisions, with HEAD, and with a commit marked
         for comparison, in a compare window (wanted 2026-09-26; question 26).
-  - [ ] Later: *Compare with working tree*, and *Unified diff* of two commits (#25).
+  - [x] Compare with working tree (wanted 2026-09-26; question 26).
+  - [ ] Later: *Unified diff* of two commits (#25); a diff window that reloads by itself
+        when its working-tree file changes.
   - [ ] The `+`/`−` sign by the pointer doesn't look good on Windows (reported 2026-09-26,
         with a photo). It is drawn at a fixed offset (10, 12) from the pointer
         (`version_badge` in `diff_window.rs`), which lands on the I-beam's lower right serif:

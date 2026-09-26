@@ -423,6 +423,11 @@ impl ParterreApp {
         }
         if let (Some(spec), Some(repo)) = (app.automation.demo_compare.clone(), app.repo.clone()) {
             match spec.split_once("..") {
+                Some((a, "WORKING_TREE")) => {
+                    if let Some(a) = demo_oid(&repo, a, "--demo-compare") {
+                        app.compare_request(CompareRequest::WorkingTree(a));
+                    }
+                }
                 Some((a, b)) => {
                     if let (Some(a), Some(b)) = (
                         demo_oid(&repo, a, "--demo-compare"),
@@ -1698,6 +1703,22 @@ impl ParterreApp {
                         action = Some(MenuAction::Compare(CompareRequest::Compare(a, b)));
                         ui.close();
                     }
+                    let working_tree = scene.repo.has_working_tree;
+                    let why = if !working_tree {
+                        "A bare repository has no working tree"
+                    } else {
+                        "Select one node"
+                    };
+                    let with_working_tree = ui
+                        .add_enabled(
+                            group.len() == 1 && working_tree,
+                            egui::Button::new("Compare with working tree"),
+                        )
+                        .on_disabled_hover_text(why);
+                    if with_working_tree.clicked() {
+                        action = Some(MenuAction::Compare(CompareRequest::WorkingTree(oid)));
+                        ui.close();
+                    }
                     let is_marked = marked.as_ref().is_some_and(|(m, _)| *m == oid);
                     let (text, mark) = if is_marked {
                         ("Clear the mark", None)
@@ -2017,8 +2038,8 @@ impl ParterreApp {
                         ("Ctrl+,", "Settings"),
                         (
                             "Right-click a node",
-                            "Show log, compare (with HEAD, two nodes, or the commit marked for \
-                             comparison), open its pull requests, copy hash or refs, select \
+                            "Show log, compare (with HEAD, the working tree, two nodes, or the \
+                             commit marked for comparison), open its pull requests, copy hash or refs, select \
                              its subtree, return it to the layout",
                         ),
                     ] {

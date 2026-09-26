@@ -2,8 +2,8 @@
 //! in the log window's changed-files table, with each opening a diff window. One at a time,
 //! like the log window; comparing other commits replaces what it shows.
 //!
-//! Opened on two graph nodes (Compare revisions), on one node or log row against HEAD, on the
-//! range of a range log, and against the commit marked for comparison. The mark is kept by the
+//! Opened on two graph nodes (Compare revisions), on one node or log row against HEAD or the
+//! working tree, on the range of a range log, and against the commit marked for comparison. The mark is kept by the
 //! app ([`ParterreApp::marked`](super::ParterreApp)) so that it outlives the log it was made in.
 
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use eframe::egui::{
     self, FontId, Id, Key, RichText, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 use parterre_core::compare::Comparison;
-use parterre_core::file_diff::FileDiffSpec;
+use parterre_core::file_diff::{FileDiffSpec, Rev};
 use parterre_core::glyphs;
 use parterre_core::log::commit_name;
 use parterre_core::revgraph::GraphOptions;
@@ -40,10 +40,13 @@ pub enum CompareRequest {
     Mark(Option<Oid>),
     /// Compare two commits, in the order they were picked (see [`Comparison::of`]).
     Compare(Oid, Oid),
+    /// Compare a commit with the working tree.
+    WorkingTree(Oid),
 }
 
-/// The common ancestor git found (`None` for unrelated histories, or on failure) and the files.
-type Compared = (Option<Oid>, Listing);
+/// Where the left side is read from (`None` for unrelated histories' common ancestor, or on
+/// failure) and the files.
+type Compared = (Option<Rev>, Listing);
 
 /// The compare window's state that outlives what it shows.
 #[derive(Debug, Default)]
@@ -99,11 +102,15 @@ impl CompareWindow {
         self.diffs.cancel();
     }
 
-    /// After a reload: names the commits by the new snapshot's refs. The commits stay.
+    /// After a reload: names the commits by the new snapshot's refs. The commits stay; the
+    /// working tree is listed again.
     pub fn reload(&mut self, repo: &Arc<Repo>) {
         if let Some(view) = &mut self.view {
             view.refs = repo.refs_by_commit();
             view.repo = repo.clone();
+            if view.comparison.reads_working_tree() {
+                self.files = Lister::default();
+            }
         }
     }
 
@@ -150,17 +157,17 @@ impl CompareWindow {
             widgets::icon_button(&mut tools, glyphs::SWAP, false),
             "Swap sides",
             "",
-            "Put the right-hand commit on the left, and the left-hand one on the right.",
+            "Put the right-hand side on the left, and the left-hand one on the right.",
         );
         if swap.clicked() {
             view.comparison = view.comparison.swapped();
         }
         let right = tools.min_rect().left() - 12.0;
         let sides = [("From", view.comparison.old), ("To", view.comparison.new)];
-        for (row, (label, oid)) in sides.into_iter().enumerate() {
+        for (row, (label, rev)) in sides.into_iter().enumerate() {
             let top = rect.top() + 6.0 + row as f32 * SIDE_ROW;
             let y = top + SIDE_ROW / 2.0;
-            side(ui, view, env, label, oid, (rect.left() + 12.0, right), y);
+            side(ui, view, env, label, rev, (rect.left() + 12.0, right), y);
         }
     }
 
@@ -192,15 +199,17 @@ impl CompareWindow {
                     ui.checkbox(since, "Since common ancestor"),
                     "Since common ancestor",
                     "",
-                    "Compare the right-hand commit with where the two histories forked, rather \
-                     than with the left-hand commit: only what the right-hand side changed \
-                     since then, as a pull request shows it (git diff A...B).",
+                    "Compare the right-hand side with where the two histories forked, rather \
+                     than with the left-hand side: only what the right-hand side changed \
+                     since then, as a pull request shows it (git diff A...B). The working \
+                     tree forks where HEAD does.",
                 );
                 let note = match base {
-                    Some(Some(base)) if comparison.since_ancestor => {
+                    Some(Some(Rev::Commit(base))) if comparison.since_ancestor => {
                         format!("from {}", base.short(abbrev))
                     }
                     Some(None) => "No common ancestor".to_owned(),
+                    _ if comparison.reads_working_tree() => "F5 lists the files again".to_owned(),
                     _ => String::new(),
                 };
                 ui.label(RichText::new(note).size(12.0).color(weak));
@@ -210,7 +219,7 @@ impl CompareWindow {
         let open = open
             .into_iter()
             .map(|f| {
-                let spec = FileDiffSpec::of_commit(comparison.new, Some(base), f);
+                let spec = FileDiffSpec::between(Some(base), comparison.new, f);
                 (view.repo.clone(), spec)
             })
             .collect();
@@ -219,14 +228,13 @@ impl CompareWindow {
 }
 
 /// One side in the header, centred on `y` between `x.0` and `x.1`: the label, the commit's
-/// ref badges, its short hash and its subject.
-#[allow(clippy::too_many_arguments)]
+/// ref badges, its short hash and its subject; or "Working tree".
 fn side(
     ui: &Ui,
     view: &CompareView,
     env: &Env,
     label: &str,
-    oid: Oid,
+    rev: Rev,
     (left, right): (f32, f32),
     y: f32,
 ) {
@@ -236,6 +244,19 @@ fn side(
     let g = painter.layout_no_wrap(label.to_owned(), FontId::proportional(12.0), weak);
     painter.galley(pos2(left, y - g.size().y / 2.0), g, weak);
     let mut x = left + 44.0;
+    let Rev::Commit(oid) = rev else {
+        let mut job = LayoutJob::default();
+        let font = FontId::proportional(13.5);
+        job.append("Working tree", 0.0, TextFormat::simple(font.clone(), text));
+        job.append(
+            "files on disk, staged or not",
+            10.0,
+            TextFormat::simple(font, weak),
+        );
+        let g = painter.layout_job(job);
+        painter.galley(pos2(x, y - g.size().y / 2.0), g, text);
+        return;
+    };
     let commit = view.repo.lookup(&oid);
     if let Some(ix) = commit {
         for &r in &view.refs[ix.ix()] {
@@ -285,6 +306,10 @@ impl ParterreApp {
                 });
             }
             CompareRequest::Compare(first, second) => self.compare(first, second),
+            CompareRequest::WorkingTree(commit) => {
+                let since = self.settings.compare_window.since_ancestor;
+                self.open_compare(Comparison::with_working_tree(commit, since));
+            }
         }
     }
 
@@ -311,7 +336,14 @@ impl ParterreApp {
             return;
         };
         let since = self.settings.compare_window.since_ancestor;
-        let comparison = Comparison::of(&repo, a, b, since);
+        self.open_compare(Comparison::of(&repo, a, b, since));
+    }
+
+    /// Opens the compare window on `comparison`.
+    fn open_compare(&mut self, comparison: Comparison) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
         let was_open = self.compare.is_open();
         let [w, h] = self.settings.compare_window.size;
         self.compare.open(repo, comparison, vec2(w, h));

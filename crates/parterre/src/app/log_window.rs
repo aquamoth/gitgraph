@@ -734,7 +734,8 @@ impl LogWindow {
                     .show(|ui| {
                         crate::menu::fit_window(ui, |ui| {
                             ui.set_min_width(crate::menu::MIN_WIDTH);
-                            if let Some(r) = row_menu(ui, commit, env.marked, head) {
+                            let tree = view.repo.has_working_tree;
+                            if let Some(r) = row_menu(ui, commit, env.marked, head, tree) {
                                 request = Some(r);
                             }
                         });
@@ -871,6 +872,7 @@ fn row_menu(
     commit: &Commit,
     marked: Option<&(Oid, String)>,
     head: Option<Oid>,
+    working_tree: bool,
 ) -> Option<CompareRequest> {
     let oid = commit.oid;
     let mut request = None;
@@ -911,6 +913,13 @@ fn row_menu(
         && let Some(h) = other_head
     {
         request = Some(CompareRequest::Compare(oid, h));
+        ui.close();
+    }
+    let with_working_tree = ui
+        .add_enabled(working_tree, egui::Button::new("Compare with working tree"))
+        .on_disabled_hover_text("A bare repository has no working tree");
+    if with_working_tree.clicked() {
+        request = Some(CompareRequest::WorkingTree(oid));
         ui.close();
     }
     crate::menu::separator(ui);

@@ -122,8 +122,9 @@ too), shown by a small `+` or `−` beside the pointer. Lines of the other versi
 textconv filters, as `git show` does; binary files and submodules say what changed instead.
 
 **Comparing two commits** lists the files they differ in, in a window with the same table;
-double-click one for its diff. Right-click a node for *Compare with HEAD*, or with two nodes
-selected *Compare revisions*. To compare commits far apart, *Mark for comparison* one (from
+double-click one for its diff. Right-click a node for *Compare with HEAD*, *Compare with
+working tree* (your uncommitted changes, staged or not; `F5` lists them again), or with two
+nodes selected *Compare revisions*. To compare commits far apart, *Mark for comparison* one (from
 the node menu or by right-clicking a row in the log) and pick *Compare with marked* on the
 other, from any log. A range log's *Compare files* compares its two ends. The window's
 *Since common ancestor* shows only what the right-hand side changed since the two forked, as

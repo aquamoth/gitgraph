@@ -160,7 +160,7 @@ struct Cli {
     demo_diff: Option<String>,
 
     /// Open the compare window on FIRST..SECOND (refs or hash prefixes, as if those nodes were
-    /// selected in that order) before taking the screenshot.
+    /// selected in that order; WORKING_TREE for the working tree) before taking the screenshot.
     #[arg(long, value_name = "REF..REF", hide = true)]
     demo_compare: Option<String>,
 
