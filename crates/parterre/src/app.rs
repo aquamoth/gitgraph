@@ -1259,77 +1259,79 @@ impl ParterreApp {
         egui::Popup::context_menu(&response)
             .style(menu::style)
             .show(|ui| {
-                ui.set_min_width(menu::MIN_WIDTH);
-                let Some(node) = context_node else {
-                    if ui.add(item("Fit graph", "F")).clicked() {
-                        action = Some(MenuAction::Fit);
-                        ui.close();
-                    }
-                    if ui.add(item("Return all nodes to layout", "R")).clicked() {
-                        action = Some(MenuAction::ResetAll);
-                        ui.close();
-                    }
-                    return;
-                };
-                let n = &scene.graph.nodes[node];
-                let commit = scene.repo.commit(n.commit);
-                // Right-clicking selects the node, so Ctrl+C would copy the same hash.
-                let copy_hash = if group.len() > 1 { "" } else { "Ctrl+C" };
-                if ui.add(item("Copy hash", copy_hash)).clicked() {
-                    ui.ctx().copy_text(commit.oid.to_hex());
-                    ui.close();
-                }
-                if ui.button("Copy ref names").clicked() {
-                    let names: Vec<&str> = n
-                        .refs
-                        .iter()
-                        .map(|&r| scene.repo.refs[r].full_name.as_str())
-                        .collect();
-                    let text = if names.is_empty() {
-                        commit.oid.to_hex()
-                    } else {
-                        names.join("\n")
+                menu::fit_window(ui, |ui| {
+                    ui.set_min_width(menu::MIN_WIDTH);
+                    let Some(node) = context_node else {
+                        if ui.add(item("Fit graph", "F")).clicked() {
+                            action = Some(MenuAction::Fit);
+                            ui.close();
+                        }
+                        if ui.add(item("Return all nodes to layout", "R")).clicked() {
+                            action = Some(MenuAction::ResetAll);
+                            ui.close();
+                        }
+                        return;
                     };
-                    ui.ctx().copy_text(text);
-                    ui.close();
-                }
-                if ui.button("Copy subject").clicked() {
-                    ui.ctx().copy_text(commit.subject.clone());
-                    ui.close();
-                }
-                menu::separator(ui);
-                if ui
-                    .button("Select subtree")
-                    .on_hover_text(
-                        "Select everything that grows out of this (first-parent descendants)",
-                    )
-                    .clicked()
-                {
-                    action = Some(MenuAction::SelectSubtree(group.clone()));
-                    ui.close();
-                }
-                let displaced: Vec<usize> = group
-                    .iter()
-                    .copied()
-                    .filter(|&n| scene.net.is_displaced(n))
-                    .collect();
-                let label = if group.len() > 1 {
-                    "Return selection to layout"
-                } else {
-                    "Return node to layout"
-                };
-                // Greyed out rather than left out, so the menu keeps its shape.
-                if ui
-                    .add_enabled(!displaced.is_empty(), egui::Button::new(label))
-                    .clicked()
-                {
-                    action = Some(MenuAction::ReturnToLayout(displaced));
-                    ui.close();
-                }
-                if ui.button("Centre view here").clicked() {
-                    action = Some(MenuAction::Center(node));
-                    ui.close();
-                }
+                    let n = &scene.graph.nodes[node];
+                    let commit = scene.repo.commit(n.commit);
+                    // Right-clicking selects the node, so Ctrl+C would copy the same hash.
+                    let copy_hash = if group.len() > 1 { "" } else { "Ctrl+C" };
+                    if ui.add(item("Copy hash", copy_hash)).clicked() {
+                        ui.ctx().copy_text(commit.oid.to_hex());
+                        ui.close();
+                    }
+                    if ui.button("Copy ref names").clicked() {
+                        let names: Vec<&str> = n
+                            .refs
+                            .iter()
+                            .map(|&r| scene.repo.refs[r].full_name.as_str())
+                            .collect();
+                        let text = if names.is_empty() {
+                            commit.oid.to_hex()
+                        } else {
+                            names.join("\n")
+                        };
+                        ui.ctx().copy_text(text);
+                        ui.close();
+                    }
+                    if ui.button("Copy subject").clicked() {
+                        ui.ctx().copy_text(commit.subject.clone());
+                        ui.close();
+                    }
+                    menu::separator(ui);
+                    if ui
+                        .button("Select subtree")
+                        .on_hover_text(
+                            "Select everything that grows out of this (first-parent descendants)",
+                        )
+                        .clicked()
+                    {
+                        action = Some(MenuAction::SelectSubtree(group.clone()));
+                        ui.close();
+                    }
+                    let displaced: Vec<usize> = group
+                        .iter()
+                        .copied()
+                        .filter(|&n| scene.net.is_displaced(n))
+                        .collect();
+                    let label = if group.len() > 1 {
+                        "Return selection to layout"
+                    } else {
+                        "Return node to layout"
+                    };
+                    // Greyed out rather than left out, so the menu keeps its shape.
+                    if ui
+                        .add_enabled(!displaced.is_empty(), egui::Button::new(label))
+                        .clicked()
+                    {
+                        action = Some(MenuAction::ReturnToLayout(displaced));
+                        ui.close();
+                    }
+                    if ui.button("Centre view here").clicked() {
+                        action = Some(MenuAction::Center(node));
+                        ui.close();
+                    }
+                });
             });
         match action {
             Some(MenuAction::Fit) => self.fit(),
