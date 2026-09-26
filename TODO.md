@@ -241,6 +241,15 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
         the fork's own PRs into its parent) whose base branch is visible. No fetching.
   - [ ] Slice 2: fetch other PR heads commits-only into a private cache; greyed-out nodes,
         dashed edges.
+- [ ] Menus that overflow the window on Windows, like TortoiseGit's native ones: each menu (and
+      submenu) as a borderless egui viewport placed in screen coordinates, kept on the monitor
+      by sliding up from its bottom edge. Needs a Windows agent to build and try it; watch
+      for the main window losing focus while a menu is open, and find the monitor's work area
+      for multi-monitor setups. Hover-to-open submenus, closing on outside clicks and the
+      keyboard then work across windows, so egui's menu logic has to be redone. For now menus
+      stay inside the window and scroll (`menu::fit_window`). Not planned: Wayland (winit 0.30
+      has no xdg_popup, and a client can't place its own windows), macOS (no agent to test
+      on), X11 (possible with override-redirect windows, but few users).
 
 ## Done
 
@@ -329,3 +338,6 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       with their options; everything again in the ☰ menu, in the toolbar's order; the rest in
       a settings window that leaves the graph visible and applies changes at once. The status
       bar can be hidden, and no longer shows the layout time or the drag mode's description.
+- [x] A menu or popover taller than the window scrolls, with a visible thin scroll bar, instead
+      of being cut off at the bottom; one that fits but not below its button slides up to the
+      window's bottom edge, as before.
