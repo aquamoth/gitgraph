@@ -1538,6 +1538,7 @@ mod tests {
             path: "src/new.rs".into(),
             old_path: Some("lib/old.rs".into()),
             status: FileStatus::Renamed,
+            modes: [0o100644; 2],
             added: Some(1),
             removed: Some(0),
         }
