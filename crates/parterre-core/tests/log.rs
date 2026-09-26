@@ -305,9 +305,9 @@ fn odd_file_names_survive() {
         "\"quoted\"",
     ];
     for name in names {
-        r.write(name, b"x\n");
+        r.stage(name, b"x\n");
     }
-    r.commit_all("odd");
+    r.commit("odd");
     let files = changed(&r, "HEAD");
     let mut got: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     got.sort_unstable();
@@ -321,9 +321,9 @@ fn odd_file_names_survive() {
 fn changed_files_are_in_path_order() {
     let mut r = TestRepo::new();
     for name in ["b.txt", "A/z.txt", "a.txt", "C.txt", "a/sub/x", "a/y"] {
-        r.write(name, b"x\n");
+        r.stage(name, b"x\n");
     }
-    r.commit_all("tree");
+    r.commit("tree");
     let files = changed(&r, "HEAD");
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(

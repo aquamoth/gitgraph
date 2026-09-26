@@ -2,8 +2,9 @@
 
 #![allow(dead_code)]
 
+use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use parterre_core::Repo;
 use tempfile::TempDir;
@@ -46,6 +47,47 @@ impl TestRepo {
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// Runs git with `input` on its standard input; returns its trimmed output.
+    pub fn git_with_input(&self, args: &[&str], input: &[u8]) -> String {
+        let mut child = Command::new("git")
+            .current_dir(self.dir.path())
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run git");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(input)
+            .expect("write to git");
+        let out = child.wait_with_output().expect("wait for git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// Puts a file straight into the index, without the working tree, so that names the
+    /// file system can't hold (`A/` beside `a/` on macOS and Windows; newlines, tabs, `:` or
+    /// `"` on Windows) still get into commits. Commit with [`TestRepo::commit`].
+    pub fn stage(&self, path: &str, contents: &[u8]) {
+        // Git for Windows refuses such names in the index unless told not to.
+        self.git(&["config", "core.protectNTFS", "false"]);
+        let blob = self.git_with_input(&["hash-object", "-w", "--stdin"], contents);
+        let entry = format!("100644 {blob}\t{path}\0");
+        self.git_with_input(
+            &["update-index", "-z", "--add", "--index-info"],
+            entry.as_bytes(),
+        );
     }
 
     /// Makes an empty commit with `message` as subject and returns its hash.
