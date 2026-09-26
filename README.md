@@ -92,7 +92,9 @@ parterre adds:
 *Show log* opens a window listing a node's history, or the commits between two selected
 nodes, like TortoiseGit's log: the selected commit's message and the files it changed, which
 you can sort and filter. In it, the arrow keys move through the commits, `F5` reloads and
-`Esc` closes it.
+`Esc` closes it. Four layouts arrange its panes: stacked as in TortoiseGit, side by side,
+details and files below, or files on the right. Pick one in the window's header or in
+*Settings → Appearance*; the dividers between the panes are remembered for each layout.
 
 Colours follow TortoiseGit:
 

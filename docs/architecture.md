@@ -10,6 +10,7 @@ crates/parterre-core   GUI-free; everything testable lives here
                        length
   log.rs               log query: tips and exclusions → commits in `git log --date-order`
                        order, from the snapshot alone
+  log_layout.rs        the log window's four fixed layouts and their divider positions
   changed_files.rs     changed-file types, `diff-tree -z` parser, files-before-folders order,
                        the log window's file filter and column sort
   text.rs              URLs in commit messages, paths cut at the start, thousands separators
@@ -34,8 +35,9 @@ crates/parterre        the binary (eframe/egui)
     toolbar.rs         the toolbar, its popovers and the ☰ menu
     settings_window.rs the settings: pages of rows, applied as you change them
     log_window.rs      the log window (Show log): an immediate viewport with three panes
-                       (commits, details, changed files) that a layout arranges (stacked
-                       only, so far); changed files come from git on a worker thread
+                       (commits, details, changed files) that one of four fixed layouts
+                       arranges, picked in its header; changed files come from git on a
+                       worker thread
   scene.rs             node contents and sizes + layout + physics net, hit testing
   render.rs            painting nodes, edges, arrows, overview
   view.rs              pan/zoom transform
@@ -45,7 +47,7 @@ crates/parterre        the binary (eframe/egui)
   widgets.rs           icon buttons, segmented buttons, switches, text fields
   settings.rs          persisted settings and the Classic/Modern looks
   automation.rs        --screenshot / --demo-drag / --demo-menu / --demo-open / --demo-log
-                       scripted runs
+                       scripted runs (the log window's layout: --log-layout)
 ```
 
 ## Data flow

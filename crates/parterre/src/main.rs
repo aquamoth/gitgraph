@@ -30,6 +30,7 @@ use std::process::ExitCode;
 use clap::{Parser, ValueEnum};
 use eframe::egui;
 use parterre_core::layout::Direction;
+use parterre_core::log_layout::LogLayout;
 use parterre_core::physics::DragModel;
 use parterre_core::revgraph::Simplification;
 
@@ -141,6 +142,11 @@ struct Cli {
     #[arg(long, value_name = "REF[..REF]", hide = true)]
     demo_log: Option<String>,
 
+    /// The log window's layout (for --demo-log): stacked, side-by-side, details-below or
+    /// files-right, or a, b, c or d.
+    #[arg(long, value_enum, hide = true)]
+    log_layout: Option<LogLayoutArg>,
+
     /// What moves when dragging (for --demo-drag).
     #[arg(long, value_enum, hide = true)]
     drag_mode: Option<DragModeArg>,
@@ -151,6 +157,18 @@ enum DragModeArg {
     Adapt,
     Free,
     Subtree,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LogLayoutArg {
+    #[value(alias = "a")]
+    Stacked,
+    #[value(alias = "b")]
+    SideBySide,
+    #[value(alias = "c")]
+    DetailsBelow,
+    #[value(alias = "d")]
+    FilesRight,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -334,6 +352,14 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
             DragModeArg::Adapt => DragModel::Adapt,
             DragModeArg::Free => DragModel::Free,
             DragModeArg::Subtree => DragModel::Subtree,
+        };
+    }
+    if let Some(layout) = cli.log_layout {
+        s.log_window.layout = match layout {
+            LogLayoutArg::Stacked => LogLayout::Stacked,
+            LogLayoutArg::SideBySide => LogLayout::SideBySide,
+            LogLayoutArg::DetailsBelow => LogLayout::DetailsBelow,
+            LogLayoutArg::FilesRight => LogLayout::FilesRight,
         };
     }
     if let Some(theme) = cli.theme {

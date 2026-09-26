@@ -263,6 +263,8 @@ impl ParterreApp {
             .and_then(|s| eframe::get_value(s, STORAGE_KEY))
             .unwrap_or_default();
         overrides(&mut settings);
+        // Settings edited by hand or saved by another version may put a divider out of reach.
+        settings.log_window.dividers = settings.log_window.dividers.clamped();
         let moves: RememberedMoves = cc
             .storage
             .filter(|_| persist)
