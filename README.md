@@ -108,6 +108,19 @@ you can sort and filter. In it, the arrow keys move through the commits, `F5` re
 details and files below, or files on the right. Pick one in the window's header or in
 *Settings → Appearance*; the dividers between the panes are remembered for each layout.
 
+Double-click a changed file, or select some (`Ctrl`+click, `Shift`+click) and press `Enter`, to
+see its **file diff** in a window of its own; several can be open at once. The diff is
+side by side or unified (`Ctrl+D`), with changed words marked, unchanged stretches folded
+(click a fold to open it), an overview of the changes on the right, and long lines that
+scroll sideways. `Ctrl+Down` / `Ctrl+Up` (or `F7` / `Shift+F7`) move between changes. The
+toolbar also picks how changed words are found and whether whitespace counts. Drag over the
+old or the new text (double-click for a word, `Shift`+click to extend, `Ctrl+A` for all) or
+click line numbers for whole lines, then `Ctrl+C` copies it as it is in the file, tabs kept.
+In the unified form you choose in one version: the one of the line you start on (a removed
+line, or the old numbers, for the old version; `Ctrl` on an unchanged line for the old one
+too), shown by a small `+` or `−` beside the pointer. Lines of the other version are left out. Files go through git's
+textconv filters, as `git show` does; binary files and submodules say what changed instead.
+
 Colours follow TortoiseGit:
 
 | Label | Colour |

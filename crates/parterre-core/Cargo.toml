@@ -17,6 +17,8 @@ readme = "README.md"
 github = ["dep:ureq"]
 
 [dependencies]
+# Line and word diffs for file diffs (histogram, git's indent heuristic); chosen in #44.
+imara-diff = { version = "0.2", default-features = false }
 serde.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true

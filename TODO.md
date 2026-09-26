@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 25._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 26._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -15,7 +15,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 
    On Apps, ~160 remote branches hang off a few commits. In Classic that gives rows many
    thousands of pixels wide with fans of near-horizontal lines. Modern reads like a tree.
-   Which do you want by default?
+   Which do you want by default? Answered 2026-09-26: Modern.
 2. **Rearranging by hand.** Reworked from your notes of 2026-09-24:
    - A dropped node is no longer pinned. Wherever things come to rest becomes their new
      resting shape, so moved nodes keep giving way to later drags like any other node.
@@ -74,7 +74,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
      another modifier (such as holding Space) could give a one-off Free drag.
    - **Remembering moves.** *Remember moved nodes* (in the drag options, off by default) keeps
      nodes where they rest, per repository, across runs and relayouts. Should it be on by
-     default?
+     default? Answered 2026-09-26: no, off.
 3. **Fidelity quirks in "Labelled commits" (TortoiseGit's default mode).** TortoiseGit uses
    `git log --simplify-by-decoration` and inherits git's simplifications:
    - A `--no-ff` merge whose first parent is an ancestor of its second is folded away.
@@ -85,7 +85,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
    "Branchings and merges" and "All commits" show the real topology. Keep the fidelity?
 4. **Initial view.** As in TortoiseGit, the window opens at 100% with HEAD near the top. On
    big graphs that shows only a small area. Would fit-to-window, or a fixed zoom such as 60%,
-   be better?
+   be better? Answered 2026-09-26: keep 100% on the current branch, but reopen at the zoom and
+   position last stored for the repository (planned).
 5. **Layer spacing.** Gaps between rows grow when long sideways edges cross them. TortoiseGit
    (OGDF) does the same, capped at 300 px. This keeps edges steep but makes the graph taller.
    Tune it under *Settings → Advanced*. Happy with the default?
@@ -96,10 +97,12 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 8. **Other refs** (`refs/t3/*` in Apps) are hidden by default; ☰ → Show → Other refs shows them.
 9. **HEAD marker.** Like TortoiseGit, only the current branch's row is highlighted (red). A
    detached HEAD gets its own red "HEAD" row, which TortoiseGit doesn't have.
-10. **No git actions.** Answered 2026-09-26: yes, towards parity with TortoiseGit's node menu.
-    The roadmap, its boundary rule and the open decisions live in the map *Revision-graph node
-    menu: roadmap to TortoiseGit parity* ([#25](https://github.com/aquamoth/parterre/issues/25)).
-    Show log comes first; *Browse repository* and the menu-bar Git menu are out.
+10. **No git actions.** Answered 2026-09-26: yes, towards functional parity with TortoiseGit's
+    workflows from the revision graph and the log (its node menu was the starting inventory).
+    The roadmap, its boundary rules and the open decisions live in the map *Roadmap to
+    TortoiseGit parity: revision graph and log*
+    ([#25](https://github.com/aquamoth/parterre/issues/25)). Show log came first, diffs come
+    next; *Browse repository* and the menu-bar Git menu are out.
 11. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
     commits, 2,490 refs and 1,846 merges:
     - Loading takes 0.6 s.
@@ -272,7 +275,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 22. **Reloading automatically** (from the planned list, 2026-09-26). TortoiseGit reloads
     only on F5; parterre now also reloads by itself when the branches, tags or HEAD change, as
     after a commit, checkout or fetch in another program. Decisions you may want to overrule:
-    - **On by default.** ☰ → *Reload automatically* and *Settings → Graph* turn it off.
+    - **On by default** (confirmed 2026-09-26). ☰ → *Reload automatically* and
+      *Settings → Graph* turn it off.
     - **How it notices:** every second it looks at the files git keeps refs in (`HEAD`,
       `packed-refs`, `refs/`, reftable), without running git and without a file-watching
       crate. Only when they change, and have stayed unchanged for 0.3 s (so a rebase is loaded
@@ -312,7 +316,13 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       extensions; before, it wrote SVG whatever the name. A name without an extension still
       gets SVG.
 
-24. **Pull requests on GitHub, slice 1** (research §12 and §14). Not in TortoiseGit. Tried on
+24. **Log search** (wanted 2026-09-26, "super-useful"; to discuss, not decided yet). Filters in
+    the log window by date range, author and text, and perhaps a log of the whole repository
+    opened without a node. Ruled out of the first log window
+    ([#27](https://github.com/aquamoth/parterre/issues/27)); the log query is shaped so these
+    can be added as new fields and callers. Which searches, and when?
+
+25. **Pull requests on GitHub, slice 1** (research §12 and §14). Not in TortoiseGit. Tried on
     a commits-only clone of `cli/cli`: 63 open pull requests, 25 of them from its own branches,
     shown; the 38 from forks need slice 2. Calls you may want to overrule:
     - **Asked for as t3code does** (your call of 2026-09-26, after looking at how t3code
@@ -364,8 +374,9 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       guess.
     - **The label:** a row below the node's refs with the number right-aligned (your request
       of 2026-09-26) after the pull-request glyph, pale blue, drafts pale grey (both
-      lightness-inverted in the dark theme). Hovering underlines the number, as a link. A commit whose only label is a pull request shows no hash, as with a ref. Several
-      on one commit get a row each.
+      lightness-inverted in the dark theme). Hovering underlines the number, as a link. A
+      commit whose only label is a pull request shows no hash, as with a ref. Several on one
+      commit get a row each.
     - **Clicking the number opens the pull request** and also selects the node; Ctrl or Shift
       clicks only select, and a double-click opens it once and no log. Hovering shows a hand
       cursor and the title, author, draft state and `branch into base` (`owner:branch` for a
@@ -393,6 +404,47 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 
 ## Planned
 
+- [ ] Reopen a repository at the zoom and position it last had, stored per repository like
+      the remembered moves; without a stored view, 100% with the current branch near the top,
+      as today (question 4, decided 2026-09-26).
+- [ ] Text size with `Ctrl`+wheel in every window besides the graph: the log window, the
+      diff windows and the settings, as the graph zooms with it (wanted 2026-09-26). Probably
+      also `Ctrl`+`+`/`-`/`0`. Open: one size shared by all these windows or one each, and
+      whether it is remembered with the settings.
+- [ ] File diffs from the log window, being charted in the map *Roadmap to TortoiseGit
+      parity: revision graph and log* ([#25](https://github.com/aquamoth/parterre/issues/25)):
+      read-only, one diff window per file, diffed by `imara-diff` (lines and words; decided in
+      [#44](https://github.com/aquamoth/parterre/issues/44); what the window shows and does in
+      [#45](https://github.com/aquamoth/parterre/issues/45)). Blame is a stretch goal.
+  - [ ] Optional, deferred: *Open in external diff tool*, handing both versions to the user's
+        configured diff tool, as TortoiseGit does by default. Not behind the built-in view;
+        decided in [#44](https://github.com/aquamoth/parterre/issues/44).
+  - [ ] Optional, if users ask: a choice of diff engine, e.g. git's own patch (honouring
+        `diff.algorithm`) beside the default `imara-diff`
+        ([#44](https://github.com/aquamoth/parterre/issues/44)).
+  - [ ] Optional: honour git's `encoding` attribute (the one gitk uses) to decode non-UTF-8
+        files, e.g. with `encoding_rs` (+191 KiB, 4 crates). Until then, invalid UTF-8 shows
+        as `\xNN` ([#44](https://github.com/aquamoth/parterre/issues/44)).
+  - [x] File diff core, diff window, selection and copying lines
+        ([#51](https://github.com/aquamoth/parterre/issues/51),
+        [#52](https://github.com/aquamoth/parterre/issues/52),
+        [#53](https://github.com/aquamoth/parterre/issues/53)). Deliberate deviations from
+        TortoiseGit (TortoiseGitMerge), decided in #45 and #46:
+    - unchanged stretches are folded by default (TortoiseGitMerge's "Collapse" is off);
+    - line endings count by default, and "Ignore whitespace changes" ignores them too, with a
+      note saying so (TortoiseGitMerge ignores line endings by default, silently);
+    - changed words pair each removed line with the most similar added line, and the
+      pairing can be switched (TortoiseGitMerge compares lines by position only);
+    - the change marks live in an overview strip on the right, not a locator bar on the
+      left; it scrolls on click, as the locator bar does.
+  - [ ] Stretch goal: wrap long lines, as a toggle in the diff window's toolbar. Until then
+        long lines scroll sideways ([#45](https://github.com/aquamoth/parterre/issues/45)).
+  - [x] Free text selection in either pane, copied as in the file (wanted 2026-09-26).
+  - [ ] Optional: find in a diff window (Ctrl+F)
+        ([#45](https://github.com/aquamoth/parterre/issues/45)).
+  - [ ] Another day: open a diff from outside parterre, e.g. right-click an edited file in the
+        file manager and diff it with its previous commit
+        ([#45](https://github.com/aquamoth/parterre/issues/45)).
 - [ ] Wayland freeze workaround (#38, see Done). **Check regularly, and on every eframe
       upgrade, whether the upstream fix has shipped:**
       <https://github.com/emilk/egui/pull/8631> (bug:
@@ -536,8 +588,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] A menu or popover taller than the window scrolls, with a visible thin scroll bar, instead
       of being cut off at the bottom; one that fits but not below its button slides up to the
       window's bottom edge, as before.
-- [x] Show log window, as planned in the map *Revision-graph node menu: roadmap to TortoiseGit
-      parity* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
+- [x] Show log window, as planned in the map *Roadmap to TortoiseGit parity: revision graph
+      and log* ([#25](https://github.com/aquamoth/parterre/issues/25)). Deliberate deviation
       from TortoiseGit (decided in #28): when the second of two selected nodes is an ancestor
       of the first, the two are swapped instead of showing an empty list.
   - [x] Layout A (stacked) and its entry points: *Show log* first in the node menu, `L` and
@@ -550,7 +602,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       happened with Settings already. Worked around (see `frame_pacing.rs`, and
       `docs/research/wayland-viewport-freeze.md` on the branch
       `research/wayland-viewport-freeze`): on Wayland only, vsync off and frames capped at about
-      8 ms. Not verified on Wayland after the change (no headless Wayland to test with).
+      8 ms. Verified by hand on GNOME Wayland on 2026-09-26, with the log and diff windows.
 - [x] Settings window without minimize and maximize buttons. It is a dialog, and maximizing it
       breaks its layout. Asked of winit, which (0.30) does this on Windows and macOS only. On
       Linux it ignores the request: there the window loses only its maximize button, because it
@@ -572,7 +624,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       and the drag net's neighbour lists are stored flat, which took the 100k-commit
       all-commits view from 900 to 740 MB and its layout from about 3 s to 2 s. What is left
       is mostly the drag net (about 170 bytes for each of 1.6M particles); question 11.
-- [x] Open pull requests on GitHub as labels on their head commits, slice 1 (question 24):
+- [x] Open pull requests on GitHub as labels on their head commits, slice 1 (question 25):
       a toolbar toggle (☰ → *Show* and *Settings → Graph* too), click or the node menu to open
       one in the browser, `--pull-requests`. Only commits already fetched; no fetching yet.
 - [x] PNG and WebP export (question 23): ☰ → *Export* → *PNG…* or *WebP…*, and

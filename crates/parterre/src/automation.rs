@@ -30,6 +30,11 @@ pub struct Automation {
     /// Open the log window on `<ref>` or `<ref>..<ref>` (as if those nodes were selected in
     /// that order) before the screenshot.
     pub demo_log: Option<String>,
+    /// Open a diff window on `<commit>:<path>` (against the commit's first parent) before the
+    /// screenshot.
+    pub demo_diff: Option<String>,
+    /// Something is still loading (a diff): hold the screenshot.
+    pub waiting: bool,
     /// Where the context menu is opened, once chosen.
     menu_at: Option<Pos2>,
     /// When (in egui's clock) the menu or popover was opened.
@@ -167,7 +172,11 @@ impl Automation {
 
         let shoot_at = if self.demo_drag.is_some() {
             DRAG_START + DRAG_FRAMES + SETTLE_FRAMES
-        } else if self.demo_menu.is_some() || self.demo_open.is_some() || self.demo_log.is_some() {
+        } else if self.demo_menu.is_some()
+            || self.demo_open.is_some()
+            || self.demo_log.is_some()
+            || self.demo_diff.is_some()
+        {
             MENU_START + 60
         } else {
             8
@@ -176,7 +185,7 @@ impl Automation {
         let faded_in = self.opened_at.is_none_or(|t| {
             ctx.input(|i| i.time) - t > 2.0 * f64::from(ctx.global_style().animation_time)
         });
-        if self.frame >= shoot_at && faded_in && !self.requested {
+        if self.frame >= shoot_at && faded_in && !self.waiting && !self.requested {
             self.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }
