@@ -16,8 +16,8 @@ installed and logged in. "unauth" means no token was sent.
 
 **Decided scope (2026-09-26):** open PRs only, shown as PR-icon tags on nodes. See §12 and §14.
 **Built (slice 1):** differently from §3, §6 and §12.2, after looking at how t3code does it:
-signed in only, per fetched branch over GraphQL, cached, within a budget. See `TODO.md`,
-question 25.
+signed in only, per fetched branch over GraphQL, cached, within a budget. See
+[#95](https://github.com/aquamoth/parterre/issues/95).
 The points below cover everything that was investigated.
 
 - **PR heads come through git alone.** GitHub publishes `refs/pull/<N>/head` for every PR, open
@@ -44,8 +44,7 @@ The points below cover everything that was investigated.
   extra crates. Alternatively, shell out to `curl`/`gh api` and add no crates. The app loads on
   a background thread, and the graph shows the local repository at once. Remote-only refs arrive
   later with their own `RefKind`s and colours. The whole thing is off by default.
-- **Deviation from TortoiseGit:** TortoiseGit has nothing like this (§9). Record that in
-  `TODO.md` when it is built.
+- **Deviation from TortoiseGit:** TortoiseGit has nothing like this (§9).
 
 ## Sources (pinned)
 
@@ -459,8 +458,7 @@ pub trait Forge {
 - A code search of TortoiseGit's default branch for `api.github.com` found no hits, and
   `refs/pull` appears only in a bundled git manual page
   (tested 2026-09-26: `gh api search/code -f q='… repo:TortoiseGit/TortoiseGit'`).
-  **(derived)** This feature is a deliberate deviation. When built, it needs a code comment
-  and an entry in `TODO.md`, per `CLAUDE.md`.
+  **(derived)** This feature is a deliberate deviation.
 
 ## 10. UX and graph (derived)
 
@@ -660,7 +658,8 @@ label. It is not a new line and not a new node. Clicking the tag opens the PR in
 
 ## 15. Azure DevOps origins (findings, 2026-09-26; not built)
 
-Parked until someone asks for it (`TODO.md`, Planned). What was found while estimating it:
+Parked until someone asks for it ([#102](https://github.com/aquamoth/parterre/issues/102)). What
+was found while estimating it:
 
 - **Reusable as is:** the model (`forge::PullRequest`, `Remote`, `PullRequests::heads`, which
   places pull requests on commits and finds their base refs by remote and branch name), the

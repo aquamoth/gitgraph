@@ -10,7 +10,7 @@
 //! change to the file in a diff window, or show the log from its commit. The toolbar says
 //! whether whitespace changes and moved lines count, remembered for the next window.
 //!
-//! Deliberate deviations from TortoiseGitBlame (see `TODO.md`): no log pane of the file's
+//! Deliberate deviations from TortoiseGitBlame (see #104): no log pane of the file's
 //! history beside the text (the log window shows history), and only whole lines are chosen
 //! for copying.
 
