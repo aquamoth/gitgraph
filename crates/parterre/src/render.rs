@@ -124,13 +124,16 @@ pub fn paint_scene(
                 continue;
             }
             if let RowKind::PullRequest { index, .. } = row.kind {
-                let (end, icon) = pull_request_label(row_rect, row.width, zoom);
+                // The label's lengths all grow with the zoom, so this keeps them their size
+                // on screen, whatever the text size.
+                let (end, icon) = pull_request_label(row_rect, row.width, fixed(zoom));
                 let number =
                     painter.text(end, Align2::RIGHT_CENTER, &row.label, font.clone(), text);
                 widgets::paint_glyph(painter, icon, glyphs::PULL_REQUEST, text);
                 if marks.hovered_pull_request == Some(index) {
-                    let y = number.bottom() - zoom;
-                    painter.hline(number.x_range(), y, Stroke::new(zoom.max(1.0), text));
+                    let y = number.bottom() - fixed(zoom);
+                    let stroke = Stroke::new(fixed(zoom.max(1.0)), text);
+                    painter.hline(number.x_range(), y, stroke);
                 }
             } else {
                 painter.text(
