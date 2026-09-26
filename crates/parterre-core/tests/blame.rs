@@ -131,8 +131,9 @@ fn whitespace_and_moved_lines_can_be_ignored() {
 #[test]
 fn a_file_with_odd_characters_in_its_name_is_blamed() {
     let mut r = TestRepo::new();
-    r.write("we \"ird\" é.txt", b"x\n");
-    let c = r.commit_all("odd");
+    // Straight into the index: Windows can't hold a `"` in a file name.
+    r.stage("we \"ird\" é.txt", b"x\n");
+    let c = r.commit("odd");
     let b = blame(&r, &at(&c, "we \"ird\" é.txt"), BlameOptions::default());
     assert_eq!(b.origins[0].path, "we \"ird\" é.txt");
 }
