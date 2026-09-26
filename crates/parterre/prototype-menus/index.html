@@ -1,0 +1,746 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Question: how should parterre's toolbar, menus and settings be
+  organised? Round 1: three structurally different variants, A–C (B was dropped). Round 2: D,
+  A's full ☰ menu with lighter versions of C's quick settings, a Chrome-like zoom button, and a
+  settings window that leaves the graph visible and updates it live. Switch with ?variant=D|A|C
+  (or the arrows in the bottom bar, or the ← → keys). ?theme=light|dark.
+  Nothing here is wired to parterre; the graph is an SVG export of the demo repository.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>parterre – menu prototype</title>
+<style>
+@font-face { font-family: "egui"; src: url("Ubuntu-Light.ttf"); }
+@font-face { font-family: "eguimono"; src: url("Hack-Regular.ttf"); }
+:root {
+  --font: "egui", "Ubuntu", sans-serif;
+}
+.light {
+  --desk: #c9c3d6; --panel: #f7f7f7; --canvas: #ffffff; --text: #262626; --weak: #8a8a8a;
+  --line: rgba(0,0,0,.10); --hover: rgba(0,0,0,.055); --press: rgba(0,0,0,.10);
+  --seg: rgba(0,0,0,.06); --seg-on: #ffffff; --seg-on-shadow: 0 1px 2px rgba(0,0,0,.18);
+  --on-bg: #d7e8fd; --on-fg: #1a5fb4; --field: #ffffff; --field-line: rgba(0,0,0,.14);
+  --menu: #ffffff; --menu-line: rgba(0,0,0,.11); --shadow: 0 6px 24px rgba(0,0,0,.19);
+  --title: #ebebeb; --title-btn: rgba(0,0,0,.08); --accent: #3584e4; --tip: #ffffff;
+  --dim: rgba(0,0,0,.18);
+}
+.dark {
+  --desk: #2a2536; --panel: #1f1f1f; --canvas: #1e1e1e; --text: #dcdcdc; --weak: #8e8e8e;
+  --line: rgba(255,255,255,.09); --hover: rgba(255,255,255,.08); --press: rgba(255,255,255,.13);
+  --seg: rgba(255,255,255,.07); --seg-on: #4a4a4a; --seg-on-shadow: 0 1px 2px rgba(0,0,0,.5);
+  --on-bg: #213a57; --on-fg: #8ec2ff; --field: #2a2a2a; --field-line: rgba(255,255,255,.12);
+  --menu: #282828; --menu-line: rgba(255,255,255,.08); --shadow: 0 6px 24px rgba(0,0,0,.47);
+  --title: #2e2e2e; --title-btn: rgba(255,255,255,.10); --accent: #3584e4; --tip: #303030;
+  --dim: rgba(0,0,0,.35);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--desk); font: 13px/1.25 var(--font); color: var(--text);
+  display: flex; align-items: center; justify-content: center; }
+.win { width: min(1240px, 96vw); height: min(780px, calc(100vh - 80px)); margin-bottom: 50px; background: var(--panel);
+  border-radius: 12px 12px 0 0; overflow: hidden; display: flex; flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0,0,0,.35); position: relative; }
+/* Stand-in for the OS title bar (Adwaita here); not part of the question. */
+.titlebar { height: 46px; flex: none; background: var(--title); display: flex; align-items: center;
+  justify-content: center; font-weight: bold; font-family: "Cantarell", "Ubuntu", sans-serif;
+  font-size: 14.5px; position: relative; }
+.titlebar .wb { position: absolute; right: 10px; display: flex; gap: 12px; }
+.titlebar .wb span { width: 24px; height: 24px; border-radius: 50%; background: var(--title-btn);
+  display: grid; place-items: center; font-size: 11px; font-weight: normal; }
+.bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  border-bottom: 1px solid var(--line); background: var(--panel); min-height: 44px; }
+.bar .spacer { flex: 1; }
+.vsep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+.canvas { flex: 1; background: var(--canvas); overflow: hidden; position: relative;
+  display: flex; justify-content: center; align-items: flex-start; }
+.canvas img { margin-top: 18px; }
+.status[hidden] { display: none; }
+.status { flex: none; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 10px;
+  border-top: 1px solid var(--line); font-size: 12.5px; }
+.status .mono { font-family: eguimono, monospace; font-size: 12px; }
+.status .right { margin-left: auto; color: var(--weak); }
+
+/* Buttons */
+.ib { height: 30px; min-width: 30px; padding: 0 6px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--text); display: inline-flex; align-items: center;
+  justify-content: center; gap: 6px; font: inherit; cursor: default; }
+.ib:hover { background: var(--hover); }
+.ib:active { background: var(--press); }
+.ib.on { background: var(--on-bg); color: var(--on-fg); }
+.ib.open { background: var(--press); }
+.ib svg { width: 18px; height: 18px; flex: none; }
+.ib .caret { width: 12px; height: 12px; margin-left: -3px; opacity: .7; }
+.ib.text { padding: 0 9px; }
+.seg { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--seg); gap: 2px; }
+.seg .ib { height: 26px; border-radius: 7px; }
+.seg .ib.sel { background: var(--seg-on); box-shadow: var(--seg-on-shadow); }
+.seg .ib:not(.sel):hover { background: var(--hover); }
+.zoomlabel { min-width: 48px; font-variant-numeric: tabular-nums; }
+.menubtn { height: 28px; padding: 0 9px; border-radius: 7px; border: 0; background: transparent;
+  color: var(--text); font: inherit; }
+.menubtn:hover, .menubtn.open { background: var(--hover); }
+
+/* Find */
+.find { display: flex; align-items: center; height: 30px; border-radius: 8px; background: var(--field);
+  border: 1px solid var(--field-line); padding: 0 4px 0 8px; gap: 4px; width: 260px; flex-shrink: 1; min-width: 170px; }
+.find:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.find svg { width: 16px; height: 16px; color: var(--weak); flex: none; }
+.find input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; }
+.find input::placeholder { color: var(--weak); }
+.find .kbd { font-size: 11px; color: var(--weak); border: 1px solid var(--field-line); border-radius: 4px; padding: 0 4px; }
+.find .count { font-size: 12px; color: var(--weak); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.find .mini { width: 22px; height: 22px; min-width: 22px; padding: 0; border-radius: 5px; }
+.find .mini svg { width: 14px; height: 14px; color: var(--text); }
+.find.wide { width: 380px; }
+
+/* Menus and popovers */
+.menu { position: absolute; z-index: 20; min-width: 220px; background: var(--menu); border-radius: 10px;
+  border: 1px solid var(--menu-line); box-shadow: var(--shadow); padding: 6px; }
+.mi { height: 30px; display: flex; align-items: center; padding: 0 10px 0 8px; border-radius: 6px; gap: 8px;
+  white-space: nowrap; position: relative; }
+.mi:hover, .mi.subopen { background: var(--hover); }
+.mi .chk { width: 16px; height: 16px; flex: none; color: var(--text); display: grid; place-items: center; }
+.mi .chk svg { width: 14px; height: 14px; }
+.mi .lbl { flex: 1; }
+.mi .key { color: var(--weak); margin-left: 24px; font-size: 12.5px; }
+.mi .arrow { width: 12px; height: 12px; opacity: .6; }
+.mi.dis { color: var(--weak); }
+.mi.dis:hover { background: transparent; }
+.msep { height: 1px; background: var(--menu-line); margin: 6px 4px; }
+.mhead { padding: 6px 10px 4px 32px; color: var(--weak); font-size: 12px; }
+.pop { padding: 12px; min-width: 280px; }
+.pop h4 { margin: 0 0 8px; font-size: 13px; font-weight: normal; color: var(--weak); }
+.pop .prow { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 32px; }
+.pop .field { width: 100%; margin-top: 4px; }
+
+/* Controls */
+.switch { width: 36px; height: 20px; border-radius: 10px; background: var(--seg); position: relative; flex: none;
+  box-shadow: inset 0 0 0 1px var(--field-line); }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .12s; }
+.switch.on { background: var(--accent); box-shadow: none; }
+.switch.on::after { left: 18px; }
+.field { height: 28px; border-radius: 7px; background: var(--field); border: 1px solid var(--field-line);
+  color: var(--text); font: inherit; padding: 0 8px; outline: 0; }
+.field:focus { border-color: var(--accent); }
+.select { height: 28px; border-radius: 7px; background: var(--seg); border: 0; color: var(--text);
+  font: inherit; padding: 0 8px; display: inline-flex; align-items: center; gap: 6px; min-width: 150px;
+  justify-content: space-between; }
+.select svg { width: 12px; height: 12px; opacity: .7; }
+.slider { display: flex; align-items: center; gap: 10px; }
+.slider input { width: 180px; accent-color: var(--accent); }
+.slider span { width: 44px; text-align: right; color: var(--weak); font-variant-numeric: tabular-nums; }
+.textbtn { height: 28px; border-radius: 7px; border: 0; background: var(--seg); color: var(--text); font: inherit; padding: 0 12px; }
+.textbtn:hover { background: var(--press); }
+.swatch { width: 26px; height: 20px; border-radius: 5px; flex: none; }
+
+/* Settings dialog */
+.dim { position: absolute; inset: 0; background: var(--dim); z-index: 30; display: grid; place-items: center; }
+.dlg { width: 760px; height: 540px; max-height: 92%; background: var(--panel); border-radius: 12px;
+  box-shadow: var(--shadow); border: 1px solid var(--menu-line); display: flex; flex-direction: column; overflow: hidden; }
+.dlg .dhead { height: 46px; flex: none; display: flex; align-items: center; justify-content: center; position: relative;
+  font-weight: bold; font-size: 14px; border-bottom: 1px solid var(--line); }
+.dlg .dhead .x { position: absolute; right: 10px; top: 9px; }
+.dlg .dbody { flex: 1; display: flex; min-height: 0; }
+.dlg .side { width: 190px; flex: none; padding: 8px; border-right: 1px solid var(--line); }
+.dlg .side .mi { height: 32px; }
+.dlg .side .mi.sel { background: var(--press); }
+.dlg .page { flex: 1; overflow: auto; padding: 18px 24px 24px; }
+.dlg h3 { margin: 0 0 10px; font-size: 15px; font-weight: bold; }
+.dlg h3.sec { margin-top: 22px; }
+.group { background: var(--canvas); border: 1px solid var(--line); border-radius: 10px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 46px; padding: 6px 14px; }
+.row + .row { border-top: 1px solid var(--line); }
+.row .rl { display: flex; flex-direction: column; }
+.row .rl[data-tip] { cursor: help; }
+.row .sub { color: var(--weak); font-size: 12px; margin-top: 2px; }
+.tabs { display: flex; justify-content: center; gap: 2px; padding: 8px; border-bottom: 1px solid var(--line); }
+.disclosure { display: flex; align-items: center; gap: 6px; margin-top: 22px; font-size: 15px; font-weight: bold; cursor: default; }
+.disclosure svg { width: 14px; height: 14px; transition: transform .12s; }
+.disclosure.openx svg { transform: rotate(90deg); }
+.rule { display: flex; align-items: center; gap: 8px; }
+.rule .field { flex: 1; }
+
+/* Round 2 */
+.overview { position: absolute; right: 12px; bottom: 12px; width: 220px; height: 170px; background: var(--canvas);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.15); overflow: hidden;
+  display: grid; place-items: center; }
+.overview img { max-width: 94%; max-height: 94%; margin: 0; }
+.overview .vp { position: absolute; left: 30%; top: 8%; width: 45%; height: 55%; border: 1.5px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 3px; }
+.float { position: absolute; z-index: 30; width: 640px; height: 470px; }
+.float .dhead { cursor: move; }
+.zoomrow { display: flex; align-items: center; gap: 6px; }
+.zoomrow .zoomlabel { width: 56px; font-size: 14px; }
+.bar.merged { min-height: 48px; background: var(--title); }
+.bar .repo { font-weight: bold; margin: 0 4px 0 2px; white-space: nowrap; }
+.wbinline { display: flex; gap: 10px; margin-left: 10px; }
+.wbinline span { width: 24px; height: 24px; border-radius: 50%; background: var(--title-btn); display: grid;
+  place-items: center; font-size: 11px; }
+
+/* Tooltip */
+#tip { position: fixed; z-index: 100; background: var(--tip); color: var(--text); border: 1px solid var(--menu-line);
+  border-radius: 7px; padding: 6px 9px; box-shadow: 0 3px 12px rgba(0,0,0,.18); max-width: 300px; font-size: 12.5px;
+  pointer-events: none; display: none; }
+#tip .k { color: var(--weak); margin-left: 8px; }
+
+/* Prototype switcher, deliberately unlike the design */
+.switcher { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex;
+  align-items: center; gap: 6px; background: #111; color: #fff; border-radius: 999px; padding: 6px 8px;
+  font: 13px system-ui, sans-serif; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+.switcher button { background: #333; color: #fff; border: 0; border-radius: 999px; height: 28px; min-width: 28px;
+  padding: 0 10px; font: inherit; cursor: pointer; white-space: nowrap; }
+.switcher button:hover { background: #555; }
+.switcher .cur { padding: 0 10px; min-width: 250px; text-align: center; white-space: nowrap; }
+</style>
+</head>
+<body class="light">
+<div class="win" id="win"></div>
+<div id="tip"></div>
+<div class="switcher">
+  <button id="prev" title="Previous variant (←)">←</button>
+  <span class="cur" id="cur"></span>
+  <button id="next" title="Next variant (→)">→</button>
+  <button id="themebtn" title="The pretend system theme">◐ Theme</button>
+  <button id="mergebtn" title="Toolbar in its own row under the title bar, or merged into it">Title bar</button>
+  <button id="setbtn">Settings</button>
+</div>
+<script>
+// ---------------------------------------------------------------------------------------------
+// Icons (24×24, stroked). Lucide shapes for the generic ones; the graph ones are drawn here.
+const I = {
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M5 12h14"/>',
+  fit: '<path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/>',
+  head: '<circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/>',
+  local: '<path d="M6 3.5v11"/><circle cx="18" cy="6" r="2.5"/><circle cx="6" cy="17.5" r="2.5"/><path d="M18 8.5a9 9 0 0 1-9 9"/>',
+  remote: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
+  tags: '<path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1.3" fill="currentColor"/>',
+  filter: '<path d="M4 5h16l-6 7.5V19l-4 1.5v-8z"/>',
+  down: '<path d="M6 9l6 6 6-6"/>',
+  up: '<path d="M6 15l6-6 6 6"/>',
+  right: '<path d="M9 6l6 6-6 6"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  dot: '<circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>',
+  zoom: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5M8.3 11h5.4M11 8.3v5.4"/>',
+  overview: '<rect x="3" y="4" width="18" height="16" rx="2"/><rect x="12" y="11.5" width="6" height="5.5" rx="1" fill="currentColor" stroke="none"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',
+  // What to show: labelled commits (nodes with labels), fork points and merges, every commit.
+  labelled: '<path d="M6.5 7v10"/><circle cx="6.5" cy="5.5" r="2.2" fill="currentColor"/><circle cx="6.5" cy="18.5" r="2.2" fill="currentColor"/><rect x="11" y="3.5" width="10" height="4" rx="2"/><rect x="11" y="16.5" width="7" height="4" rx="2"/>',
+  branches: '<circle cx="12" cy="4.5" r="2.2" fill="currentColor"/><circle cx="12" cy="19.5" r="2.2" fill="currentColor"/><path d="M12 6.7c0 3-6 3-6 5.3s6 2.3 6 5.3M12 6.7c0 3 6 3 6 5.3s-6 2.3-6 5.3"/>',
+  allc: '<path d="M12 4v16"/><circle cx="12" cy="4" r="1.9" fill="currentColor"/><circle cx="12" cy="9.3" r="1.9" fill="currentColor"/><circle cx="12" cy="14.7" r="1.9" fill="currentColor"/><circle cx="12" cy="20" r="1.9" fill="currentColor"/><path d="M12 7c4 0 5.5 1 5.5 4.5S16 17.5 12 17.5"/><circle cx="17.5" cy="12" r="1.9" fill="currentColor"/>',
+  // Drag modes: Adapt (neighbours give way), Free (only this node), Subtree (it and its descendants).
+  adapt: '<circle cx="12" cy="12" r="3" fill="currentColor"/><circle cx="4.5" cy="5" r="2"/><circle cx="19.5" cy="19" r="2"/><path d="M6 6.4l1.6.2-.4 1.6 1.6.2-.4 1.6 1.4.3M18 17.6l-1.6-.2.4-1.6-1.6-.2.4-1.6-1.4-.3"/>',
+  free: '<circle cx="12" cy="12" r="2.8" fill="currentColor"/><path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5M9.5 5 12 2.5 14.5 5M9.5 19l2.5 2.5 2.5-2.5M5 9.5 2.5 12 5 14.5M19 9.5l2.5 2.5-2.5 2.5"/>',
+  subtree: '<circle cx="12" cy="4.5" r="2.3" fill="currentColor"/><circle cx="6" cy="12.5" r="2.3" fill="currentColor"/><circle cx="18" cy="12.5" r="2.3" fill="currentColor"/><circle cx="6" cy="20" r="2.3" fill="currentColor"/><path d="M12 4.5 6 12.5M12 4.5l6 8M6 12.5V20"/>',
+};
+const svg = (n, cls = '') =>
+  `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
+
+// ---------------------------------------------------------------------------------------------
+// Pretend state.
+const S = {
+  show: 'labelled', local: true, remote: true, tags: true, drag: 'adapt', zoom: 100,
+  query: '', theme: 'Follow system', look: 'Modern', edges: 'Curved', arrows: 'Point to parents',
+  overview: false, statusbar: true, counts: false, highlight: true, remember: false, overlap: true,
+  stash: false, other: false, alltags: true, current: false, firstParent: false, bundle: true,
+  direction: 'Newest on top', placement: 'Balanced', filter: '', hide: 'pipeline/*',
+  page: 'Appearance', tab: 'General', advancedOpen: false,
+};
+const SHOW = [
+  ['labelled', 'Labelled commits', 'Only commits with a branch or tag, and the merges joining them (TortoiseGit default)'],
+  ['branches', 'Branchings and merges', 'Also every fork point and merge'],
+  ['allc', 'All commits', 'Every commit'],
+];
+const DRAG = [
+  ['adapt', 'Adapt', 'The graph gives way: neighbours follow, nodes in the way move aside', '1'],
+  ['free', 'Free', 'Move only the selected nodes; nothing else moves', '2'],
+  ['subtree', 'Subtree', 'Take along everything that grows out of the node', '3'],
+];
+const THEMES = ['Follow system', 'Light', 'Dark'];
+
+// ---------------------------------------------------------------------------------------------
+// Toolbar pieces, shared by the variants (they arrange them differently).
+function showSeg(withText) {
+  return `<div class="seg">${SHOW.map(([k, name, tip]) =>
+    `<button class="ib ${withText ? 'text' : ''} ${S.show === k ? 'sel' : ''}" data-act="show:${k}" data-tip="<b>${name}</b><br>${tip}">${svg(k)}${withText ? name.split(' ')[0] : ''}</button>`).join('')}</div>`;
+}
+function refToggles() {
+  return [['local', 'Local branches'], ['remote', 'Remote branches'], ['tags', 'Tags']].map(([k, name]) =>
+    `<button class="ib ${S[k] ? 'on' : ''}" data-act="toggle:${k}" data-tip="${S[k] ? 'Hide' : 'Show'} ${name.toLowerCase()}">${svg(k)}</button>`).join('');
+}
+function zoomTools() {
+  return `<button class="ib" data-act="zoom:-" data-tip="Zoom out<span class=k>−</span>">${svg('minus')}</button>
+    <button class="ib zoomlabel" data-act="zoom:0" data-tip="Zoom to 100%<span class=k>0</span>">${S.zoom}%</button>
+    <button class="ib" data-act="zoom:+" data-tip="Zoom in<span class=k>+</span>">${svg('plus')}</button>
+    <button class="ib" data-act="noop" data-tip="Fit the whole graph<span class=k>F</span>">${svg('fit')}</button>
+    <button class="ib" data-act="noop" data-tip="Go to HEAD<span class=k>Home</span>">${svg('head')}</button>`;
+}
+function dragSeg() {
+  return `<div class="seg">${DRAG.map(([k, name, tip, key]) =>
+    `<button class="ib ${S.drag === k ? 'sel' : ''}" data-act="drag:${k}" data-tip="<b>${name}</b><span class=k>${key}</span><br>${tip}">${svg(k)}</button>`).join('')}</div>`;
+}
+function find(wide) {
+  const q = S.query;
+  const hits = q ? Math.max(0, 7 - q.length) : 0;
+  const tail = q
+    ? `<span class="count">${hits ? '1 / ' + hits : 'None'}</span>
+       <button class="ib mini" data-act="noop" data-tip="Previous<span class=k>Shift+Enter</span>">${svg('up')}</button>
+       <button class="ib mini" data-act="noop" data-tip="Next<span class=k>Enter</span>">${svg('down')}</button>
+       <button class="ib mini" data-act="clearq" data-tip="Clear<span class=k>Esc</span>">${svg('x')}</button>`
+    : `<span class="kbd">Ctrl+F</span>`;
+  return `<label class="find ${wide ? 'wide' : ''}">${svg('search')}<input id="q" placeholder="Find commits, branches, tags" value="${q}">${tail}</label>`;
+}
+const vsep = '<span class="vsep"></span>';
+
+// ---------------------------------------------------------------------------------------------
+// Menus. Items: {l: label, k: shortcut, c: checked (bool), r: radio (bool), sub: [...], dis, tip}
+// or '-' for a separator.
+const radios = (list, cur, set) => list.map(v => ({ l: v, r: v === cur, act: () => { S[set] = v; } }));
+const check = (l, key, tip) => ({ l, c: S[key], tip, act: () => { S[key] = !S[key]; } });
+
+function menuHtml(items) {
+  return items.map((it, i) => {
+    if (it === '-') return '<div class="msep"></div>';
+    const mark = it.c !== undefined ? (it.c ? svg('check') : '') : it.r !== undefined ? (it.r ? svg('dot') : '') : '';
+    return `<div class="mi ${it.dis ? 'dis' : ''}" data-i="${i}" ${it.tip ? `data-tip="${it.tip}"` : ''}>
+      <span class="chk">${mark}</span><span class="lbl">${it.l}</span>
+      ${it.k ? `<span class="key">${it.k}</span>` : ''}${it.sub ? svg('right', 'arrow') : ''}</div>`;
+  }).join('');
+}
+
+let openMenu = null; // {el, anchor, items}
+function closeMenus() {
+  document.querySelectorAll('.menu').forEach(m => m.remove());
+  document.querySelectorAll('.open').forEach(b => b.classList.remove('open'));
+  openMenu = null;
+}
+function showMenu(anchor, items, alignRight, level = 0, popHtml) {
+  if (level === 0) closeMenus();
+  document.querySelectorAll('.menu').forEach(m => { if (+m.dataset.level >= level) m.remove(); });
+  const m = document.createElement('div');
+  m.className = 'menu' + (popHtml ? ' pop' : '');
+  m.dataset.level = level;
+  m.innerHTML = popHtml ?? menuHtml(items);
+  document.getElementById('win').appendChild(m);
+  const wr = document.getElementById('win').getBoundingClientRect();
+  const r = anchor.getBoundingClientRect();
+  if (level === 0) {
+    anchor.classList.add('open');
+    m.style.top = (r.bottom - wr.top + 4) + 'px';
+    if (alignRight) m.style.right = (wr.right - r.right) + 'px'; else m.style.left = (r.left - wr.left) + 'px';
+  } else {
+    m.style.top = (r.top - wr.top - 7) + 'px';
+    m.style.left = (r.right - wr.left + 4) + 'px';
+  }
+  if (!popHtml) {
+    m.querySelectorAll('.mi').forEach(el => {
+      const it = items[+el.dataset.i];
+      el.addEventListener('mouseenter', () => {
+        m.querySelectorAll('.subopen').forEach(x => x.classList.remove('subopen'));
+        document.querySelectorAll('.menu').forEach(x => { if (+x.dataset.level > level) x.remove(); });
+        if (it.sub) { el.classList.add('subopen'); showMenu(el, it.sub, false, level + 1); }
+      });
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        if (it.dis || it.sub) return;
+        it.act?.();
+        closeMenus();
+        render();
+      });
+    });
+  } else {
+    wireControls(m);
+  }
+  m.addEventListener('click', e => e.stopPropagation());
+  openMenu = m;
+  return m;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Settings building blocks.
+const sw = (key) => `<span class="switch ${S[key] ? 'on' : ''}" data-sw="${key}"></span>`;
+const seg = (key, opts) => `<div class="seg">${opts.map(o =>
+  `<button class="ib text ${S[key] === o ? 'sel' : ''}" data-set="${key}=${o}">${o}</button>`).join('')}</div>`;
+const select = (key, opts) => `<button class="select" data-cycle="${key}" data-opts="${opts.join('|')}">${S[key]}${svg('down')}</button>`;
+const slider = (v, min, max, step = 1) => `<div class="slider"><input type="range" min="${min}" max="${max}" step="${step}" value="${v}" oninput="this.nextElementSibling.textContent=this.value"><span>${v}</span></div>`;
+const text = (key, hint) => `<input class="field" style="width:220px" data-text="${key}" placeholder="${hint}" value="${S[key]}">`;
+function row(label, control, tip, sub) {
+  return `<div class="row"><div class="rl" ${tip ? `data-tip="${tip}"` : ''}><span>${label}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</div>${control}</div>`;
+}
+const group = (...rows) => `<div class="group">${rows.join('')}</div>`;
+function colourRules() {
+  return group(
+    `<div class="row"><div class="rule" style="flex:1"><span class="swatch" style="background:#9b59b6"></span><input class="field" value="feature/*"><button class="ib mini">${svg('up')}</button><button class="ib mini">${svg('down')}</button><button class="ib mini">${svg('x')}</button></div></div>`,
+    `<div class="row"><div class="rule" style="flex:1"><span class="swatch" style="background:#2980b9"></span><input class="field" value="release/*, hotfix/*"><button class="ib mini">${svg('up')}</button><button class="ib mini">${svg('down')}</button><button class="ib mini">${svg('x')}</button></div></div>`,
+    `<div class="row"><button class="textbtn">Add rule</button></div>`);
+}
+const COLOUR_TIP = 'Branches whose names match a rule get its colour; the first matching rule wins and the current branch stays red. * is any text, ? one character; commas separate wildcards, and origin/feature/x matches feature/*.';
+
+// The pages, as used by the variants.
+const P = {
+  appearance: () => group(
+    row('Theme', seg('theme', ['Follow system', 'Light', 'Dark'].map(x => x))),
+    row('Style', select('look', ['Modern', 'Classic']), 'Modern: curved, bundled edges. Classic: as TortoiseGit draws it, straight edges and no bundling.'),
+    row('Edges', seg('edges', ['Curved', 'Straight'])),
+    row('Arrows', select('arrows', ['Point to parents', 'Point towards merges', 'No arrows'])),
+    row('Highlight edges of the selection', sw('highlight')),
+    row('Count collapsed commits on edges', sw('counts'), 'Label each edge with the number of commits hidden in it.'),
+    row('Overview map', sw('overview')),
+    row('Status bar', sw('statusbar'))),
+  graph: () => group(
+    row('Newest commits', select('direction', ['Newest on top', 'Newest at bottom', 'Newest on the left', 'Newest on the right'])),
+    row('Bundle edges into trunks', sw('bundle'), 'Edges running into the same commit share one line where they run in parallel.'),
+    row('Stash', sw('stash')),
+    row('Other refs', sw('other'), 'Refs outside heads, remotes and tags, e.g. refs/pull/* or tool checkpoints.'),
+    row('Tags make nodes', sw('alltags'), 'When off, a tag alone does not make a commit a node (TortoiseGit\'s "Show all tags").')),
+  filters: () => group(
+    row('Current branch only', sw('current'), 'Only HEAD\'s history.'),
+    row('First parent only', sw('firstParent'), 'Follow only first parents: merged side branches without refs disappear.'),
+    row('Branch filter', text('filter', 'e.g. main, release'), 'Only branches and tags whose names contain one of these comma-separated words start history.'),
+    row('Hide branches', text('hide', 'e.g. pipeline/*, release/*'), 'Leave out branches matching these wildcards, with the history only they lead to. Branches a shown branch contains stay, and so does the current branch.')),
+  dragging: () => group(
+    row('Remember moved nodes', sw('remember'), 'Keep nodes where you moved them, per repository, across runs and relayouts.'),
+    row('Keep nodes from overlapping', sw('overlap'))),
+  layoutAdv: () => group(
+    row('Vertical placement', select('placement', ['Balanced', 'Longest path', 'TortoiseGit']), 'How commits are spread over rows.'),
+    row('Between layers', slider(40, 10, 120)),
+    row('Extra for slanted edges', slider(0.2, 0, 0.5, 0.05), 'Widen gaps that long sideways edges cross, so edges stay steep (TortoiseGit does this).'),
+    row('Between nodes', slider(30, 5, 100)),
+    row('Between edges', slider(8, 2, 40)),
+    row('Maximum row width', slider(0, 0, 10000, 100), 'Rows wider than this are split so siblings stack up. 0 = never (TortoiseGit).')),
+  physicsAdv: () => group(
+    row('Pull', slider(0.5, 0, 1, 0.05), 'How far neighbours are pulled along their edges (Adapt).'),
+    row('Push', slider(0.5, 0, 1, 0.05), 'How strongly, and from how far, nodes push each other away (Adapt).'),
+    row('Wobble', slider(0.3, 0, 1, 0.05))),
+  resetAdv: () => `<div style="margin-top:14px"><button class="textbtn">Restore TortoiseGit spacing</button></div>`,
+};
+
+function dialog(title, bodyHtml) {
+  return `<div class="dim" data-act="closedlg"><div class="dlg" onclick="event.stopPropagation()">
+    <div class="dhead">${title}<button class="ib x" data-act="closedlg">${svg('x')}</button></div>${bodyHtml}</div></div>`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The variants.
+const V = {
+  A: {
+    name: 'One ☰ menu · settings with a sidebar',
+    bars: () => `<div class="bar">
+        <button class="ib" id="hamb" data-tip="Menu">${svg('menu')}</button>${vsep}
+        ${showSeg(false)}${vsep}${refToggles()}${vsep}${zoomTools()}${vsep}${dragSeg()}
+        <span class="spacer"></span>${find(false)}</div>`,
+    menus: {
+      hamb: () => [
+        { l: 'Reload', k: 'F5' }, { l: 'Export as SVG…' }, '-',
+        { l: 'Undo move', k: 'Ctrl+Z' }, { l: 'Redo move', k: 'Ctrl+Shift+Z', dis: true },
+        { l: 'Return all nodes to layout', k: 'R' }, '-',
+        { l: 'Filter', sub: [check('Current branch only', 'current', 'Only HEAD\'s history.'), check('First parent only', 'firstParent'), '-', check('Stash', 'stash'), check('Other refs', 'other'), '-', { l: 'Branch filter and hidden branches…', act: () => { S.page = 'Filters'; openSettings(); } }] },
+        { l: 'Newest commits', sub: radios(['Newest on top', 'Newest at bottom', 'Newest on the left', 'Newest on the right'], S.direction, 'direction') },
+        check('Overview map', 'overview'), '-',
+        { l: 'Settings…', k: 'Ctrl+,', act: () => openSettings() },
+        { l: 'Keyboard and mouse' }, { l: 'Legend' }, { l: 'About parterre' },
+      ],
+    },
+    settings: () => {
+      const pages = {
+        Appearance: () => P.appearance(),
+        'Branch colours': () => `<p style="margin:0 0 12px;color:var(--weak)">The first matching rule wins; the current branch stays red.</p>` + colourRules(),
+        Graph: () => P.graph(),
+        Filters: () => P.filters(),
+        Dragging: () => P.dragging(),
+        Advanced: () => `<h3>Spacing</h3>` + P.layoutAdv() + `<h3 class="sec">Dragging physics</h3>` + P.physicsAdv() + P.resetAdv(),
+      };
+      const page = pages[S.page] ? S.page : 'Appearance';
+      return dialog('Settings', `<div class="dbody"><div class="side">${Object.keys(pages).map(p =>
+        `${p === 'Advanced' ? '<div class="msep"></div>' : ''}<div class="mi ${p === page ? 'sel' : ''}" data-page="${p}"><span class="lbl">${p}</span></div>`).join('')}</div>
+        <div class="page">${page === 'Advanced' ? '' : `<h3>${page}</h3>`}${pages[page]()}</div></div>`);
+    },
+  },
+
+  C: {
+    name: 'Options beside their tools · ☰ on the right · one settings page',
+    bars: () => `<div class="bar">
+        ${showSeg(false)}<button class="ib" id="p-show" data-tip="More about what to show">${svg('down', 'caret')}</button>${vsep}
+        ${refToggles()}<button class="ib ${S.stash || S.other || S.current || S.firstParent || S.filter || S.hide ? 'on' : ''}" id="p-filter" data-tip="Filter branches">${svg('filter')}</button>
+        <span class="spacer"></span>${find(true)}<span class="spacer"></span>
+        ${zoomTools()}${vsep}${dragSeg()}<button class="ib" id="p-drag" data-tip="Dragging options">${svg('down', 'caret')}</button>${vsep}
+        <button class="ib" id="hamb" data-tip="Menu">${svg('menu')}</button></div>`,
+    popovers: {
+      'p-show': () => `<h4>Newest commits</h4><div class="seg" style="margin-bottom:10px">${['Top', 'Bottom', 'Left', 'Right'].map(d =>
+          `<button class="ib text ${S.direction.endsWith(d.toLowerCase()) || (d === 'Top' && S.direction === 'Newest on top') ? 'sel' : ''}">${d}</button>`).join('')}</div>
+        <div class="prow"><span data-tip="Only HEAD's history.">Current branch only</span>${sw('current')}</div>
+        <div class="prow"><span data-tip="Follow only first parents: merged side branches without refs disappear.">First parent only</span>${sw('firstParent')}</div>
+        <div class="prow"><span data-tip="Edges running into the same commit share one line where they run in parallel.">Bundle edges into trunks</span>${sw('bundle')}</div>`,
+      'p-filter': () => `<h4>Branches</h4>
+        <div class="prow"><span>Stash</span>${sw('stash')}</div>
+        <div class="prow"><span data-tip="Refs outside heads, remotes and tags, e.g. refs/pull/* or tool checkpoints.">Other refs</span>${sw('other')}</div>
+        <div class="prow"><span data-tip="When off, a tag alone does not make a commit a node.">Tags make nodes</span>${sw('alltags')}</div>
+        <div style="margin-top:8px" data-tip="Only branches and tags whose names contain one of these comma-separated words start history.">Only branches containing</div>
+        <input class="field" data-text="filter" placeholder="e.g. main, release" value="${S.filter}">
+        <div style="margin-top:8px" data-tip="Leave out branches matching these wildcards, with the history only they lead to.">Hide branches</div>
+        <input class="field" data-text="hide" placeholder="e.g. pipeline/*, release/*" value="${S.hide}">`,
+      'p-drag': () => `
+        <div class="prow"><span data-tip="Keep nodes where you moved them, per repository, across runs and relayouts.">Remember moved nodes</span>${sw('remember')}</div>
+        <div class="prow"><span>Keep nodes from overlapping</span>${sw('overlap')}</div>
+        <div class="msep"></div>
+        <div class="mi"><span class="lbl">Undo move</span><span class="key">Ctrl+Z</span></div>
+        <div class="mi"><span class="lbl">Return all nodes to layout</span><span class="key">R</span></div>`,
+    },
+    menus: {
+      hamb: () => [
+        { l: 'Reload', k: 'F5' }, { l: 'Export as SVG…' }, '-',
+        check('Overview map', 'overview'), '-',
+        { l: 'Settings…', k: 'Ctrl+,', act: () => openSettings() },
+        { l: 'Keyboard and mouse' }, { l: 'Legend' }, { l: 'About parterre' }],
+    },
+    settings: () => dialog('Settings', `<div class="page">
+        <h3>Appearance</h3>${P.appearance()}
+        <h3 class="sec" data-tip="${COLOUR_TIP}" style="cursor:help">Branch colours</h3>${colourRules()}
+        <div class="disclosure ${S.advancedOpen ? 'openx' : ''}" data-act="adv">${svg('right')}Advanced</div>
+        ${S.advancedOpen ? `<div style="margin-top:10px">${P.layoutAdv()}<div style="height:12px"></div>${P.physicsAdv()}${P.resetAdv()}</div>` : ''}
+      </div>`),
+  },
+
+  D: {
+    name: 'Round 2: ☰ left, full menu, light quick settings, live settings',
+    bars: () => `<div class="bar ${merged ? 'merged' : ''}">
+        <button class="ib" id="hamb" data-tip="Menu">${svg('menu')}</button>${merged ? '<span class="repo">parterre-demo</span>' : ''}${vsep}
+        ${showSeg(false)}${vsep}
+        ${refToggles()}<button class="ib ${S.current || S.firstParent || S.filter || S.hide ? 'on' : ''}" id="p-filter" data-tip="Filter branches">${svg('filter')}</button>
+        <span class="spacer"></span>${find(true)}<span class="spacer"></span>
+        <button class="ib" id="p-zoom" data-tip="Zoom">${svg('zoom')}</button>
+        <button class="ib" data-act="noop" data-tip="Go to HEAD<span class=k>Home</span>">${svg('head')}</button>
+        <button class="ib ${S.overview ? 'on' : ''}" data-act="toggle:overview" data-tip="${S.overview ? 'Hide' : 'Show'} the overview map">${svg('overview')}</button>${vsep}
+        ${dragSeg()}<button class="ib" id="p-drag" data-tip="Dragging options">${svg('down', 'caret')}</button>
+        ${merged ? '<div class="wbinline"><span>–</span><span>▢</span><span>✕</span></div>' : ''}</div>`,
+    popovers: {
+      'p-filter': () => `<h4>Filter</h4>
+        <div class="prow"><span data-tip="Only HEAD's history.">Current branch only</span>${sw('current')}</div>
+        <div class="prow"><span data-tip="Follow only first parents: merged side branches without refs disappear.">First parent only</span>${sw('firstParent')}</div>
+        <div style="margin-top:8px" data-tip="Only branches and tags whose names contain one of these comma-separated words start history.">Only branches containing</div>
+        <input class="field" data-text="filter" placeholder="e.g. main, release" value="${S.filter}">
+        <div style="margin-top:8px" data-tip="Leave out branches matching these wildcards, with the history only they lead to.">Hide branches</div>
+        <input class="field" data-text="hide" placeholder="e.g. pipeline/*, release/*" value="${S.hide}">`,
+      'p-zoom': () => `<div class="zoomrow"><span class="zoomlabel">${S.zoom}%</span>
+        <button class="ib" data-act="zoom:-" data-tip="Zoom out<span class=k>−</span>">${svg('minus')}</button>
+        <button class="ib" data-act="zoom:+" data-tip="Zoom in<span class=k>+</span>">${svg('plus')}</button>
+        <button class="textbtn" data-tip="Fit the whole graph<span class=k>F</span>">Fit</button>
+        <button class="textbtn" data-act="zoom:0" data-tip="Zoom to 100%<span class=k>0</span>">Reset</button></div>`,
+      'p-drag': () => `<h4>Dragging</h4>
+        <div class="prow"><span data-tip="Keep nodes where you moved them, per repository, across runs and relayouts.">Remember moved nodes</span>${sw('remember')}</div>
+        <div class="msep"></div>
+        <div class="mi"><span class="lbl">Return all nodes to layout</span><span class="key">R</span></div>`,
+    },
+    menus: {
+      hamb: () => [
+        { l: 'Reload', k: 'F5' }, { l: 'Export as SVG…' }, '-',
+        { l: 'Undo move', k: 'Ctrl+Z' }, { l: 'Redo move', k: 'Ctrl+Shift+Z', dis: true },
+        { l: 'Return all nodes to layout', k: 'R' }, '-',
+        { l: 'Show', sub: [
+          ...SHOW.map(([k, name]) => ({ l: name, r: S.show === k, act: () => { S.show = k; } })), '-',
+          check('Local branches', 'local'), check('Remote branches', 'remote'), check('Tags', 'tags'),
+          check('Stash', 'stash'), check('Other refs', 'other')] },
+        { l: 'Filter', sub: [check('Current branch only', 'current', 'Only HEAD\'s history.'), check('First parent only', 'firstParent'), '-',
+          { l: 'Branch filter and hidden branches…', act: () => { S.page = 'Filters'; openSettings(); } }] },
+        { l: 'Newest commits', sub: radios(['Newest on top', 'Newest at bottom', 'Newest on the left', 'Newest on the right'], S.direction, 'direction') },
+        { l: 'Drag', sub: [...DRAG.map(([k, name, , key]) => ({ l: name, k: key, r: S.drag === k, act: () => { S.drag = k; } })), '-',
+          check('Remember moved nodes', 'remember')] },
+        { l: 'Zoom', sub: [{ l: 'Zoom in', k: '+', act: () => { S.zoom = Math.round(S.zoom * 1.25); } }, { l: 'Zoom out', k: '−', act: () => { S.zoom = Math.round(S.zoom * 0.8); } },
+          { l: 'Zoom to 100%', k: '0', act: () => { S.zoom = 100; } }, { l: 'Fit the whole graph', k: 'F' }, { l: 'Go to HEAD', k: 'Home' }] },
+        check('Overview map', 'overview'), check('Status bar', 'statusbar'), '-',
+        { l: 'Settings…', k: 'Ctrl+,', act: () => openSettings() },
+        { l: 'Keyboard and mouse' }, { l: 'Legend' }, { l: 'About parterre' },
+      ],
+    },
+    // Not modal and not dimming: the graph behind shows every change at once.
+    settings: () => {
+      const pages = {
+        Appearance: () => P.appearance(),
+        'Branch colours': () => `<p style="margin:0 0 12px;color:var(--weak)">The first matching rule wins; the current branch stays red.</p>` + colourRules(),
+        Graph: () => P.graph(),
+        Filters: () => P.filters(),
+        Dragging: () => P.dragging(),
+        Advanced: () => `<h3>Spacing</h3>` + P.layoutAdv() + `<h3 class="sec">Dragging physics</h3>` + P.physicsAdv() + P.resetAdv(),
+      };
+      const page = pages[S.page] ? S.page : 'Appearance';
+      return `<div class="dlg float" style="left:${dlgPos.x}px;top:${dlgPos.y}px">
+        <div class="dhead">Settings<button class="ib x" data-act="closedlg">${svg('x')}</button></div>
+        <div class="dbody"><div class="side" style="width:160px">${Object.keys(pages).map(p =>
+          `${p === 'Advanced' ? '<div class="msep"></div>' : ''}<div class="mi ${p === page ? 'sel' : ''}" data-page="${p}"><span class="lbl">${p}</span></div>`).join('')}</div>
+        <div class="page">${page === 'Advanced' ? '' : `<h3>${page}</h3>`}${pages[page]()}</div></div></div>`;
+    },
+  },
+};
+const KEYS = ['D', 'A', 'C'];
+
+// ---------------------------------------------------------------------------------------------
+const params = new URLSearchParams(location.search);
+let variant = KEYS.includes(params.get('variant')) ? params.get('variant') : 'D';
+let merged = params.get('merged') === '1';
+let dlgPos = { x: 560, y: 110 };
+// The theme setting wins over the pretend system theme of the bottom bar.
+const effTheme = () => S.theme === 'Follow system' ? theme : S.theme.toLowerCase();
+const DIRS = { 'Newest on top': 'top', 'Newest at bottom': 'bottom', 'Newest on the left': 'left', 'Newest on the right': 'right' };
+const graphSrc = () => `graph-${effTheme()}-${S.edges === 'Straight' ? 'classic' : 'modern'}-${DIRS[S.direction]}.svg`;
+let theme = params.get('theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+let settingsOpen = false;
+
+function openSettings() { settingsOpen = true; closeMenus(); render(); }
+
+function render() {
+  document.body.className = effTheme();
+  const v = V[variant];
+  const win = document.getElementById('win');
+  const scroll = win.querySelector('.dlg .page')?.scrollTop ?? 0;
+  const titlebar = merged && variant === 'D' ? '' : `<div class="titlebar">parterre-demo – parterre<div class="wb"><span>–</span><span>▢</span><span>✕</span></div></div>`;
+  win.innerHTML = `${titlebar}
+    ${v.bars()}
+    <div class="canvas"><img src="${graphSrc()}" alt="">${S.overview ? `<div class="overview"><img src="${graphSrc()}" alt=""><div class="vp"></div></div>` : ''}</div>
+    <div class="status" ${S.statusbar ? '' : 'hidden'}><span class="mono">944fb6f2c1</span><span>Work in progress on main — Demo, 2023-11-15 21:13</span>
+      <span class="right">16 nodes · 18 commits</span></div>
+    ${settingsOpen ? v.settings() : ''}`;
+  document.getElementById('cur').textContent = `${variant} — ${v.name}`;
+  document.getElementById('mergebtn').style.display = variant === 'D' ? '' : 'none';
+  document.getElementById('mergebtn').textContent = merged ? 'Title bar: merged' : 'Title bar: separate';
+  const page = win.querySelector('.dlg .page');
+  if (page) page.scrollTop = scroll;
+  const head = win.querySelector('.float .dhead');
+  head?.addEventListener('mousedown', e => {
+    if (e.target.closest('button')) return;
+    const start = { x: e.clientX - dlgPos.x, y: e.clientY - dlgPos.y };
+    const dlg = head.parentElement;
+    const move = m => { dlgPos = { x: m.clientX - start.x, y: m.clientY - start.y }; dlg.style.left = dlgPos.x + 'px'; dlg.style.top = dlgPos.y + 'px'; };
+    const up = () => { removeEventListener('mousemove', move); removeEventListener('mouseup', up); };
+    addEventListener('mousemove', move); addEventListener('mouseup', up);
+  });
+  // Menus and popovers.
+  for (const [id, items] of Object.entries(v.menus ?? {})) {
+    const b = document.getElementById(id);
+    b?.addEventListener('click', e => { e.stopPropagation(); if (b.classList.contains('open')) closeMenus(); else showMenu(b, items(), id === 'hamb' && variant === 'C'); });
+    b?.addEventListener('mouseenter', () => { if (openMenu && id.startsWith('m-') && !b.classList.contains('open')) showMenu(b, items()); });
+  }
+  for (const [id, html] of Object.entries(v.popovers ?? {})) {
+    const b = document.getElementById(id);
+    b?.addEventListener('click', e => { e.stopPropagation(); if (b.classList.contains('open')) closeMenus(); else showMenu(b, null, id === 'p-drag' || id === 'p-zoom', 0, html()); });
+  }
+  wireControls(win);
+  const q = document.getElementById('q');
+  q.addEventListener('input', () => { S.query = q.value; render(); const n = document.getElementById('q'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); });
+}
+
+function wireControls(root) {
+  root.querySelectorAll('[data-act]').forEach(el => el.addEventListener('click', e => {
+    const [a, arg] = el.dataset.act.split(':');
+    if (a === 'show') S.show = arg;
+    else if (a === 'toggle') S[arg] = !S[arg];
+    else if (a === 'drag') S.drag = arg;
+    else if (a === 'zoom') {
+      S.zoom = arg === '0' ? 100 : Math.round(S.zoom * (arg === '+' ? 1.25 : 0.8));
+      // Inside the zoom popover: update it in place, so it stays open.
+      const label = el.closest('.menu')?.querySelector('.zoomlabel');
+      if (label) { label.textContent = S.zoom + '%'; e.stopPropagation(); return; }
+    }
+    else if (a === 'clearq') S.query = '';
+    else if (a === 'closedlg') settingsOpen = false;
+    else if (a === 'adv') S.advancedOpen = !S.advancedOpen;
+    else return;
+    e.preventDefault(); e.stopPropagation(); hideTip(); render();
+  }));
+  root.querySelectorAll('[data-sw]').forEach(el => el.addEventListener('click', e => {
+    e.stopPropagation(); S[el.dataset.sw] = !S[el.dataset.sw];
+    // Popovers stay open; everywhere else the window redraws, so settings show their effect.
+    if (el.closest('.menu')) el.classList.toggle('on'); else render();
+  }));
+  root.querySelectorAll('[data-set]').forEach(el => el.addEventListener('click', () => {
+    const [k, v] = el.dataset.set.split('='); S[k] = v;
+    if (k === 'edges') S.look = v === 'Straight' ? 'Classic' : 'Modern';
+    render();
+  }));
+  root.querySelectorAll('[data-cycle]').forEach(el => el.addEventListener('click', () => {
+    const opts = el.dataset.opts.split('|'); const k = el.dataset.cycle;
+    S[k] = opts[(opts.indexOf(S[k]) + 1) % opts.length];
+    if (k === 'look') S.edges = S.look === 'Classic' ? 'Straight' : 'Curved';
+    render();
+  }));
+  root.querySelectorAll('[data-text]').forEach(el => el.addEventListener('input', () => { S[el.dataset.text] = el.value; }));
+  root.querySelectorAll('[data-page]').forEach(el => el.addEventListener('click', () => { S.page = el.dataset.page; render(); }));
+  root.querySelectorAll('[data-tab]').forEach(el => el.addEventListener('click', () => { S.tab = el.dataset.tab; render(); }));
+}
+
+// Tooltips.
+const tip = document.getElementById('tip');
+let tipTimer;
+function hideTip() { clearTimeout(tipTimer); tip.style.display = 'none'; }
+document.addEventListener('mouseover', e => {
+  const t = e.target.closest('[data-tip]');
+  hideTip();
+  if (!t) return;
+  tipTimer = setTimeout(() => {
+    tip.innerHTML = t.dataset.tip;
+    tip.style.display = 'block';
+    const r = t.getBoundingClientRect();
+    let x = r.left, y = r.bottom + 6;
+    const w = tip.offsetWidth;
+    if (x + w > innerWidth - 8) x = innerWidth - 8 - w;
+    if (y + tip.offsetHeight > innerHeight - 60) y = r.top - tip.offsetHeight - 6;
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  }, 350);
+});
+
+document.addEventListener('click', () => closeMenus());
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeMenus(); settingsOpen = false; render(); return; }
+  if (e.target.closest('input, textarea, [contenteditable]')) return;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    const i = KEYS.indexOf(variant);
+    go(KEYS[(i + (e.key === 'ArrowRight' ? 1 : KEYS.length - 1)) % KEYS.length]);
+  }
+  if (e.key === 'f' && e.ctrlKey) { e.preventDefault(); document.getElementById('q').focus(); }
+  const d = { 1: 'adapt', 2: 'free', 3: 'subtree' }[e.key];
+  if (d) { S.drag = d; render(); }
+});
+function go(v) {
+  variant = v; closeMenus(); params.set('variant', v); history.replaceState(null, '', '?' + params); render();
+}
+document.getElementById('prev').onclick = e => { e.stopPropagation(); go(KEYS[(KEYS.indexOf(variant) + KEYS.length - 1) % KEYS.length]); };
+document.getElementById('next').onclick = e => { e.stopPropagation(); go(KEYS[(KEYS.indexOf(variant) + 1) % KEYS.length]); };
+document.getElementById('themebtn').onclick = e => {
+  e.stopPropagation(); theme = theme === 'light' ? 'dark' : 'light'; params.set('theme', theme);
+  history.replaceState(null, '', '?' + params); render();
+};
+document.getElementById('mergebtn').onclick = e => {
+  e.stopPropagation(); merged = !merged; params.set('merged', merged ? '1' : '0');
+  history.replaceState(null, '', '?' + params); render();
+};
+document.getElementById('setbtn').onclick = e => { e.stopPropagation(); settingsOpen ? (settingsOpen = false, render()) : openSettings(); };
+
+render();
+
+// For screenshots: ?open=<menu or popover id>[&sub=<item label>], ?open=settings[&page=…|&tab=…|&adv=1],
+// ?s=key:value,… to preset state (true/false for switches).
+for (const kv of (params.get('s') ?? '').split(',').filter(Boolean)) {
+  const [k, v] = kv.split(':'); S[k] = v === 'true' ? true : v === 'false' ? false : v;
+}
+render();
+const open = params.get('open');
+if (params.get('page')) S.page = params.get('page');
+if (params.get('tab')) S.tab = params.get('tab');
+if (params.get('adv')) S.advancedOpen = true;
+if (params.get('q')) { S.query = params.get('q'); render(); }
+if (open === 'settings') openSettings();
+else if (open) {
+  const b = document.getElementById(open);
+  b?.click();
+  const sub = params.get('sub');
+  if (sub) [...document.querySelectorAll('.menu .mi')].find(x => x.textContent.includes(sub))?.dispatchEvent(new Event('mouseenter'));
+}
+</script>
+</body>
+</html>
