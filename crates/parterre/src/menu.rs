@@ -78,8 +78,7 @@ fn frame(style: &mut Style) {
 /// egui keeps a popup inside the window, moving it up when it would overflow the bottom, but it
 /// moves a popup taller than the window to the top and cuts off the bottom. Scrolling keeps
 /// all of it reachable. TortoiseGit's native menus can overflow the window instead; egui draws
-/// inside the one window, and Wayland gives winit no way to place a popup outside it (see
-/// `TODO.md`).
+/// inside the one window, and Wayland gives winit no way to place a popup outside it (#93).
 pub fn fit_window<R>(ui: &mut Ui, content: impl FnOnce(&mut Ui) -> R) -> R {
     let frame = ui.spacing().menu_margin.sum().y + 2.0 * ui.visuals().window_stroke.width;
     let max_height = ui.ctx().content_rect().height() - frame;
