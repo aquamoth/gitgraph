@@ -19,6 +19,8 @@ pub const STORAGE_KEY: &str = "gitgraph-settings";
 /// Storage key for remembered node positions: repository path -> commit hash -> rest offset
 /// from the layout, and whether the node was moved by hand.
 pub const MOVES_KEY: &str = "gitgraph-rest-offsets";
+/// Storage key for the recently opened repositories, newest first.
+pub const RECENT_KEY: &str = "parterre-recent-repositories";
 /// The format before nodes gave way to each other: only dropped (pinned) nodes and offsets.
 const OLD_MOVES_KEY: &str = "gitgraph-moved-nodes";
 

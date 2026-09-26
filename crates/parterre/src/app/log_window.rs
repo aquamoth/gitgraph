@@ -427,6 +427,12 @@ impl LogWindow {
         self.view.is_some()
     }
 
+    /// Closes the window and forgets the changed files listed for the repository it showed.
+    pub fn close(&mut self) {
+        self.view = None;
+        self.files = ChangedFiles::default();
+    }
+
     /// After F5: re-runs the query on the new snapshot.
     pub fn reload(&mut self, repo: &Arc<Repo>) {
         if let Some(view) = &mut self.view {
@@ -1424,7 +1430,9 @@ impl ParterreApp {
     pub(super) fn show_log(&mut self, nodes: &[usize]) {
         let Some(scene) = &self.scene else { return };
         // The newest snapshot, which the scene on screen may not have caught up with yet.
-        let repo = self.repo.clone();
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
         let commits: Vec<CommitIx> = nodes
             .iter()
             .filter_map(|&n| {

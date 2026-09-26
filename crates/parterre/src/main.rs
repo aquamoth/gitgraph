@@ -44,9 +44,9 @@ const VERSION: &str = env!("PARTERRE_VERSION");
 #[derive(Debug, Parser)]
 #[command(version = VERSION, about)]
 struct Cli {
-    /// Repository to show (any directory inside it).
-    #[arg(default_value = ".")]
-    path: PathBuf,
+    /// Repository to show (any directory inside it). Without one, the repository of the current
+    /// directory, or none: the window then asks for one.
+    path: Option<PathBuf>,
 
     /// Which commits to show.
     #[arg(long, value_enum)]
@@ -227,15 +227,23 @@ fn parse_vec(s: &str) -> Result<(f32, f32), String> {
 fn main() -> ExitCode {
     console::attach_parent();
     let cli = Cli::parse();
-    let repo = match parterre_core::git::load_repo(&cli.path) {
-        Ok(repo) => repo,
-        Err(e) => {
-            eprintln!("parterre: {e}");
-            return ExitCode::FAILURE;
-        }
+    let repo = match &cli.path {
+        Some(path) => match parterre_core::git::load_repo(path) {
+            Ok(repo) => Some(repo),
+            Err(e) => {
+                eprintln!("parterre: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        // Started from a menu or file manager, the current directory is seldom a repository.
+        None => parterre_core::git::load_repo(std::path::Path::new(".")).ok(),
     };
 
     if let Some(path) = cli.export.clone() {
+        let Some(repo) = repo else {
+            eprintln!("parterre: not in a git repository; name one to export");
+            return ExitCode::FAILURE;
+        };
         let mut settings = settings::Settings::default();
         apply_cli(&cli, &mut settings);
         return match export_headless(&std::sync::Arc::new(repo), &settings, &path) {
@@ -259,7 +267,7 @@ fn main() -> ExitCode {
     let vsync = !frame_pacing::wayland_session();
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(format!("{} – parterre", repo.display_name()))
+            .with_title(app::window_title(repo.as_ref()))
             .with_app_id(settings::APP_ID)
             .with_inner_size([w, h])
             .with_min_inner_size([400.0, 300.0])
@@ -280,7 +288,6 @@ fn main() -> ExitCode {
         DemoMenuArg::Node => automation::DemoMenu::Node,
         DemoMenuArg::Canvas => automation::DemoMenu::Canvas,
     });
-    let path = cli.path.clone();
     let overrides = move |s: &mut settings::Settings| apply_cli(&cli, s);
     settings::adopt_old_storage();
     let result = eframe::run_native(
@@ -288,7 +295,7 @@ fn main() -> ExitCode {
         options,
         Box::new(move |cc| {
             Ok(Box::new(app::ParterreApp::new(
-                cc, path, repo, overrides, automation, vsync,
+                cc, repo, overrides, automation, vsync,
             )))
         }),
     );

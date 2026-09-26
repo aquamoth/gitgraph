@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 20._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 21._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -185,27 +185,34 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       takes WiX's `WixToolset.UI.wixext` extension.
     - **Registry key** `Software\Trustfall AB\parterre` (in HKCU or HKLM), used only as the
       components' key paths, which Windows Installer needs under a user's profile.
-    - **The Start menu entry does little until #12** (*Open repository…*): started outside a
-      repository, parterre shows nothing. #15 accepts this.
+    - **The Start menu entry** opens an empty window that asks for a repository, since #12
+      (question 18). Before, started outside a repository, parterre showed nothing.
     - **Two ICE checks are suppressed:** ICE57, which doesn't understand dual-purpose packages,
       and ICE61, which warns about the same-version upgrades we want.
     - **Per-user and machine-wide don't replace each other.** Windows Installer only upgrades
       within one scope, so a user who installs per-user and later machine-wide (or the other
       way round) gets two entries in *Settings → Apps*. Known MSI behaviour, not tested.
-18. **Log window** (#39, layout A). Calls #27–#29 didn't settle:
-    - **Ref badges follow the graph's ref kinds.** The log shows badges (and names the range
-      with refs) only of the kinds the graph shows: hide remote branches, other refs or the
-      stash in the graph and they go from the log too. The alternative is every ref, always,
-      which on Apps would add the `refs/t3/*` checkpoints.
-    - **Esc in the filter field** only leaves the field; a second Esc closes the window.
-    - **F5 in the log window** reloads the whole repository, graph included, as F5 in the
-      graph does; the log re-runs its query and keeps the selected commit.
-    - **Show log while the window is open** replaces its contents and asks the window manager
-      to raise it (Wayland may ignore that). Sort and filter of the changed files, and the
-      divider positions, carry over to the new log.
-    - **Size on first open:** 1100 × 760; after that, the size it last had.
-    - **No keyboard focus for the list:** the arrow keys, Page Up/Down, Home and End move the
-      selected commit whenever the filter field doesn't have the keyboard.
+18. **Opening folders** (your request of 2026-09-26). Without a path, parterre opens the
+    current directory's repository, or else an empty window asking for one. The ☰ menu starts
+    with *Open folder…* (`Ctrl+O`), *Recent folders* and *Close folder* (`Ctrl+W`), not in
+    the toolbar. Decisions you may want to overrule:
+    - **A path given that is not a repository** still ends with an error, as before, instead
+      of opening the empty window. From a terminal that says why. From a shortcut or the
+      planned Explorer menu nothing would show.
+    - **The empty window also has an *Open folder…* button and the five most recent
+      folders.** That is more than the message you asked for; the menu has the same.
+    - **Recent folders:** the ten newest, each shown by name with the folder it is in (two
+      `Apps` repositories stay apart). The open one is left out. The list also takes
+      repositories opened from the command line or the current directory.
+    - **A recent folder that fails to open leaves the list**, with the reason in the status
+      bar, so that deleted repositories don't linger. A drive that is only unplugged loses
+      its entries too.
+    - **The folder picker** is the platform's own: Windows' dialog, macOS's, and on Linux the
+      XDG desktop portal, or zenity where there is no portal (the `rfd` crate, without GTK).
+      It starts in the folder around the open or most recent repository. Any folder inside a
+      repository opens that repository.
+    - **Items that need a repository** (undo, reload, export, close) are greyed out while none
+      is open. The toolbar stays as it is.
 19. **Log window layouts** (#40). #29 didn't settle:
     - **The picker** is four icon segments drawing each layout's panes, named in their
       tooltips, like the toolbar's drag modes. No keyboard shortcut for switching (the
@@ -222,6 +229,20 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       changed-files table whose path would get under 260 points gets narrower columns with
       shorter headings ("Ext.", "Added", "Removed"; the full name in the tooltip). Decided by
       width, not by layout, so a narrow window in layout A gets them too.
+20. **Log window** (#39, layout A). Calls #27–#29 didn't settle:
+    - **Ref badges follow the graph's ref kinds.** The log shows badges (and names the range
+      with refs) only of the kinds the graph shows: hide remote branches, other refs or the
+      stash in the graph and they go from the log too. The alternative is every ref, always,
+      which on Apps would add the `refs/t3/*` checkpoints.
+    - **Esc in the filter field** only leaves the field; a second Esc closes the window.
+    - **F5 in the log window** reloads the whole repository, graph included, as F5 in the
+      graph does; the log re-runs its query and keeps the selected commit.
+    - **Show log while the window is open** replaces its contents and asks the window manager
+      to raise it (Wayland may ignore that). Sort and filter of the changed files, and the
+      divider positions, carry over to the new log.
+    - **Size on first open:** 1100 × 760; after that, the size it last had.
+    - **No keyboard focus for the list:** the arrow keys, Page Up/Down, Home and End move the
+      selected commit whenever the filter field doesn't have the keyboard.
 
 ## Planned
 
@@ -230,7 +251,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       from TortoiseGit (decided in #28): when the second of two selected nodes is an ancestor
       of the first, the two are swapped instead of showing an empty list.
   - [x] Layout A (stacked) and its entry points: *Show log* first in the node menu, `L` and
-        double-click ([#39](https://github.com/aquamoth/parterre/issues/39); see question 18).
+        double-click ([#39](https://github.com/aquamoth/parterre/issues/39); see question 20).
   - [x] Layouts B, C and D, the layout picker (in the window's header and in *Settings →
         Appearance*) and reset, and the layout and divider positions per layout saved with the
         settings ([#40](https://github.com/aquamoth/parterre/issues/40); see question 19).
@@ -267,12 +288,19 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       winget (#16), Chocolatey (#17), .deb and .rpm (#18), Snap (#19), publishing behind one
       approval (#20), Flathub later (#21). The MSI (#15) is built by CI and attached to
       releases, and parterre finds Git for Windows when git isn't on PATH (question 17).
-- [ ] Explorer context menu (#11) and *Open repository…* in the ☰ menu (#12).
+- [ ] Explorer context menu (#11).
 - [ ] macOS `.app` bundle, so the Dock shows `packaging/icon/parterre.icns`; the release ships
       a bare binary, which gets the generic icon.
 - [ ] After some sequences of drags, undo and redo, a reset leaves an edge with a route of
       its own. `physics_random_drags` finds one with seed 31337 (iteration 247), on main before
       the child-above-parent ordering was merged too.
+- [ ] Open GitHub PRs in the graph (`docs/research/github-forks-and-pull-requests.md`, §12,
+      §14). TortoiseGit has no such feature.
+  - [ ] Slice 1: PR-icon tags on nodes whose commit is a PR head, opening the PR in the browser;
+        a toolbar toggle, disabled without a GitHub connection; only PRs of `origin` (plus
+        the fork's own PRs into its parent) whose base branch is visible. No fetching.
+  - [ ] Slice 2: fetch other PR heads commits-only into a private cache; greyed-out nodes,
+        dashed edges.
 
 ## Done
 
@@ -354,6 +382,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] Title bar: on GNOME (Wayland desktops that leave it to the app) winit's Adwaita-style
       title bar with the window title and round buttons, instead of a plain dark bar. The
       title bar follows parterre's light or dark theme, also on Windows and macOS.
+- [x] Opening and closing folders from the ☰ menu, with recent folders (#12, question 18).
+      Without a path, the current directory's repository or an empty window that asks for one.
 - [x] Toolbar, ☰ menu and settings reorganised (question 16): icon tools for what to show, the
       ref toggles with filter options, find, zoom, HEAD, the overview map and the drag modes
       with their options; everything again in the ☰ menu, in the toolbar's order; the rest in
