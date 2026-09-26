@@ -101,8 +101,8 @@ struct Cli {
     #[arg(long, value_parser = parse_size)]
     window_size: Option<(f32, f32)>,
 
-    /// Write the graph to FILE and exit, without opening a window: SVG, or PNG if FILE ends in
-    /// .png (at 100%, or --zoom).
+    /// Write the graph to FILE and exit, without opening a window: SVG, or PNG or WebP if FILE
+    /// ends in .png or .webp (at 100%, or --zoom).
     #[arg(long, value_name = "FILE")]
     export: Option<PathBuf>,
 
@@ -118,7 +118,7 @@ struct Cli {
     #[arg(long, hide = true)]
     overview: bool,
 
-    /// Zoom (1 = 100%) of a PNG --export, or of the screenshot around the centre of its initial
+    /// Zoom (1 = 100%) of a PNG or WebP --export, or of the screenshot around the centre of its initial
     /// view.
     #[arg(long)]
     zoom: Option<f32>,
@@ -412,8 +412,8 @@ fn repair_quoted_root(path: PathBuf) -> PathBuf {
     }
 }
 
-/// Lays the graph out without a window and writes it as SVG or PNG (by the extension). A PNG
-/// is drawn at `zoom`, one pixel per point.
+/// Lays the graph out without a window and writes it as SVG, PNG or WebP (by the extension).
+/// PNG and WebP are drawn at `zoom`, one pixel per point.
 fn export_headless(
     repo: &std::sync::Arc<parterre_core::Repo>,
     settings: &settings::Settings,
@@ -423,7 +423,7 @@ fn export_headless(
     // Checked before the layout, which can take seconds.
     anyhow::ensure!(
         export::Format::from_path(path).is_some(),
-        "unknown format: name the file .svg or .png"
+        "unknown format: name the file .svg, .png or .webp"
     );
     let scene = scene::Scene::headless(repo, settings);
     let palette = theme::Palette::new(

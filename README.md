@@ -47,7 +47,7 @@ parterre --look classic            # straight, unbundled edges like TortoiseGit
 parterre --hide 'pipeline/*,release/*'        # leave out build and release branches
 parterre --branch-color 'feature/*=#9b59b6'   # colour branches by name (repeatable)
 parterre --export graph.svg        # write an SVG without opening a window
-parterre --export graph.png --zoom 2   # or a PNG, here at 200%
+parterre --export graph.png --zoom 2   # or a PNG (or .webp), here at 200%
 parterre --help                    # all options
 ```
 

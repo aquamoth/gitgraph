@@ -43,9 +43,10 @@ crates/parterre        the binary (eframe/egui)
                        worker thread
   scene.rs             node contents and sizes + layout + physics net, hit testing
   render.rs            painting nodes, edges, arrows, overview
-  export.rs            SVG export, and PNG export: render.rs painted in tiles by an
-                       offscreen egui context, sized to stay within 100 megapixels
-  raster.rs            software rasteriser for egui's meshes (for PNG, with no GPU or window)
+  export.rs            SVG export, and PNG and WebP export: render.rs painted in tiles by
+                       an offscreen egui context, sized to stay within 100 megapixels
+  raster.rs            software rasteriser for egui's meshes (for PNG and WebP, with no GPU
+                       or window)
   view.rs              pan/zoom transform
   theme.rs             TortoiseGit colours (light, and dark via lightness inversion)
   system_theme.rs      light or dark desktop preference on Linux (XDG portal)

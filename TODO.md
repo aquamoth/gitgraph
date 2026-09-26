@@ -303,9 +303,14 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       memory (300 MB at the limit). Writing the PNG in bands would lift the limit, but needs
       the `png` crate directly (already built, as `image` uses it).
     - **Background:** the theme's, opaque. No transparent PNG.
-    - **Other formats:** only SVG and PNG (TortoiseGit also writes JPEG, BMP and GIF).
-      `--export` refuses other extensions; before, it wrote SVG whatever the name. A name
-      without an extension still gets SVG.
+    - **WebP** too (your request of 2026-09-26), which TortoiseGit doesn't write: lossless
+      only (the encoder has no lossy mode), the same pixels as PNG in a file about 40%
+      smaller (Apps: 1.0 against 1.8 MB). WebP allows at most 16,383 px a side, so Apps in
+      the Classic look comes out at 68%. Adds the `image-webp` crate, +320 KB.
+    - **Other formats:** no JPEG (+255 KB; blurry fringes round the labels, often bigger
+      than the PNG), BMP or GIF, which TortoiseGit also writes. `--export` refuses other
+      extensions; before, it wrote SVG whatever the name. A name without an extension still
+      gets SVG.
 
 ## Planned
 
@@ -470,6 +475,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       and the drag net's neighbour lists are stored flat, which took the 100k-commit
       all-commits view from 900 to 740 MB and its layout from about 3 s to 2 s. What is left
       is mostly the drag net (about 170 bytes for each of 1.6M particles); question 11.
-- [x] PNG export (question 22): ☰ → *Export* → *PNG…*, and `--export out.png` (with `--zoom`).
-      Drawn by the window's own painting code, rasterised without a GPU, so labels look as on
-      screen. Both exports now use the system's save dialog instead of a path field.
+- [x] PNG and WebP export (question 22): ☰ → *Export* → *PNG…* or *WebP…*, and
+      `--export out.png` or `out.webp` (with `--zoom`). Drawn by the window's own painting
+      code, rasterised without a GPU, so labels look as on screen. Every export now uses the
+      system's save dialog instead of a path field.

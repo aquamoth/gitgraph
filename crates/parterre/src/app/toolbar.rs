@@ -400,8 +400,9 @@ impl ParterreApp {
         // which type was picked, and macOS shows no list at all.
         ui.add_enabled_ui(has_repo, |ui| {
             menu::submenu(ui, "Export", |ui| {
-                for (format, label) in [(Format::Svg, "SVG…"), (Format::Png, "PNG…")] {
-                    if menu::item(ui, label, "", Mark::None).clicked() {
+                for format in Format::ALL {
+                    let label = format!("{}…", format.name());
+                    if menu::item(ui, &label, "", Mark::None).clicked() {
                         self.export = Some(format);
                     }
                 }

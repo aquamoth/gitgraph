@@ -606,7 +606,7 @@ impl ParterreApp {
             return None;
         };
         let ext = format.extension();
-        let kind = ext.to_uppercase();
+        let kind = format.name();
         let mut dialog = rfd::AsyncFileDialog::new()
             .set_title(format!("Export the graph as {kind}"))
             .set_parent(frame)
@@ -632,7 +632,7 @@ impl ParterreApp {
         self.export_dir = path.parent().map(Path::to_owned);
         let zoom = match format {
             Format::Svg => 1.0,
-            Format::Png => self.view.zoom,
+            Format::Png | Format::WebP => self.view.zoom,
         };
         let palette = Palette::new(
             ctx.global_style().visuals.dark_mode,
