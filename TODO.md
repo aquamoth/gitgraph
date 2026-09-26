@@ -96,8 +96,10 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 8. **Other refs** (`refs/t3/*` in Apps) are hidden by default; ☰ → Show → Other refs shows them.
 9. **HEAD marker.** Like TortoiseGit, only the current branch's row is highlighted (red). A
    detached HEAD gets its own red "HEAD" row, which TortoiseGit doesn't have.
-10. **No git actions.** Per your brief, there's no checkout, log, diff or delete. The context
-    menu only copies hashes, ref names or the subject. Should any actions be added?
+10. **No git actions.** Answered 2026-09-26: yes, towards parity with TortoiseGit's node menu.
+    The roadmap, its boundary rule and the open decisions live in the map *Revision-graph node
+    menu: roadmap to TortoiseGit parity* ([#25](https://github.com/aquamoth/parterre/issues/25)).
+    Show log comes first; *Browse repository* and the menu-bar Git menu are out.
 11. **Performance at 100k commits.** I measured this on a synthetic repository with 100k
     commits, 2,490 refs and 1,846 merges:
     - Loading takes 0.6 s.
