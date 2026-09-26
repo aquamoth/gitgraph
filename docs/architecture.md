@@ -17,6 +17,7 @@ crates/parterre-core   GUI-free; everything testable lives here
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
   pattern.rs           branch-name wildcards, for hiding and colouring branches
   recent.rs            the recently opened repositories
+  watch.rs             fingerprint of the files git keeps refs in, for reloading by itself
   glyphs.rs            toolbar and menu icons as SVG path data, and a path flattener
   layout/              layered (Sugiyama) layout
     rank.rs            layer assignment (network simplex / longest path / chronological),
@@ -35,12 +36,17 @@ crates/parterre        the binary (eframe/egui)
   app.rs               canvas interaction, search, status bar, windows, opening folders
     toolbar.rs         the toolbar, its popovers and the ☰ menu
     settings_window.rs the settings: pages of rows, applied as you change them
+    auto_reload.rs     a worker thread that reloads when the refs change
     log_window.rs      the log window (Show log): an immediate viewport with three panes
                        (commits, details, changed files) that one of four fixed layouts
                        arranges, picked in its header; changed files come from git on a
                        worker thread
   scene.rs             node contents and sizes + layout + physics net, hit testing
   render.rs            painting nodes, edges, arrows, overview
+  export.rs            SVG export, and PNG and WebP export: render.rs painted in tiles by
+                       an offscreen egui context, sized to stay within 100 megapixels
+  raster.rs            software rasteriser for egui's meshes (for PNG and WebP, with no GPU
+                       or window)
   view.rs              pan/zoom transform
   theme.rs             TortoiseGit colours (light, and dark via lightness inversion)
   system_theme.rs      light or dark desktop preference on Linux (XDG portal)

@@ -181,6 +181,42 @@ struct Spring {
     along_edge: bool,
 }
 
+/// Spring ids at every particle, stored flat: particle `i`'s are `ids[start[i]..start[i + 1]]`.
+/// A `Vec` per particle would cost 24 bytes plus a heap block each, for millions of particles
+/// in all-commits views of big repositories.
+#[derive(Clone, Debug)]
+struct SpringsAt {
+    start: Vec<u32>,
+    ids: Vec<u32>,
+}
+
+impl SpringsAt {
+    fn new(particle_count: usize, springs: &[Spring]) -> SpringsAt {
+        let mut start = vec![0u32; particle_count + 1];
+        for s in springs {
+            start[s.a as usize + 1] += 1;
+            start[s.b as usize + 1] += 1;
+        }
+        for i in 0..particle_count {
+            start[i + 1] += start[i];
+        }
+        let mut next = start.clone();
+        let mut ids = vec![0; start[particle_count] as usize];
+        for (i, s) in springs.iter().enumerate() {
+            for p in [s.a, s.b] {
+                let slot = &mut next[p as usize];
+                ids[*slot as usize] = i as u32;
+                *slot += 1;
+            }
+        }
+        SpringsAt { start, ids }
+    }
+
+    fn get(&self, particle: usize) -> &[u32] {
+        &self.ids[self.start[particle] as usize..self.start[particle + 1] as usize]
+    }
+}
+
 /// A drag in progress.
 #[derive(Clone, Debug)]
 struct Grab {
@@ -238,7 +274,7 @@ pub struct Net {
     moved: Vec<bool>,
     springs: Vec<Spring>,
     /// Spring ids per particle.
-    adjacent: Vec<Vec<u32>>,
+    adjacent: SpringsAt,
     /// Particles of every edge, child node first, parent node last.
     chains: Vec<Vec<u32>>,
     /// Edges at every node.
@@ -367,11 +403,7 @@ impl Net {
         }
 
         let count = origin.len();
-        let mut adjacent = vec![Vec::new(); count];
-        for (i, s) in springs.iter().enumerate() {
-            adjacent[s.a as usize].push(i as u32);
-            adjacent[s.b as usize].push(i as u32);
-        }
+        let adjacent = SpringsAt::new(count, &springs);
         Net {
             node_count: n,
             origin,
@@ -884,7 +916,7 @@ impl Net {
                 break;
             }
             self.activate(q);
-            for &s in &self.adjacent[q] {
+            for &s in self.adjacent.get(q) {
                 let s = self.springs[s as usize];
                 let other = if s.a as usize == q { s.b } else { s.a } as usize;
                 if seen.insert(other) {
@@ -984,7 +1016,9 @@ impl Net {
     }
 
     /// Brings routes up to date after the `moved` nodes have moved: those of their edges, and
-    /// those of routed edges passing where they are now.
+    /// those of routed edges passing where they were or are now. (An edge a node has just left
+    /// may have been routed round it; its route has to be looked at again even if the node has
+    /// jumped clear of it in one frame.)
     fn update_routes(&mut self, moved: &[u32]) {
         if moved.is_empty() {
             return;
@@ -994,19 +1028,22 @@ impl Net {
         for &node in moved {
             let i = node as usize;
             let (centre, half) = (self.pos(i), self.half[i]);
+            let mut boxes = [None, None];
             if let Some(o) = &mut self.obstacles {
+                boxes[0] = o.box_of(i);
                 o.place(i, centre, half);
+                boxes[1] = o.box_of(i);
             }
             self.placed_at[i] = self.disp[i];
-            let grow = Point::new(half.x + route::CLEARANCE, half.y + route::CLEARANCE);
-            let (lo, hi) = (sub(centre, grow), add(centre, grow));
-            area = Some(match area {
-                None => (lo, hi),
-                Some((a, b)) => (
-                    Point::new(a.x.min(lo.x), a.y.min(lo.y)),
-                    Point::new(b.x.max(hi.x), b.y.max(hi.y)),
-                ),
-            });
+            for (lo, hi) in boxes.into_iter().flatten() {
+                area = Some(match area {
+                    None => (lo, hi),
+                    Some((a, b)) => (
+                        Point::new(a.x.min(lo.x), a.y.min(lo.y)),
+                        Point::new(b.x.max(hi.x), b.y.max(hi.y)),
+                    ),
+                });
+            }
         }
         let mut edges: Vec<u32> = moved
             .iter()
@@ -1029,9 +1066,11 @@ impl Net {
         }
     }
 
-    /// Bounding box of edge `e` as drawn.
+    /// Bounding box of edge `e` as drawn, and of its layout route through its bend points
+    /// (which [`Net::blocked`] looks at, and which a route of its own may leave far behind).
     fn span(&self, e: usize) -> (Point, Point) {
-        let mut pts = self.edge_points(e);
+        let layout_route = self.chains[e].iter().map(|&p| self.pos(p as usize));
+        let mut pts = self.edge_points(e).chain(layout_route);
         let first = pts.next().expect("edges have two ends");
         pts.fold((first, first), |(lo, hi), p| {
             (
@@ -1204,7 +1243,7 @@ impl Net {
                 let k_home = if i < n { k_anchor } else { k_anchor * 0.5 };
                 let mut num = scale(self.home[i], k_home);
                 let mut den = k_home;
-                for &si in &self.adjacent[i] {
+                for &si in self.adjacent.get(i) {
                     let s = &self.springs[si as usize];
                     let (a, b) = (s.a as usize, s.b as usize);
                     let rest = sub(self.home[b], self.home[a]);
@@ -1483,7 +1522,7 @@ impl Net {
     fn flow_segments(&self) -> FlowSegments {
         let mut forward = Vec::new();
         for &i in &self.active {
-            for &si in &self.adjacent[i as usize] {
+            for &si in self.adjacent.get(i as usize) {
                 let s = &self.springs[si as usize];
                 // Each segment once: from its newer end, or its older end if the newer rests.
                 let from_here = s.a == i || (s.b == i && !self.is_active[s.a as usize]);
@@ -2073,6 +2112,66 @@ mod tests {
         );
         eprintln!("edge {:?}", net.edge_points(0).collect::<Vec<_>>());
         assert!(edge_is_clear(&net, 0));
+    }
+
+    #[test]
+    fn edges_left_behind_by_a_node_take_the_layout_route_again() {
+        // 0 -> 1 in one column, and 2 far off to the side.
+        let input = LayoutInput {
+            sizes: vec![Point::new(60.0, 20.0); 3],
+            times: vec![3, 2, 1],
+            edges: vec![edge(0, 1)],
+            priority: Vec::new(),
+        };
+        let opts = LayoutOptions {
+            node_gap: 300.0,
+            ..LayoutOptions::default()
+        };
+        let l = layout::layout(&input, &opts);
+        let mut net = Net::new(&l, &input.sizes);
+        assert!((l.nodes[2].x - l.nodes[1].x).abs() > 300.0);
+        // Drop 2 on 1, the end of 0 -> 1, so that the edge re-routes.
+        drag(&mut net, &[2], sub(l.nodes[1], l.nodes[2]), &free());
+        settle(&mut net, &free());
+        assert!(net.is_rerouted(0), "0 -> 1 is covered by 2");
+        // On the way back 2 leaves the edge's surroundings between two frames. The edge must
+        // still notice that it is clear.
+        net.reset();
+        settle(&mut net, &free());
+        assert!(close(net.node_pos(2), l.nodes[2]));
+        assert!(!net.is_rerouted(0), "0 -> 1 takes the layout's route again");
+    }
+
+    #[test]
+    fn edges_rerouted_away_from_their_layout_route_take_it_again() {
+        // 0 -> 1 -> 2 -> 3 in one column, 0 -> 3 alongside it, and 4 beside 3.
+        let input = LayoutInput {
+            sizes: vec![Point::new(60.0, 20.0); 5],
+            times: vec![5, 4, 3, 2, 1],
+            edges: vec![
+                edge(0, 1),
+                edge(1, 2),
+                edge(2, 3),
+                LayoutEdge {
+                    first_parent: false,
+                    ..edge(0, 3)
+                },
+            ],
+            priority: Vec::new(),
+        };
+        let (l, mut net) = net_for(&input);
+        // Drop 4 on the bend of 0 -> 3 beside 2.
+        let bend = l.edges[3][2];
+        assert!((bend.y - l.nodes[2].y).abs() < 1.0 && bend.x > l.nodes[2].x);
+        drag(&mut net, &[4], sub(bend, l.nodes[4]), &free());
+        settle(&mut net, &free());
+        assert!(net.is_rerouted(3), "0 -> 3 is covered by 4");
+        // On the way back 4 pushes the route of 0 -> 3 round the other side of the column,
+        // away from its layout route, which 4 still covers.
+        net.reset();
+        settle(&mut net, &free());
+        assert!(close(net.node_pos(4), l.nodes[4]));
+        assert!(!net.is_rerouted(3), "0 -> 3 takes the layout's route again");
     }
 
     #[test]

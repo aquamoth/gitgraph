@@ -71,6 +71,9 @@ impl BranchColor {
 /// Resolved colours for drawing the graph.
 #[derive(Clone, Debug)]
 pub struct Palette {
+    /// Whether this is the dark palette, drawn with egui's dark visuals (which draw text
+    /// bolder).
+    pub dark: bool,
     pub background: Color32,
     pub edge: Color32,
     pub plain_fill: Color32,
@@ -107,6 +110,7 @@ impl Palette {
 
     pub fn light() -> Palette {
         Palette {
+            dark: false,
             background: Color32::WHITE,
             edge: Color32::BLACK,
             // TortoiseGit's "brightColor", which works out to a pale lavender on white.
@@ -129,6 +133,7 @@ impl Palette {
     pub fn dark() -> Palette {
         let l = Palette::light();
         Palette {
+            dark: true,
             background: Color32::from_rgb(0x1E, 0x1E, 0x1E),
             edge: Color32::from_rgb(0xD0, 0xD0, 0xD0),
             plain_fill: Color32::from_rgb(0x2E, 0x2E, 0x48),

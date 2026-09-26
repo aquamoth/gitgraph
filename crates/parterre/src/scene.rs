@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
+use eframe::egui::{Color32, FontId, Pos2, Rect, Vec2, pos2, vec2};
 use parterre_core::layout::{self, Layout, LayoutEdge, LayoutInput, LayoutOptions, Point};
 use parterre_core::physics::{DragModel, Net};
 use parterre_core::revgraph::{self, RevGraph};
@@ -16,8 +16,6 @@ pub const FONT_SIZE: f32 = 12.0;
 pub const MARGIN_X: f32 = 20.0;
 pub const MARGIN_Y: f32 = 5.0;
 pub const CORNER_RADIUS: f32 = 6.0;
-/// TortoiseGit shows 8 hex digits for commits without refs.
-pub const HASH_DIGITS: usize = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RowKind {
@@ -88,14 +86,17 @@ impl Scene {
         let graph = revgraph::build(repo, &settings.graph);
 
         let row_height = text_height + 2.0 * MARGIN_Y;
-        let hash_width = text_width(&"8".repeat(HASH_DIGITS));
+        // Commits without refs show their hash as long as git abbreviates it in this
+        // repository (`Repo::abbrev_len`), like the log window. Deliberate deviation:
+        // TortoiseGit always shows 8 digits.
+        let hash_width = text_width(&"8".repeat(repo.abbrev_len));
         let visuals: Vec<NodeVisual> = graph
             .nodes
             .iter()
             .map(|node| {
                 let rows: Vec<Row> = if node.refs.is_empty() {
                     vec![Row {
-                        label: repo.commit(node.commit).oid.short(HASH_DIGITS),
+                        label: repo.commit(node.commit).oid.short(repo.abbrev_len),
                         kind: RowKind::Hash,
                     }]
                 } else {
@@ -153,6 +154,27 @@ impl Scene {
             options: settings.layout.clone(),
             row_height,
         }
+    }
+
+    /// Builds and lays out the scene on this thread, without a window (for `--export`).
+    pub fn headless(repo: &Arc<Repo>, settings: &Settings) -> Scene {
+        let ctx = eframe::egui::Context::default();
+        // One pass initialises the fonts used to measure labels.
+        // Nothing is rendered, so the texture updates are discarded.
+        ctx.run_ui(eframe::egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
+        let font = FontId::monospace(FONT_SIZE);
+        let text_height = ctx.fonts_mut(|f| f.row_height(&font));
+        let input = ctx.fonts_mut(|f| {
+            let mut width = |s: &str| {
+                f.layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            };
+            Scene::prepare(repo, settings, &mut width, text_height)
+        });
+        input.lay_out()
     }
 
     pub fn node_count(&self) -> usize {
@@ -213,4 +235,45 @@ pub fn to_pos(p: Point) -> Pos2 {
 
 pub fn to_point(p: Pos2) -> Point {
     Point::new(p.x, p.y)
+}
+
+#[cfg(test)]
+mod tests {
+    use parterre_core::{Commit, CommitIx, Head, Oid};
+
+    use super::*;
+
+    #[test]
+    fn hash_rows_are_as_long_as_git_abbreviates() {
+        let commit = Commit {
+            oid: Oid::from_hex(&"abcdef0123".repeat(4)).unwrap(),
+            parents: Vec::new(),
+            truncated: false,
+            empty_tree: false,
+            author_name: String::new(),
+            author_email: String::new(),
+            author_time: 0,
+            author_date: String::new(),
+            commit_time: 0,
+            subject: String::new(),
+        };
+        let mut repo = Repo::new(
+            "/x".into(),
+            vec![commit],
+            Vec::new(),
+            Head::Detached(CommitIx(0)),
+        );
+        repo.abbrev_len = 12;
+        let input = Scene::prepare(
+            &Arc::new(repo),
+            &Settings::default(),
+            &mut |s| s.len() as f32,
+            10.0,
+        );
+        let visual = &input.visuals[0];
+        assert_eq!(visual.rows[0].kind, RowKind::Hash);
+        assert_eq!(visual.rows[0].label, "abcdef0123ab");
+        // The box is sized for that many digits.
+        assert_eq!(visual.size.x, 12.0 + 2.0 * MARGIN_X);
+    }
 }

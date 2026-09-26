@@ -142,8 +142,7 @@ fn transpose_all(g: &mut LayeredGraph) {
 }
 
 fn neighbour_positions(g: &LayeredGraph, item: usize, up: bool, out: &mut Vec<u32>) {
-    let it = &g.items[item];
-    let list = if up { &it.up } else { &it.down };
+    let list = if up { g.up(item) } else { g.down(item) };
     out.clear();
     out.extend(list.iter().map(|&(nb, _)| g.pos[nb as usize]));
     out.sort_unstable();
@@ -202,7 +201,7 @@ fn initial_order(g: &mut LayeredGraph, input: &LayoutInput) {
         stack.push((start, 0));
         while let Some(top) = stack.last_mut() {
             let (item, i) = (top.0 as usize, top.1);
-            if let Some(&(child, _)) = g.items[item].down.get(i) {
+            if let Some(&(child, _)) = g.down(item).get(i) {
                 top.1 += 1;
                 if seq[child as usize] == u32::MAX {
                     seq[child as usize] = next;
@@ -242,8 +241,11 @@ fn reorder_layer(
     }
     s.keys.clear();
     for &i in &g.layers[l] {
-        let item = &g.items[i as usize];
-        let neighbours = if sweeping_down { &item.up } else { &item.down };
+        let neighbours = if sweeping_down {
+            g.up(i as usize)
+        } else {
+            g.down(i as usize)
+        };
         s.values.clear();
         s.values
             .extend(neighbours.iter().map(|&(nb, _)| g.pos[nb as usize] as f32));
@@ -305,7 +307,7 @@ pub fn total_crossings(g: &LayeredGraph) -> u64 {
     for l in 0..g.layers.len().saturating_sub(1) {
         edges.clear();
         for &i in &g.layers[l] {
-            for &(below, _) in &g.items[i as usize].down {
+            for &(below, _) in g.down(i as usize) {
                 edges.push((g.pos[i as usize], g.pos[below as usize]));
             }
         }

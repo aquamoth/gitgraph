@@ -52,10 +52,9 @@ pub fn assign(g: &LayeredGraph, node_gap: f32) -> Vec<f32> {
             let layer = &g.layers[l];
             if let [single] = layer[..] {
                 // Nothing to separate: move straight to the (weighted) target.
-                let item = &g.items[single as usize];
                 let x = u[single as usize];
                 let (mut sum_w, mut sum_wx) = (0.0, 0.0);
-                for &(nb, w) in item.up.iter().chain(&item.down) {
+                for &(nb, w) in g.up(single as usize).iter().chain(g.down(single as usize)) {
                     let nx = u[nb as usize];
                     let w = if l1 {
                         w / (x - nx).abs().max(STRAIGHT)
@@ -74,11 +73,10 @@ pub fn assign(g: &LayeredGraph, node_gap: f32) -> Vec<f32> {
             weights.clear();
             seps.clear();
             for (k, &i) in layer.iter().enumerate() {
-                let item = &g.items[i as usize];
                 let x = u[i as usize];
                 let mut sum_w = 0.0;
                 let mut sum_wx = 0.0;
-                for &(nb, w) in item.up.iter().chain(&item.down) {
+                for &(nb, w) in g.up(i as usize).iter().chain(g.down(i as usize)) {
                     let nx = u[nb as usize];
                     let w = if l1 {
                         w / (x - nx).abs().max(STRAIGHT)

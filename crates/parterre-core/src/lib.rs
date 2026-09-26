@@ -17,6 +17,7 @@ pub mod repo;
 pub mod revgraph;
 pub mod route;
 pub mod text;
+pub mod watch;
 
 pub use oid::Oid;
 pub use repo::{Commit, CommitIx, GitRef, Head, RefKind, Repo};

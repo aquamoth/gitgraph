@@ -7,9 +7,11 @@ mod app;
 mod automation;
 mod console;
 mod export;
+mod file_dialog;
 mod frame_pacing;
 mod icon;
 mod menu;
+mod raster;
 mod render;
 mod scene;
 mod settings;
@@ -24,6 +26,7 @@ mod widgets;
 #[cfg(test)]
 mod win_resource;
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -99,7 +102,8 @@ struct Cli {
     #[arg(long, value_parser = parse_size)]
     window_size: Option<(f32, f32)>,
 
-    /// Write the graph as SVG to FILE and exit, without opening a window.
+    /// Write the graph to FILE and exit, without opening a window: SVG, or PNG or WebP if FILE
+    /// ends in .png or .webp (at 100%, or --zoom).
     #[arg(long, value_name = "FILE")]
     export: Option<PathBuf>,
 
@@ -115,8 +119,9 @@ struct Cli {
     #[arg(long, hide = true)]
     overview: bool,
 
-    /// Zoom level for the screenshot (1 = 100%), applied around the centre of the initial view.
-    #[arg(long, hide = true)]
+    /// Zoom (1 = 100%) of a PNG or WebP --export, or of the screenshot around the centre of its initial
+    /// view.
+    #[arg(long)]
     zoom: Option<f32>,
 
     /// Drag the centre node by DX,DY before taking the screenshot (demonstrates the physics).
@@ -269,13 +274,27 @@ fn parse_vec(s: &str) -> Result<(f32, f32), String> {
 
 fn main() -> ExitCode {
     console::attach_parent();
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    cli.path = cli.path.take().map(repair_quoted_root);
+    // Why the repository named on the command line didn't open, when the window says so.
+    let mut open_error = None;
     let repo = match &cli.path {
         Some(path) => match parterre_core::git::load_repo(path) {
             Ok(repo) => Some(repo),
-            Err(e) => {
+            // In a terminal or a scripted run, say why and stop. Started from Explorer's menu, a
+            // desktop entry or a shortcut there is no one to read stderr, so the window opens
+            // and shows it.
+            Err(e)
+                if cli.export.is_some()
+                    || cli.screenshot.is_some()
+                    || std::io::stderr().is_terminal() =>
+            {
                 eprintln!("parterre: {e}");
                 return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                open_error = Some(format!("Could not open {}: {e}", path.display()));
+                None
             }
         },
         // Started from a menu or file manager, the current directory is seldom a repository.
@@ -289,7 +308,8 @@ fn main() -> ExitCode {
         };
         let mut settings = settings::Settings::default();
         apply_cli(&cli, &mut settings);
-        return match export_headless(&std::sync::Arc::new(repo), &settings, &path) {
+        let zoom = cli.zoom.unwrap_or(1.0);
+        return match export_headless(&std::sync::Arc::new(repo), &settings, &path, zoom) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("parterre: could not write {}: {e}", path.display());
@@ -339,7 +359,7 @@ fn main() -> ExitCode {
         options,
         Box::new(move |cc| {
             Ok(Box::new(app::ParterreApp::new(
-                cc, repo, overrides, automation, vsync,
+                cc, repo, open_error, overrides, automation, vsync,
             )))
         }),
     );
@@ -446,34 +466,71 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
     }
 }
 
-/// Lays the graph out without a window and writes it as SVG.
+/// Undoes a quirk of Windows command lines: a quoted path ending in a backslash, as Explorer
+/// passes the root of a drive (`"C:\"`), arrives with the backslash taken as escaping the
+/// closing quote (`C:"`). No Windows path can contain a quote, so a trailing one is put back
+/// as the backslash. Elsewhere a quote is a valid character and is left alone.
+fn repair_quoted_root(path: PathBuf) -> PathBuf {
+    if !cfg!(windows) {
+        return path;
+    }
+    match path.to_str().and_then(|s| s.strip_suffix('"')) {
+        Some(root) => PathBuf::from(format!("{root}\\")),
+        None => path,
+    }
+}
+
+/// Lays the graph out without a window and writes it as SVG, PNG or WebP (by the extension).
+/// PNG and WebP are drawn at `zoom`, one pixel per point.
 fn export_headless(
     repo: &std::sync::Arc<parterre_core::Repo>,
     settings: &settings::Settings,
     path: &std::path::Path,
-) -> std::io::Result<()> {
-    let ctx = egui::Context::default();
-    // One pass initialises the fonts used to measure labels.
-    // Nothing is rendered, so the texture updates are discarded.
-    ctx.run_ui(egui::RawInput::default(), |_| {})
-        .textures_delta
-        .clear();
-    let font = egui::FontId::monospace(scene::FONT_SIZE);
-    let text_height = ctx.fonts_mut(|f| f.row_height(&font));
-    let input = ctx.fonts_mut(|f| {
-        let mut width = |s: &str| {
-            f.layout_no_wrap(s.to_owned(), font.clone(), egui::Color32::WHITE)
-                .size()
-                .x
-        };
-        scene::Scene::prepare(repo, settings, &mut width, text_height)
-    });
-    let scene = input.lay_out();
+    zoom: f32,
+) -> anyhow::Result<()> {
+    // Checked before the layout, which can take seconds.
+    anyhow::ensure!(
+        export::Format::from_path(path).is_some(),
+        "unknown format: name the file .svg, .png or .webp"
+    );
+    let scene = scene::Scene::headless(repo, settings);
     let palette = theme::Palette::new(
         settings.theme == theme::ThemeChoice::Dark,
         &settings.branch_colors,
     );
-    std::fs::write(path, export::to_svg(&scene, settings, &palette))?;
-    eprintln!("wrote {} ({} nodes)", path.display(), scene.node_count());
+    let what = export::write(path, &scene, settings, &palette, zoom, 1.0)?;
+    eprintln!(
+        "wrote {} ({} nodes; {what})",
+        path.display(),
+        scene.node_count()
+    );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn repairs_a_quoted_drive_root() {
+        // Explorer's `"%V"` on the background of C:\ gives `"C:\"`, which arrives as `C:"`.
+        assert_eq!(
+            repair_quoted_root(PathBuf::from("C:\"")),
+            PathBuf::from("C:\\")
+        );
+        assert_eq!(
+            repair_quoted_root(PathBuf::from("C:\\src\\repo")),
+            PathBuf::from("C:\\src\\repo")
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn keeps_quotes_where_names_may_have_them() {
+        assert_eq!(
+            repair_quoted_root(PathBuf::from("a\"")),
+            PathBuf::from("a\"")
+        );
+    }
 }

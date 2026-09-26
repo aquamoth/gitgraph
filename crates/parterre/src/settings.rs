@@ -170,6 +170,8 @@ pub struct Settings {
     pub highlight_edges: bool,
     /// Keep moved nodes where they are, per repository, across runs and relayouts.
     pub remember_moves: bool,
+    /// Reload when the repository's refs change (TortoiseGit reloads only on F5).
+    pub auto_reload: bool,
     /// Colours for branches by name; the first matching rule wins.
     pub branch_colors: Vec<BranchColor>,
     pub log_window: LogWindowSettings,
@@ -247,6 +249,7 @@ impl Default for Settings {
             show_hidden_counts: false,
             highlight_edges: true,
             remember_moves: false,
+            auto_reload: true,
             branch_colors: Vec::new(),
             log_window: LogWindowSettings::default(),
             diff_window: DiffWindowSettings::default(),
