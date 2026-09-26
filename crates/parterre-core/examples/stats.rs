@@ -18,6 +18,12 @@ fn main() {
         repo.refs.len(),
         t.elapsed()
     );
+    eprintln!("git's hash length: {}", repo.abbrev_len);
+    if let Some(head) = repo.head_commit() {
+        let t = Instant::now();
+        let log = parterre_core::log::LogQuery::commit(head).run(&repo);
+        eprintln!("log of HEAD: {} commits in {:?}", log.len(), t.elapsed());
+    }
 
     if let Some(i) = args.iter().position(|a| a == "--dump-nodes") {
         let mode = match args.get(i + 1).map(String::as_str) {

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use parterre_core::recent::Recent;
 use parterre_core::{Oid, Repo};
 
+mod log_window;
 mod settings_window;
 mod toolbar;
 
@@ -22,6 +23,7 @@ pub use toolbar::popup_id;
 use settings_window::SettingsPage;
 
 use crate::automation::Automation;
+use crate::frame_pacing::FrameLimiter;
 use crate::menu;
 use crate::render::{self, Marks};
 use crate::scene::{FONT_SIZE, Scene, to_point};
@@ -224,6 +226,10 @@ pub struct ParterreApp {
     /// Path being edited in the "Export as SVG" dialog, when open.
     export_path: Option<String>,
     messages: Messages,
+    /// The log window (Show log), and what it keeps while closed.
+    log: log_window::LogWindow,
+    /// Raise the log window in the next frame (Show log while it is open).
+    focus_log: bool,
     /// Dragged nodes of every repository, kept when `remember_moves` is on.
     moves: RememberedMoves,
     system_theme: SystemTheme,
@@ -235,6 +241,8 @@ pub struct ParterreApp {
     /// What is typed into the zoom level, while it has the focus.
     zoom_text: String,
     automation: Automation,
+    /// Caps the frame rate where vsync is off (Wayland, see `frame_pacing`).
+    frame_limiter: Option<FrameLimiter>,
 }
 
 impl std::fmt::Debug for ParterreApp {
@@ -251,6 +259,7 @@ impl ParterreApp {
         repo: Option<Repo>,
         overrides: impl FnOnce(&mut Settings),
         automation: Automation,
+        vsync: bool,
     ) -> ParterreApp {
         let persist = !automation.is_active();
         let mut settings: Settings = cc
@@ -259,6 +268,8 @@ impl ParterreApp {
             .and_then(|s| eframe::get_value(s, STORAGE_KEY))
             .unwrap_or_default();
         overrides(&mut settings);
+        // Settings edited by hand or saved by another version may put a divider out of reach.
+        settings.log_window.dividers = settings.log_window.dividers.clamped();
         let moves: RememberedMoves = cc
             .storage
             .filter(|_| persist)
@@ -280,7 +291,25 @@ impl ParterreApp {
             .as_deref()
             .and_then(|o| o.strip_prefix("settings"))
             .map(|page| SettingsPage::named(page.trim_start_matches(':')).unwrap_or_default());
-        ParterreApp {
+        // Automated runs are short and show one window (viewports are embedded), so they neither
+        // freeze nor need their frame rate capped: they run as fast as they can.
+        let frame_limiter = (!vsync && !automation.is_active()).then(FrameLimiter::default);
+        let demo_log: Option<Vec<parterre_core::CommitIx>> = automation
+            .demo_log
+            .as_deref()
+            .zip(repo.as_ref())
+            .map(|(spec, repo)| {
+                spec.split("..")
+                    .filter_map(|name| {
+                        let commit = repo.resolve(name);
+                        if commit.is_none() {
+                            eprintln!("--demo-log: no commit named {name}");
+                        }
+                        commit
+                    })
+                    .collect()
+            });
+        let mut app = ParterreApp {
             title: window_title(repo.as_ref()),
             repo: repo.map(Arc::new),
             recent,
@@ -310,6 +339,8 @@ impl ParterreApp {
             show_about: false,
             export_path: None,
             messages: Messages::default(),
+            log: log_window::LogWindow::default(),
+            focus_log: false,
             moves,
             system_theme: SystemTheme::watch(&cc.egui_ctx),
             window_theme: None,
@@ -317,7 +348,12 @@ impl ParterreApp {
             window_icon: Arc::new(crate::icon::icon()),
             zoom_text: String::new(),
             automation,
+            frame_limiter,
+        };
+        if let (Some(commits), Some(repo)) = (demo_log, app.repo.clone()) {
+            app.open_log(repo, &commits);
         }
+        app
     }
 
     /// Starts a new layout when the graph or layout options changed, and installs finished
@@ -572,6 +608,8 @@ impl ParterreApp {
         self.export_path = None;
         // Its worker thread asks the old repository's git; dropping it ends the thread.
         self.messages = Messages::default();
+        // The log shows the old repository's history.
+        self.log.close();
     }
 
     /// Shows the folder picker, then opens what was picked. It blocks until closed.
@@ -602,7 +640,9 @@ impl ParterreApp {
                 // The scene on screen keeps its own snapshot until the new layout replaces it;
                 // the selection is carried over by commit id.
                 self.pending_select = self.selected_commits();
-                self.repo = Some(Arc::new(repo));
+                let repo = Arc::new(repo);
+                self.log.reload(&repo);
+                self.repo = Some(repo);
                 self.requested = None;
                 self.status = Some(("Reloaded".into(), false));
             }
@@ -771,6 +811,11 @@ impl ParterreApp {
         }
         if pressed(Key::F5) {
             self.reload();
+        }
+        // One node gives its log, two the range between them; three or more nothing.
+        if pressed(Key::L) {
+            let nodes = self.selection.nodes.clone();
+            self.show_log(&nodes);
         }
         if pressed(Key::F) {
             self.fit();
@@ -1069,8 +1114,16 @@ impl ParterreApp {
                 self.selection.set(Some(n));
             }
         }
-        if response.double_clicked() && self.hovered.is_none() {
-            self.view.fit(canvas, scene.bounds(), 1.0);
+        // Double-clicking a node opens its log and selects it alone; the background fits.
+        let mut action = None;
+        if response.double_clicked() {
+            match self.hovered {
+                Some(n) => {
+                    self.selection.set(Some(n));
+                    action = Some(MenuAction::ShowLog(vec![n]));
+                }
+                None => self.view.fit(canvas, scene.bounds(), 1.0),
+            }
         }
 
         // Wheel: scroll; Ctrl+wheel or pinch: zoom around the pointer.
@@ -1254,7 +1307,6 @@ impl ParterreApp {
             Some(n) => vec![n],
             None => Vec::new(),
         };
-        let mut action = None;
         let item = |text: &str, shortcut: &str| egui::Button::new(text).shortcut_text(shortcut);
         egui::Popup::context_menu(&response)
             .style(menu::style)
@@ -1272,6 +1324,15 @@ impl ParterreApp {
                         }
                         return;
                     };
+                    // Greyed out rather than left out, so the menu keeps its shape.
+                    let show_log = ui
+                        .add_enabled(group.len() <= 2, item("Show log", "L"))
+                        .on_disabled_hover_text("Select one or two nodes");
+                    if show_log.clicked() {
+                        action = Some(MenuAction::ShowLog(group.clone()));
+                        ui.close();
+                    }
+                    menu::separator(ui);
                     let n = &scene.graph.nodes[node];
                     let commit = scene.repo.commit(n.commit);
                     // Right-clicking selects the node, so Ctrl+C would copy the same hash.
@@ -1339,6 +1400,7 @@ impl ParterreApp {
             Some(MenuAction::ReturnToLayout(nodes)) => self.return_to_layout(&nodes),
             Some(MenuAction::SelectSubtree(roots)) => self.select_subtree(&roots),
             Some(MenuAction::Center(node)) => self.center_on(node),
+            Some(MenuAction::ShowLog(nodes)) => self.show_log(&nodes),
             None => {}
         }
 
@@ -1510,6 +1572,11 @@ impl ParterreApp {
                         ),
                         ("Click a node", "Select it"),
                         (
+                            "L, double-click a node",
+                            "Show log: of the node, or of the range between two selected \
+                             nodes (first..second)",
+                        ),
+                        (
                             "Ctrl+click / Shift+click",
                             "Toggle it in / add it to the selection",
                         ),
@@ -1534,7 +1601,7 @@ impl ParterreApp {
                         ("Ctrl+,", "Settings"),
                         (
                             "Right-click a node",
-                            "Copy hash or refs, select its subtree, return it to the layout",
+                            "Show log, copy hash or refs, select its subtree, return it to the layout",
                         ),
                     ] {
                         ui.strong(keys);
@@ -1649,10 +1716,15 @@ enum MenuAction {
     ReturnToLayout(Vec<usize>),
     SelectSubtree(Vec<usize>),
     Center(usize),
+    ShowLog(Vec<usize>),
 }
 
 impl eframe::App for ParterreApp {
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        // One pass paints the main window and every immediate viewport, so this paces them all.
+        if let Some(limiter) = &mut self.frame_limiter {
+            limiter.wait();
+        }
         let ctx = ui.ctx().clone();
         self.apply_theme(&ctx);
         let title = window_title(self.repo.as_deref());
@@ -1680,6 +1752,7 @@ impl eframe::App for ParterreApp {
         self.shortcuts_window(&ctx);
         self.legend_window(&ctx);
         self.settings_window(&ctx);
+        self.log_window(&ctx);
         self.about_window(&ctx);
         self.export_window(&ctx);
 

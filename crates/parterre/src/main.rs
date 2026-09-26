@@ -7,6 +7,7 @@ mod app;
 mod automation;
 mod console;
 mod export;
+mod frame_pacing;
 mod icon;
 mod menu;
 mod render;
@@ -29,6 +30,7 @@ use std::process::ExitCode;
 use clap::{Parser, ValueEnum};
 use eframe::egui;
 use parterre_core::layout::Direction;
+use parterre_core::log_layout::LogLayout;
 use parterre_core::physics::DragModel;
 use parterre_core::revgraph::Simplification;
 
@@ -135,6 +137,16 @@ struct Cli {
     #[arg(long, value_name = "WHAT", hide = true)]
     demo_open: Option<String>,
 
+    /// Open the log window before taking the screenshot: of REF, or of the range FIRST..SECOND
+    /// (refs or hash prefixes, as if those nodes were selected in that order).
+    #[arg(long, value_name = "REF[..REF]", hide = true)]
+    demo_log: Option<String>,
+
+    /// The log window's layout (for --demo-log): stacked, side-by-side, details-below or
+    /// files-right, or a, b, c or d.
+    #[arg(long, value_enum, hide = true)]
+    log_layout: Option<LogLayoutArg>,
+
     /// What moves when dragging (for --demo-drag).
     #[arg(long, value_enum, hide = true)]
     drag_mode: Option<DragModeArg>,
@@ -145,6 +157,18 @@ enum DragModeArg {
     Adapt,
     Free,
     Subtree,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LogLayoutArg {
+    #[value(alias = "a")]
+    Stacked,
+    #[value(alias = "b")]
+    SideBySide,
+    #[value(alias = "c")]
+    DetailsBelow,
+    #[value(alias = "d")]
+    FilesRight,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -238,7 +262,10 @@ fn main() -> ExitCode {
     }
 
     let (w, h) = cli.window_size.unwrap_or((1400.0, 900.0));
-    let options = eframe::NativeOptions {
+    // On Wayland a vsync'ed swap of a hidden window blocks the whole app (egui#5145); see
+    // `frame_pacing`. eframe reads this once, when it creates the GL context.
+    let vsync = !frame_pacing::wayland_session();
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(app::window_title(repo.as_ref()))
             .with_app_id(settings::APP_ID)
@@ -247,6 +274,7 @@ fn main() -> ExitCode {
             .with_icon(std::sync::Arc::new(icon::icon())),
         ..Default::default()
     };
+    options.glow_options.vsync = vsync;
     let mut automation = Automation::new(
         cli.screenshot.clone(),
         cli.fit,
@@ -255,6 +283,7 @@ fn main() -> ExitCode {
     );
     automation.demo_node = cli.demo_node.clone();
     automation.demo_open = cli.demo_open.clone();
+    automation.demo_log = cli.demo_log.clone();
     automation.demo_menu = cli.demo_menu.map(|m| match m {
         DemoMenuArg::Node => automation::DemoMenu::Node,
         DemoMenuArg::Canvas => automation::DemoMenu::Canvas,
@@ -266,7 +295,7 @@ fn main() -> ExitCode {
         options,
         Box::new(move |cc| {
             Ok(Box::new(app::ParterreApp::new(
-                cc, repo, overrides, automation,
+                cc, repo, overrides, automation, vsync,
             )))
         }),
     );
@@ -330,6 +359,14 @@ fn apply_cli(cli: &Cli, s: &mut settings::Settings) {
             DragModeArg::Adapt => DragModel::Adapt,
             DragModeArg::Free => DragModel::Free,
             DragModeArg::Subtree => DragModel::Subtree,
+        };
+    }
+    if let Some(layout) = cli.log_layout {
+        s.log_window.layout = match layout {
+            LogLayoutArg::Stacked => LogLayout::Stacked,
+            LogLayoutArg::SideBySide => LogLayout::SideBySide,
+            LogLayoutArg::DetailsBelow => LogLayout::DetailsBelow,
+            LogLayoutArg::FilesRight => LogLayout::FilesRight,
         };
     }
     if let Some(theme) = cli.theme {

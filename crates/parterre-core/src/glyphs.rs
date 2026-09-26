@@ -145,8 +145,33 @@ pub const SUBTREE: Glyph = &[
     Part::Path("M12 4.5 6 12.5M12 4.5l6 8M6 12.5V20"),
 ];
 
+/// Log layout A, stacked: three panes one above the other.
+pub const LAYOUT_STACKED: Glyph = &[
+    rect(3.0, 4.0, 18.0, 16.0, 2.0, false),
+    Part::Path("M3 10.5h18M3 15.5h18"),
+];
+/// Log layout B, side by side: a pane on the left, two above each other on the right.
+pub const LAYOUT_SIDE_BY_SIDE: Glyph = &[
+    rect(3.0, 4.0, 18.0, 16.0, 2.0, false),
+    Part::Path("M13 4v16M13 11h8"),
+];
+/// Log layout C, details and files below: a pane on top, two side by side under it.
+pub const LAYOUT_DETAILS_BELOW: Glyph = &[
+    rect(3.0, 4.0, 18.0, 16.0, 2.0, false),
+    Part::Path("M3 12h18M10.5 12v8"),
+];
+/// Log layout D, files on the right: two panes above each other, a tall one on the right.
+pub const LAYOUT_FILES_RIGHT: Glyph = &[
+    rect(3.0, 4.0, 18.0, 16.0, 2.0, false),
+    Part::Path("M14 4v16M3 14h11"),
+];
+/// Reset: Lucide's rotate-ccw.
+pub const RESET: Glyph = &[Part::Path(
+    "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5",
+)];
+
 /// Every glyph, for tests.
-pub const ALL: [Glyph; 21] = [
+pub const ALL: [Glyph; 26] = [
     MENU,
     SEARCH,
     PLUS,
@@ -168,6 +193,11 @@ pub const ALL: [Glyph; 21] = [
     ADAPT,
     FREE,
     SUBTREE,
+    LAYOUT_STACKED,
+    LAYOUT_SIDE_BY_SIDE,
+    LAYOUT_DETAILS_BELOW,
+    LAYOUT_FILES_RIGHT,
+    RESET,
 ];
 
 /// One stroke of a flattened path.
