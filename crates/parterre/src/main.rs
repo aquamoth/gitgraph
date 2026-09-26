@@ -19,6 +19,9 @@ mod theme;
 mod version;
 mod view;
 mod widgets;
+// Runs in build.rs; compiled here only for its tests.
+#[cfg(test)]
+mod win_resource;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

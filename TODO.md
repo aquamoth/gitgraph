@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 17._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 18._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -172,6 +172,26 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       as their tooltips say; before, they were greyed out in the other modes.
     - **The toolbar no longer wraps.** In narrow windows the find field shrinks instead, and
       drops its `Ctrl+F` hint.
+17. **Windows installer** (#15, `docs/building.md` → "Windows installer"). Tested on Windows 11:
+    per-user and machine-wide installs, uninstalls, upgrades, same-version upgrades and a
+    refused downgrade. Calls #15 didn't settle:
+    - **MSI rather than MSIX** (your question of 2026-09-26). MSIX must be signed, and winget
+      refuses unsigned ones; it installs per-user only, so Chocolatey's machine-wide install
+      has no counterpart; and an Explorer entry (#11) would need a COM shell extension instead
+      of a few registry keys. MSIX would bring clean sandboxed uninstalls and Store updates.
+      Worth another look only with code signing.
+    - **No installer UI.** A plain MSI shows only a progress bar, which suits winget and
+      Chocolatey. Someone downloading it from GitHub sees no welcome or finish page. Adding one
+      takes WiX's `WixToolset.UI.wixext` extension.
+    - **Registry key** `Software\Trustfall AB\parterre` (in HKCU or HKLM), used only as the
+      components' key paths, which Windows Installer needs under a user's profile.
+    - **The Start menu entry does little until #12** (*Open repository…*): started outside a
+      repository, parterre shows nothing. #15 accepts this.
+    - **Two ICE checks are suppressed:** ICE57, which doesn't understand dual-purpose packages,
+      and ICE61, which warns about the same-version upgrades we want.
+    - **Per-user and machine-wide don't replace each other.** Windows Installer only upgrades
+      within one scope, so a user who installs per-user and later machine-wide (or the other
+      way round) gets two entries in *Settings → Apps*. Known MSI behaviour, not tested.
 
 ## Planned
 
@@ -205,7 +225,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [ ] Less memory for all-commits views of huge repositories (compact adjacency).
 - [ ] Distribution, as decided in `docs/distribution.md`: crates.io (#13), Windows MSI (#15),
       winget (#16), Chocolatey (#17), .deb and .rpm (#18), Snap (#19), publishing behind one
-      approval (#20), Flathub later (#21).
+      approval (#20), Flathub later (#21). The MSI (#15) is built by CI and attached to
+      releases, and parterre finds Git for Windows when git isn't on PATH (question 17).
 - [ ] Explorer context menu (#11) and *Open repository…* in the ☰ menu (#12).
 - [ ] macOS `.app` bundle, so the Dock shows `packaging/icon/parterre.icns`; the release ships
       a bare binary, which gets the generic icon.
@@ -250,6 +271,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] Window icon drawn in code; Linux `.desktop` entry; pre-commit hook (fmt and clippy).
 - [x] App icon (`parterre-core::icon`): the window icon, the SVG, PNGs, the `.ico` embedded in
       the Windows `.exe` and the `.icns` are all generated from one drawing.
+- [x] Version information in the Windows `.exe` (*Properties → Details*): product name,
+      versions, copyright and Trustfall AB as the company.
 - [x] Hovering an edge lists the commits collapsed into it. Help → Legend explains the colours.
 - [x] Independent code review. Fixed:
   - a crash when reloading after deleting a branch or tag
