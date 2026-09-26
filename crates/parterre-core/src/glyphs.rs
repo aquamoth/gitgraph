@@ -184,6 +184,10 @@ pub const DIFF_UNIFIED: Glyph = &[
 pub const FOLD: Glyph = &[Part::Path(
     "M12 22v-6M12 8V2M4 12H2M10 12H8M16 12h-2M22 12h-2M15 19l-3-3-3 3M15 5l-3 3-3-3",
 )];
+/// Show the whole file: Lucide's unfold-vertical, two arrows opening from a dashed line.
+pub const UNFOLD: Glyph = &[Part::Path(
+    "M12 22v-6M12 8V2M4 12H2M10 12H8M16 12h-2M22 12h-2M15 19l-3 3-3-3M15 5l-3-3-3 3",
+)];
 /// Whitespace counts: Lucide's pilcrow.
 pub const WHITESPACE_COMPARE: Glyph =
     &[Part::Path("M13 4v16M17 4v16M19 4H9.5a4.5 4.5 0 0 0 0 9H13")];
@@ -197,7 +201,7 @@ pub const WHITESPACE_IGNORE_ALL: Glyph = &[Part::Path(
 )];
 
 /// Every glyph, for tests.
-pub const ALL: [Glyph; 32] = [
+pub const ALL: [Glyph; 33] = [
     MENU,
     SEARCH,
     PLUS,
@@ -227,6 +231,7 @@ pub const ALL: [Glyph; 32] = [
     DIFF_SIDE_BY_SIDE,
     DIFF_UNIFIED,
     FOLD,
+    UNFOLD,
     WHITESPACE_COMPARE,
     WHITESPACE_IGNORE_CHANGES,
     WHITESPACE_IGNORE_ALL,

@@ -118,12 +118,12 @@ enum Load {
     Failed(String),
 }
 
-/// A column of text: one side side by side, or the one column of the unified form.
+/// The version text is chosen in: side by side, the pane; unified, the version of the line
+/// the choosing started on (the other version's lines are left out).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Column {
     Old,
     New,
-    Unified,
 }
 
 impl Column {
@@ -132,7 +132,6 @@ impl Column {
         match self {
             Column::Old => Some(true),
             Column::New => Some(false),
-            Column::Unified => None,
         }
     }
 }
@@ -419,7 +418,8 @@ impl DiffWindow {
         }
     }
 
-    /// The fold button: off → on, on → off, and on with folds opened by hand → all folded.
+    /// The fold button: folded → whole file → folded, and folded with folds opened by hand →
+    /// all folded again.
     fn toggle_fold(&mut self, settings: &mut DiffWindowSettings) {
         if !(self.fold && !self.open.is_empty()) {
             self.fold = !self.fold;
@@ -590,24 +590,20 @@ impl DiffWindow {
         );
         ui.add_space(14.0);
 
-        // Three states: off, on, and on with folds opened by hand, which a click folds again.
+        // Three states: folded, folded with some folds opened by hand, and the whole file.
         let opened = self.fold && !self.open.is_empty();
-        let r = fold_button(ui, self.fold, opened);
-        let r = if opened {
-            widgets::tip_explained(
-                r,
-                "Fold unchanged lines",
-                "",
-                "Some folds are open. Click to fold them all again.",
-            )
-        } else {
-            widgets::tip_explained(
-                r,
-                "Fold unchanged lines",
-                "",
-                "Hide the unchanged stretches between changes; click a fold to open it.",
-            )
+        let (title, body) = match (self.fold, opened) {
+            (true, false) => (
+                "Unchanged lines folded",
+                "Click a fold to open it, or here to show the whole file.",
+            ),
+            (true, true) => ("Some folds are open", "Click to fold them all again."),
+            (false, _) => (
+                "Whole file",
+                "Click to fold the unchanged stretches between changes.",
+            ),
         };
+        let r = widgets::tip_explained(fold_button(ui, self.fold, opened), title, "", body);
         if r.clicked() {
             self.toggle_fold(settings);
         }
@@ -807,7 +803,7 @@ impl DiffWindow {
         let selection = self.selection;
         let dragging = self.dragging;
         let pointer = ui.input(|i| i.pointer.interact_pos());
-        let pressed = ui.input(|i| i.pointer.primary_pressed());
+        let (pressed, shift) = ui.input(|i| (i.pointer.primary_pressed(), i.modifiers.shift));
         let mut input = RowInput::default();
         let mut child = ui.new_child(UiBuilder::new().max_rect(area));
         child.set_clip_rect(area.intersect(ui.clip_rect()));
@@ -855,11 +851,14 @@ impl DiffWindow {
                     drawn
                 } else {
                     let line = diff.line(row, None);
-                    let sel =
-                        selection.and_then(|s| Some((s.columns(Column::Unified, r)?, s.lines)));
+                    // Only lines of the chosen version are chosen.
+                    let sel = selection
+                        .filter(|s| diff.line(row, s.column.side()).is_some())
+                        .and_then(|s| Some((s.columns(s.column, r)?, s.lines)));
                     let numbers = Numbers::Both(row.old, row.new);
                     let at = paint_line(ui, rect, line, numbers, &geometry, sel, c);
-                    vec![(Column::Unified, rect, 2.0 * gutter, at)]
+                    // The version is settled below, when a press starts choosing.
+                    vec![(Column::New, rect, 2.0 * gutter, at)]
                 };
                 let Some(p) = pointer.filter(|p| rect.y_range().contains(p.y)) else {
                     continue;
@@ -873,10 +872,15 @@ impl DiffWindow {
                         }
                     })
                 };
-                let under: Vec<(Column, usize)> = columns
-                    .iter()
-                    .map(|(col, _, _, at)| (*col, char_at(at)))
-                    .collect();
+                let under: Vec<(Column, usize)> = if side {
+                    columns
+                        .iter()
+                        .map(|(col, _, _, at)| (*col, char_at(at)))
+                        .collect()
+                } else {
+                    let col = char_at(&columns[0].3);
+                    vec![(Column::Old, col), (Column::New, col)]
+                };
                 input.hover = Some((r, [under[0], *under.last().unwrap_or(&under[0])]));
                 if let Some((column, half, numbers_w, at)) = columns
                     .iter()
@@ -887,7 +891,26 @@ impl DiffWindow {
                         let _ = response.clone().on_hover_cursor(egui::CursorIcon::Text);
                     }
                     if pressed && response.hovered() {
-                        input.press = Some((r, *column, char_at(at), on_numbers));
+                        let column = if side {
+                            *column
+                        } else if let Some(s) = selection.filter(|_| shift) {
+                            s.column
+                        } else if on_numbers {
+                            // The old numbers come first, then the new.
+                            if p.x < half.left() + gutter {
+                                Column::Old
+                            } else {
+                                Column::New
+                            }
+                        } else if diff
+                            .line(row, None)
+                            .is_some_and(|l| l.kind == LineKind::Removed)
+                        {
+                            Column::Old
+                        } else {
+                            Column::New
+                        };
+                        input.press = Some((r, column, char_at(at), on_numbers));
                     }
                 }
             }
@@ -1148,11 +1171,7 @@ impl DiffWindow {
         let Some(last) = rows.len().checked_sub(1) else {
             return;
         };
-        let column = match (self.selection, self.form) {
-            (Some(s), _) => s.column,
-            (None, DiffForm::SideBySide) => Column::New,
-            (None, DiffForm::Unified) => Column::Unified,
-        };
+        let column = self.selection.map_or(Column::New, |s| s.column);
         self.selection = Some(Selection {
             column,
             anchor: (0, 0),
@@ -1348,22 +1367,16 @@ fn paint_line(
     Some(TextAt { galley, origin })
 }
 
-/// The fold toggle: off, on, or on with some folds opened by hand (shown half on, with a dot).
+/// The fold button, whose icon says the state: arrows closing, tinted, when unchanged
+/// stretches are folded; the same untinted when some folds were opened by hand; arrows
+/// opening when the whole file shows.
 fn fold_button(ui: &mut Ui, on: bool, opened: bool) -> egui::Response {
-    let response = widgets::icon_button(ui, glyphs::FOLD, on && !opened);
-    if opened {
-        let t = widgets::tones(ui);
-        let rect = response.rect;
-        let painter = ui.painter();
-        painter.rect_stroke(
-            rect.shrink(0.5),
-            CornerRadius::same(7),
-            Stroke::new(1.0, t.on_fg.gamma_multiply(0.6)),
-            StrokeKind::Inside,
-        );
-        painter.circle_filled(rect.right_top() + vec2(-6.0, 6.0), 3.0, t.on_fg);
-    }
-    response
+    let (glyph, tinted) = match (on, opened) {
+        (true, false) => (glyphs::FOLD, true),
+        (true, true) => (glyphs::FOLD, false),
+        (false, _) => (glyphs::UNFOLD, false),
+    };
+    widgets::icon_button(ui, glyph, tinted)
 }
 
 /// A fold: `n unchanged lines`, across the row.
@@ -1851,6 +1864,66 @@ mod tests {
             w.selected_text().as_deref(),
             Some("one\n\ttwo three\nfour five\nsix\n")
         );
+    }
+
+    /// Where display column `col` of row `row` starts in the unified form, unfolded.
+    fn at_unified(ctx: &egui::Context, w: &DiffWindow, row: usize, col: usize) -> egui::Pos2 {
+        let right_pane = at(ctx, w, row, col);
+        let font = FontId::monospace(FONT_SIZE);
+        let char_w = ctx.fonts_mut(|f| f.glyph_width(&font, '0'));
+        let ready = w.ready().unwrap();
+        let lines = ready.diff.old.len().max(ready.diff.new.len()).max(1);
+        let gutter = ((lines as f32).log10().floor() + 1.0) * char_w + 18.0;
+        let mid = (1200.0 - OVERVIEW) / 2.0;
+        // No pane titles, two number columns, from the left edge.
+        pos2(right_pane.x - mid + gutter, right_pane.y - PANE_TITLE)
+    }
+
+    fn drag(
+        ctx: &egui::Context,
+        w: &mut DiffWindow,
+        settings: &mut DiffWindowSettings,
+        a: egui::Pos2,
+        b: egui::Pos2,
+    ) {
+        let none = Modifiers::NONE;
+        let steps = [
+            vec![egui::Event::PointerMoved(a), button(a, true, none)],
+            vec![egui::Event::PointerMoved(b)],
+            vec![button(b, false, none)],
+        ];
+        for events in steps {
+            frame(ctx, w, settings, events);
+        }
+    }
+
+    #[test]
+    fn unified_text_is_chosen_in_the_version_it_starts_on() {
+        let mut settings = DiffWindowSettings {
+            form: DiffForm::Unified,
+            fold: false,
+            ..DiffWindowSettings::default()
+        };
+        let mut w = window("keep\nold line\nend\n", "keep\nnew line\nend\n", &settings);
+        let ctx = egui::Context::default();
+        frame(&ctx, &mut w, &mut settings, Vec::new());
+        // Rows: keep, −old line, +new line, end.
+
+        // From the removed line: the old version; the added line is left out.
+        let (a, b) = (at_unified(&ctx, &w, 1, 0), at_unified(&ctx, &w, 3, 3));
+        drag(&ctx, &mut w, &mut settings, a, b);
+        assert_eq!(w.selected_text().as_deref(), Some("old line\nend"));
+
+        // From an unchanged line: the new version.
+        let (a, b) = (at_unified(&ctx, &w, 0, 0), at_unified(&ctx, &w, 3, 3));
+        drag(&ctx, &mut w, &mut settings, a, b);
+        assert_eq!(w.selected_text().as_deref(), Some("keep\nnew line\nend"));
+
+        // On the old line numbers (the first column): whole lines of the old version.
+        let gutter_old = |row| at_unified(&ctx, &w, row, 0) - vec2(MARKER + 40.0, 0.0);
+        let (a, b) = (gutter_old(0), gutter_old(3));
+        drag(&ctx, &mut w, &mut settings, a, b);
+        assert_eq!(w.selected_text().as_deref(), Some("keep\nold line\nend\n"));
     }
 
     fn folds(w: &DiffWindow) -> usize {
