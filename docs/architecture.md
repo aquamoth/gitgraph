@@ -13,6 +13,8 @@ crates/parterre-core   GUI-free; everything testable lives here
   log_layout.rs        the log window's four fixed layouts and their divider positions
   changed_files.rs     changed-file types, `diff-tree -z` parser, files-before-folders order,
                        the log window's file filter and column sort
+  compare.rs           comparing two commits: which goes left, and the files between them
+                       (`git diff-tree A B`, or from `git merge-base`)
   text.rs              URLs in commit messages, paths cut at the start, thousands separators
   revgraph.rs          reduce the commit DAG to a revision graph (TortoiseGit's rules)
   pattern.rs           branch-name wildcards, for hiding and colouring branches
@@ -48,6 +50,10 @@ crates/parterre        the binary (eframe/egui)
                        (commits, details, changed files) that one of four fixed layouts
                        arranges, picked in its header; changed files come from git on a
                        worker thread
+    file_table.rs      the changed-files table the log and compare windows share, and the
+                       worker thread that asks git for such lists
+    compare_window.rs  the compare window (Compare revisions, with HEAD, with the marked
+                       commit): two commits and the files they differ in
   scene.rs             node contents and sizes + layout + physics net, hit testing
   render.rs            painting nodes, edges, arrows, overview
   export.rs            SVG export, and PNG and WebP export: render.rs painted in tiles by
@@ -61,8 +67,9 @@ crates/parterre        the binary (eframe/egui)
   browser.rs           opens github.com pages with the platform's opener
   widgets.rs           icon buttons, segmented buttons, switches, text fields
   settings.rs          persisted settings and the Classic/Modern looks
-  automation.rs        --screenshot / --demo-drag / --demo-menu / --demo-open / --demo-log
-                       scripted runs (the log window's layout: --log-layout)
+  automation.rs        --screenshot / --demo-drag / --demo-menu / --demo-open / --demo-log /
+                       --demo-compare / --demo-mark scripted runs (the log window's layout:
+                       --log-layout)
 ```
 
 ## Data flow

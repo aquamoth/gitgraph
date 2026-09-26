@@ -69,7 +69,7 @@ In the window:
 | `Ctrl+F`, then `Enter` / `F3` | Find branches, tags, hashes, subjects or authors |
 | `L`, double-click a node | Show log: the node's history, or with two nodes selected the commits between them (first..second) |
 | Click a pull request's number | Open the pull request on GitHub |
-| Right-click a node | Show log; open its pull requests; copy its hash, ref names or subject; select its subtree; return it to the layout |
+| Right-click a node | Show log; compare with HEAD, two nodes, or the commit marked for comparison; open its pull requests; copy its hash, ref names or subject; select its subtree; return it to the layout |
 | `R` | Return all nodes to the layout |
 | `Esc` | Clear the selection |
 | `F5` | Reload the repository (it also reloads by itself when branches, tags or HEAD change) |
@@ -120,6 +120,14 @@ In the unified form you choose in one version: the one of the line you start on 
 line, or the old numbers, for the old version; `Ctrl` on an unchanged line for the old one
 too), shown by a small `+` or `−` beside the pointer. Lines of the other version are left out. Files go through git's
 textconv filters, as `git show` does; binary files and submodules say what changed instead.
+
+**Comparing two commits** lists the files they differ in, in a window with the same table;
+double-click one for its diff. Right-click a node for *Compare with HEAD*, or with two nodes
+selected *Compare revisions*. To compare commits far apart, *Mark for comparison* one (from
+the node menu or by right-clicking a row in the log) and pick *Compare with marked* on the
+other, from any log. A range log's *Compare files* compares its two ends. The window's
+*Since common ancestor* shows only what the right-hand side changed since the two forked, as
+a pull request does; *Swap sides* turns the comparison round.
 
 Colours follow TortoiseGit:
 

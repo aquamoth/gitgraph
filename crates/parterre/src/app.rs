@@ -15,6 +15,7 @@ use parterre_core::recent::Recent;
 use parterre_core::{Oid, Repo};
 
 mod auto_reload;
+mod compare_window;
 mod diff_window;
 mod file_table;
 mod log_window;
@@ -37,6 +38,7 @@ use crate::settings::{MOVES_KEY, RECENT_KEY, RememberedMoves, STORAGE_KEY, Setti
 use crate::system_theme::SystemTheme;
 use crate::theme::{Palette, ThemeChoice};
 use crate::view::View;
+use compare_window::CompareRequest;
 
 /// What a file dialog is picking for.
 #[derive(Clone, Copy, Debug)]
@@ -249,6 +251,12 @@ pub struct ParterreApp {
     focus_log: bool,
     /// The open diff windows, one file diff each.
     diffs: diff_window::DiffWindows,
+    /// The compare window (Compare revisions and the like).
+    compare: compare_window::CompareWindow,
+    /// Raise the compare window in the next frame.
+    focus_compare: bool,
+    /// The commit marked for comparison, and its name when it was marked (or last reloaded).
+    marked: Option<(Oid, String)>,
     /// Dragged nodes of every repository, kept when `remember_moves` is on.
     moves: RememberedMoves,
     /// Moved nodes to put back in the next scene: after a reload, when `remember_moves` is
@@ -380,6 +388,9 @@ impl ParterreApp {
             log: log_window::LogWindow::default(),
             focus_log: false,
             diffs: diff_window::DiffWindows::default(),
+            compare: compare_window::CompareWindow::default(),
+            focus_compare: false,
+            marked: None,
             moves,
             carried_moves: None,
             watcher: None,
@@ -397,6 +408,31 @@ impl ParterreApp {
         };
         if let (Some(commits), Some(repo)) = (demo_log, app.repo.clone()) {
             app.open_log(repo, &commits);
+        }
+        let demo_oid = |repo: &Repo, name: &str, flag: &str| {
+            let oid = repo.resolve(name).map(|c| repo.commit(c).oid);
+            if oid.is_none() {
+                eprintln!("{flag}: no commit named {name}");
+            }
+            oid
+        };
+        if let (Some(name), Some(repo)) = (app.automation.demo_mark.clone(), app.repo.clone())
+            && let Some(oid) = demo_oid(&repo, &name, "--demo-mark")
+        {
+            app.compare_request(CompareRequest::Mark(Some(oid)));
+        }
+        if let (Some(spec), Some(repo)) = (app.automation.demo_compare.clone(), app.repo.clone()) {
+            match spec.split_once("..") {
+                Some((a, b)) => {
+                    if let (Some(a), Some(b)) = (
+                        demo_oid(&repo, a, "--demo-compare"),
+                        demo_oid(&repo, b, "--demo-compare"),
+                    ) {
+                        app.compare(a, b);
+                    }
+                }
+                None => eprintln!("--demo-compare: expected <ref>..<ref>"),
+            }
         }
         if let Some(spec) = app.automation.demo_diff.clone() {
             app.open_demo_diff(&spec, &cc.egui_ctx);
@@ -716,6 +752,8 @@ impl ParterreApp {
         // The log and the diffs show the old repository's history.
         self.log.close();
         self.diffs.close_all();
+        self.compare.close();
+        self.marked = None;
     }
 
     /// The folder picker for opening a repository.
@@ -789,7 +827,11 @@ impl ParterreApp {
         let repo = Arc::new(repo);
         self.pull_requests.refs_changed();
         self.log.reload(&repo);
+        self.compare.reload(&repo);
         self.repo = Some(repo);
+        if let Some((oid, _)) = self.marked {
+            self.marked = Some((oid, self.commit_label(oid)));
+        }
         self.requested = None;
         self.status = Some((status.into(), false));
     }
@@ -1447,7 +1489,12 @@ impl ParterreApp {
             }
             _ => self.preview = None,
         }
+        let marked = self.marked.as_ref().and_then(|(oid, _)| {
+            let commit = scene.repo.lookup(oid)?;
+            scene.graph.node_of(commit).map(|n| n as usize)
+        });
         let marks = Marks {
+            marked,
             hovered: self.hovered,
             hovered_pull_request,
             hovered_edge: self.hovered_edge,
@@ -1594,6 +1641,7 @@ impl ParterreApp {
             None => Vec::new(),
         };
         let item = |text: &str, shortcut: &str| egui::Button::new(text).shortcut_text(shortcut);
+        let marked = self.marked.clone();
         // The scene is borrowed: `pull_requests_active`, field by field.
         let pull_requests_shown = self.settings.graph.show_pull_requests
             && self.pull_requests.origin().is_some()
@@ -1624,6 +1672,67 @@ impl ParterreApp {
                         ui.close();
                     }
                     let n = &scene.graph.nodes[node];
+                    let oid_of = |n: usize| scene.repo.commit(scene.graph.nodes[n].commit).oid;
+                    let oid = oid_of(node);
+                    // Two nodes: Compare revisions, in selection order; one: against HEAD.
+                    let head = scene.repo.head_commit().map(|c| scene.repo.commit(c).oid);
+                    let (label, pair) = match *group.as_slice() {
+                        [a, b] => ("Compare revisions", Some((oid_of(a), oid_of(b)))),
+                        [_] => (
+                            "Compare with HEAD",
+                            head.filter(|&h| h != oid).map(|h| (oid, h)),
+                        ),
+                        _ => ("Compare revisions", None),
+                    };
+                    let why = if group.len() > 2 {
+                        "Select one or two nodes"
+                    } else {
+                        "This is HEAD"
+                    };
+                    let compare = ui
+                        .add_enabled(pair.is_some(), egui::Button::new(label))
+                        .on_disabled_hover_text(why);
+                    if compare.clicked()
+                        && let Some((a, b)) = pair
+                    {
+                        action = Some(MenuAction::Compare(CompareRequest::Compare(a, b)));
+                        ui.close();
+                    }
+                    let is_marked = marked.as_ref().is_some_and(|(m, _)| *m == oid);
+                    let (text, mark) = if is_marked {
+                        ("Clear the mark", None)
+                    } else {
+                        ("Mark for comparison", Some(oid))
+                    };
+                    let mark_item = ui
+                        .add_enabled(group.len() == 1, egui::Button::new(text))
+                        .on_disabled_hover_text("Select one node");
+                    if mark_item.clicked() {
+                        action = Some(MenuAction::Compare(CompareRequest::Mark(mark)));
+                        ui.close();
+                    }
+                    let other = marked
+                        .as_ref()
+                        .filter(|(m, _)| *m != oid && group.len() == 1);
+                    let label = other.map_or("Compare with marked".to_owned(), |(_, name)| {
+                        format!("Compare with marked ({name})")
+                    });
+                    let why = if group.len() > 1 {
+                        "Select one node"
+                    } else if is_marked {
+                        "This is the marked commit"
+                    } else {
+                        "Mark a commit for comparison first"
+                    };
+                    let with_marked = ui
+                        .add_enabled(other.is_some(), egui::Button::new(label))
+                        .on_disabled_hover_text(why);
+                    if with_marked.clicked()
+                        && let Some(&(m, _)) = other
+                    {
+                        action = Some(MenuAction::Compare(CompareRequest::Compare(m, oid)));
+                        ui.close();
+                    }
                     if pull_requests_shown {
                         // Greyed out rather than left out, so the menu keeps its shape.
                         if n.pull_requests.is_empty() {
@@ -1707,6 +1816,7 @@ impl ParterreApp {
             Some(MenuAction::SelectSubtree(roots)) => self.select_subtree(&roots),
             Some(MenuAction::Center(node)) => self.center_on(node),
             Some(MenuAction::ShowLog(nodes)) => self.show_log(&nodes),
+            Some(MenuAction::Compare(request)) => self.compare_request(request),
             Some(MenuAction::OpenPullRequest(url)) => {
                 if let Err(e) = crate::browser::open(&url) {
                     self.status = Some((e, true));
@@ -1907,8 +2017,9 @@ impl ParterreApp {
                         ("Ctrl+,", "Settings"),
                         (
                             "Right-click a node",
-                            "Show log, open its pull requests, copy hash or refs, select its \
-                             subtree, return it to the layout",
+                            "Show log, compare (with HEAD, two nodes, or the commit marked for \
+                             comparison), open its pull requests, copy hash or refs, select \
+                             its subtree, return it to the layout",
                         ),
                     ] {
                         ui.strong(keys);
@@ -2031,6 +2142,8 @@ enum MenuAction {
     SelectSubtree(Vec<usize>),
     Center(usize),
     ShowLog(Vec<usize>),
+    /// Mark a commit for comparison, or compare two.
+    Compare(CompareRequest),
     /// Open a pull request's page in the browser.
     OpenPullRequest(String),
 }
@@ -2072,6 +2185,7 @@ impl eframe::App for ParterreApp {
         self.legend_window(&ctx);
         self.settings_window(&ctx);
         self.log_window(&ctx);
+        self.compare_window(&ctx);
         self.diff_windows(&ctx);
         self.about_window(&ctx);
 

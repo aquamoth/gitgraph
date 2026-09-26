@@ -33,6 +33,10 @@ pub struct Automation {
     /// Open a diff window on `<commit>:<path>` (against the commit's first parent) before the
     /// screenshot.
     pub demo_diff: Option<String>,
+    /// Open the compare window on `<ref>..<ref>` before the screenshot.
+    pub demo_compare: Option<String>,
+    /// Mark `<ref>` for comparison before the screenshot.
+    pub demo_mark: Option<String>,
     /// Something is still loading (a diff): hold the screenshot.
     pub waiting: bool,
     /// Where the context menu is opened, once chosen.
@@ -176,6 +180,7 @@ impl Automation {
             || self.demo_open.is_some()
             || self.demo_log.is_some()
             || self.demo_diff.is_some()
+            || self.demo_compare.is_some()
         {
             MENU_START + 60
         } else {

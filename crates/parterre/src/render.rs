@@ -27,6 +27,8 @@ pub struct Marks {
     pub hovered_pull_request: Option<usize>,
     /// Per node: matches the current search.
     pub search_hits: Vec<bool>,
+    /// The node of the commit marked for comparison.
+    pub marked: Option<usize>,
 }
 
 impl Marks {
@@ -157,11 +159,29 @@ pub fn paint_scene(
         } else if marks.is_previewed(i) {
             outline((2.0 * zoom).max(1.0), palette.selection.gamma_multiply(0.5));
         }
+        if marks.marked == Some(i) {
+            paint_mark(painter, rect, zoom, palette);
+        }
     }
 
     if settings.show_hidden_counts && FONT_SIZE * zoom * 0.85 >= MIN_TEXT_PX {
         paint_hidden_counts(painter, canvas, view, scene, palette, visible);
     }
+}
+
+/// The mark for comparison: a bookmark ribbon hanging over the top edge of the node's box,
+/// near its right end.
+fn paint_mark(painter: &Painter, node: Rect, zoom: f32, palette: &Palette) {
+    let z = zoom.max(0.5);
+    let size = vec2(10.0 * z, 16.0 * z);
+    let min = Pos2::new(node.right() - 8.0 * z - size.x, node.top() - 5.0 * z);
+    let stroke = Stroke::new(z.min(1.5), palette.background);
+    widgets::paint_ribbon(
+        painter,
+        Rect::from_min_size(min, size),
+        palette.marked,
+        stroke,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

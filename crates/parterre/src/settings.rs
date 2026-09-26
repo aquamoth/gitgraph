@@ -176,6 +176,26 @@ pub struct Settings {
     pub branch_colors: Vec<BranchColor>,
     pub log_window: LogWindowSettings,
     pub diff_window: DiffWindowSettings,
+    pub compare_window: CompareWindowSettings,
+}
+
+/// What the compare window remembers across runs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CompareWindowSettings {
+    /// Inner size in points.
+    pub size: [f32; 2],
+    /// Compare with the common ancestor rather than with the left commit.
+    pub since_ancestor: bool,
+}
+
+impl Default for CompareWindowSettings {
+    fn default() -> Self {
+        CompareWindowSettings {
+            size: [900.0, 640.0],
+            since_ancestor: false,
+        }
+    }
 }
 
 /// What the log window remembers across runs.
@@ -253,6 +273,7 @@ impl Default for Settings {
             branch_colors: Vec::new(),
             log_window: LogWindowSettings::default(),
             diff_window: DiffWindowSettings::default(),
+            compare_window: CompareWindowSettings::default(),
         };
         Look::Modern.apply(&mut s);
         s

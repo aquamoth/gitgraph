@@ -208,8 +208,11 @@ pub const WHITESPACE_IGNORE_ALL: Glyph = &[Part::Path(
     "M13 4v16M17 4v16M19 4H9.5a4.5 4.5 0 0 0 0 9H13M4 3l16 18",
 )];
 
+/// Swap the two sides of a comparison (Lucide's arrow-left-right).
+pub const SWAP: Glyph = &[Part::Path("M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4")];
+
 /// Every glyph, for tests.
-pub const ALL: [Glyph; 34] = [
+pub const ALL: [Glyph; 35] = [
     MENU,
     SEARCH,
     PLUS,
@@ -244,6 +247,7 @@ pub const ALL: [Glyph; 34] = [
     WHITESPACE_COMPARE,
     WHITESPACE_IGNORE_CHANGES,
     WHITESPACE_IGNORE_ALL,
+    SWAP,
 ];
 
 /// One stroke of a flattened path.

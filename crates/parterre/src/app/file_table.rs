@@ -59,13 +59,15 @@ impl FileTable {
     }
 
     /// The bar (the filter, then what `bar` adds, and the count on the right), the headings
-    /// and the rows of `files`, or a line saying they are loading or failed. `owner` tells
-    /// lists apart: the selection and the scroll position belong to it. Returns the files to
-    /// open (a double-click, or Enter on the selection).
+    /// and the rows of `files`, or a line saying they are loading or failed. `name` tells the
+    /// window's widgets apart from another window's; `owner` tells lists apart: the selection
+    /// and the scroll position belong to it. Returns the files to open (a double-click, or
+    /// Enter on the selection).
     pub fn show<'f>(
         &mut self,
         ui: &mut Ui,
         c: &Colors,
+        name: &str,
         owner: Id,
         files: Option<&'f Listing>,
         bar: impl FnOnce(&mut Ui),
@@ -91,7 +93,12 @@ impl FileTable {
                 .max_rect(bar_rect.shrink2(vec2(8.0, 0.0)))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        filter_field(&mut bar_ui, &mut self.filter, owner, 280.0);
+        filter_field(
+            &mut bar_ui,
+            &mut self.filter,
+            Id::new((name, "filter")),
+            280.0,
+        );
         bar(&mut bar_ui);
         if let (Some(Ok(files)), Some(shown)) = (files, &shown) {
             let count = if self.filter.is_empty() {
@@ -138,7 +145,7 @@ impl FileTable {
         let heading_font = FontId::proportional(12.0);
         for (i, column) in FileColumn::ALL.into_iter().enumerate() {
             let rect = Rect::from_x_y_ranges(x[i]..=x[i] + w[i], head.y_range());
-            let mut response = ui.interact(rect, owner.with(("sort", i)), Sense::click());
+            let mut response = ui.interact(rect, Id::new((name, "sort", i)), Sense::click());
             let heading = file_heading(column, compact);
             if heading != column.title() {
                 response = response.on_hover_text(column.title());
@@ -606,8 +613,7 @@ fn sort_arrow(ui: &Ui, at: egui::Pos2, descending: bool, color: Color32) {
 }
 
 /// The filter field of the changed files, with a magnifier.
-fn filter_field(ui: &mut Ui, text: &mut String, owner: Id, width: f32) -> Response {
-    let id = owner.with("filter");
+fn filter_field(ui: &mut Ui, text: &mut String, id: Id, width: f32) -> Response {
     let focused = ui.memory(|m| m.has_focus(id));
     let t = widgets::tones(ui);
     let stroke = if focused {

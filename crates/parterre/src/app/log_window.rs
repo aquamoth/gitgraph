@@ -20,8 +20,9 @@ use parterre_core::log::LogQuery;
 use parterre_core::log_layout::LogLayout;
 use parterre_core::revgraph::GraphOptions;
 use parterre_core::text::{find_urls, thousands};
-use parterre_core::{CommitIx, GitRef, Oid, Repo};
+use parterre_core::{Commit, CommitIx, GitRef, Oid, Repo};
 
+use super::compare_window::CompareRequest;
 use super::file_table::{DiffQueue, FileTable, Lister, Listing};
 use super::{Messages, ParterreApp};
 use crate::settings::LogWindowSettings;
@@ -79,6 +80,8 @@ pub struct LogWindow {
     opened: u64,
     /// Diff windows to open, for the app to take.
     diffs: DiffQueue<(Arc<Repo>, FileDiffSpec)>,
+    /// Marks and comparisons asked for, for the app to take.
+    requests: Vec<CompareRequest>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,6 +170,8 @@ struct Env<'a> {
     graph: &'a GraphOptions,
     /// The layout and the dividers.
     settings: &'a mut LogWindowSettings,
+    /// The commit marked for comparison, and its name.
+    marked: Option<&'a (Oid, String)>,
 }
 
 /// Where a layout puts the panes and dividers in the window body.
@@ -377,6 +382,11 @@ impl LogWindow {
         self.diffs.take()
     }
 
+    /// The marks and comparisons asked for since the last call.
+    pub fn take_compare_requests(&mut self) -> Vec<CompareRequest> {
+        std::mem::take(&mut self.requests)
+    }
+
     /// After F5: re-runs the query on the new snapshot.
     pub fn reload(&mut self, repo: &Arc<Repo>) {
         if let Some(view) = &mut self.view {
@@ -446,7 +456,7 @@ impl LogWindow {
 
     /// The range at the top left, as TortoiseGit shows it; on the right the commit count, the
     /// layout picker and the button that resets the layout's dividers.
-    fn header(&self, ui: &mut Ui, c: &Colors, env: &mut Env) {
+    fn header(&mut self, ui: &mut Ui, c: &Colors, env: &mut Env) {
         let Some(view) = &self.view else { return };
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
         let mut tools = ui.new_child(
@@ -456,6 +466,21 @@ impl LogWindow {
         );
         tools.spacing_mut().item_spacing.x = 4.0;
         layout_tools(&mut tools, env.settings);
+        if let (Some(&from), Some(&to)) = (view.query.exclude.first(), view.query.tips.first()) {
+            tools.add_space(8.0);
+            let compare = widgets::tip_explained(
+                widgets::text_button(&mut tools, "Compare files"),
+                "Compare files",
+                "",
+                "List the files that differ between the two ends of the range, and open their \
+                 diffs.",
+            );
+            if compare.clicked() {
+                let oid = |c: CommitIx| view.repo.commit(c).oid;
+                self.requests
+                    .push(CompareRequest::Compare(oid(from), oid(to)));
+            }
+        }
         let tools_left = tools.min_rect().left();
         let painter = ui.painter();
         painter.hline(
@@ -611,6 +636,8 @@ impl LogWindow {
             }
         }
         let mut clicked = None;
+        let mut request = None;
+        let head = view.repo.head_commit().map(|c| view.repo.commit(c).oid);
         let output = area.show_rows(ui, ROW, view.commits.len(), |ui, range| {
             for i in range {
                 let commit = view.repo.commit(view.commits[i]);
@@ -647,9 +674,14 @@ impl LogWindow {
                     fg_weak,
                 );
 
-                // Ref badges, then the subject in what is left.
+                // The mark, ref badges, then the subject in what is left.
                 let mut left = x[1] + CELL_PAD;
                 let right = x[1] + w[1] - CELL_PAD;
+                if env.marked.is_some_and(|(m, _)| *m == commit.oid) {
+                    let ribbon = Rect::from_center_size(pos2(left + 5.0, y), vec2(10.0, 15.0));
+                    widgets::paint_ribbon(painter, ribbon, env.palette.marked, Stroke::NONE);
+                    left += 16.0;
+                }
                 for &r in &view.refs[view.commits[i].ix()] {
                     let git_ref = &view.repo.refs[r];
                     if !env.graph.shows(git_ref.kind) || left >= right {
@@ -694,11 +726,22 @@ impl LogWindow {
                 } else {
                     response
                 };
-                if response.clicked() {
+                if response.clicked() || response.secondary_clicked() {
                     clicked = Some(i);
                 }
+                egui::Popup::context_menu(&response)
+                    .style(crate::menu::style)
+                    .show(|ui| {
+                        crate::menu::fit_window(ui, |ui| {
+                            ui.set_min_width(crate::menu::MIN_WIDTH);
+                            if let Some(r) = row_menu(ui, commit, env.marked, head) {
+                                request = Some(r);
+                            }
+                        });
+                    });
             }
         });
+        self.requests.extend(request);
         view.scroll = output.state.offset.y;
         view.list_height = output.inner_rect.height();
         if let Some(i) = clicked {
@@ -801,7 +844,7 @@ impl LogWindow {
         let weak = ui.visuals().weak_text_color();
         let open = self
             .table
-            .show(ui, c, Id::new(("log-files", commit.oid)), files, |ui| {
+            .show(ui, c, "log", Id::new(commit.oid), files, |ui| {
                 if merge {
                     ui.label(
                         RichText::new("Merge: compared with its first parent")
@@ -822,6 +865,66 @@ impl LogWindow {
     }
 }
 
+/// The menu of a commit row: marking and comparing, and copying. Says what was picked.
+fn row_menu(
+    ui: &mut Ui,
+    commit: &Commit,
+    marked: Option<&(Oid, String)>,
+    head: Option<Oid>,
+) -> Option<CompareRequest> {
+    let oid = commit.oid;
+    let mut request = None;
+    let is_marked = marked.is_some_and(|(m, _)| *m == oid);
+    let (text, mark) = if is_marked {
+        ("Clear the mark", None)
+    } else {
+        ("Mark for comparison", Some(oid))
+    };
+    if ui.button(text).clicked() {
+        request = Some(CompareRequest::Mark(mark));
+        ui.close();
+    }
+    // Greyed out rather than left out, so the menu keeps its shape.
+    let other = marked.filter(|(m, _)| *m != oid);
+    let label = other.map_or("Compare with marked".to_owned(), |(_, name)| {
+        format!("Compare with marked ({name})")
+    });
+    let why = if is_marked {
+        "This is the marked commit"
+    } else {
+        "Mark a commit for comparison first"
+    };
+    let with_marked = ui
+        .add_enabled(other.is_some(), egui::Button::new(label))
+        .on_disabled_hover_text(why);
+    if with_marked.clicked()
+        && let Some(&(m, _)) = other
+    {
+        request = Some(CompareRequest::Compare(m, oid));
+        ui.close();
+    }
+    let other_head = head.filter(|&h| h != oid);
+    let with_head = ui
+        .add_enabled(other_head.is_some(), egui::Button::new("Compare with HEAD"))
+        .on_disabled_hover_text("This is HEAD");
+    if with_head.clicked()
+        && let Some(h) = other_head
+    {
+        request = Some(CompareRequest::Compare(oid, h));
+        ui.close();
+    }
+    crate::menu::separator(ui);
+    if ui.button("Copy hash").clicked() {
+        ui.ctx().copy_text(oid.to_hex());
+        ui.close();
+    }
+    if ui.button("Copy subject").clicked() {
+        ui.ctx().copy_text(commit.subject.clone());
+        ui.close();
+    }
+    request
+}
+
 /// `text` on one line, cut with an ellipsis at `width`.
 pub(super) fn cell(ui: &Ui, text: &str, font: FontId, color: Color32, width: f32) -> Arc<Galley> {
     let mut job = LayoutJob::simple_singleline(text.to_owned(), font, color);
@@ -836,7 +939,13 @@ pub(super) fn cell(ui: &Ui, text: &str, font: FontId, color: Color32, width: f32
 
 /// A ref's badge in the graph's label colour, left-centred at `at` and at most `max_width`
 /// wide. Returns its width.
-fn badge(ui: &Ui, git_ref: &GitRef, palette: &Palette, at: egui::Pos2, max_width: f32) -> f32 {
+pub(super) fn badge(
+    ui: &Ui,
+    git_ref: &GitRef,
+    palette: &Palette,
+    at: egui::Pos2,
+    max_width: f32,
+) -> f32 {
     let fill = palette.ref_fill(git_ref.kind, git_ref.is_head, &git_ref.name);
     let color = text_on(fill);
     let pad = 5.0;
@@ -1113,12 +1222,16 @@ impl ParterreApp {
                 palette,
                 graph: &self.settings.graph,
                 settings: &mut self.settings.log_window,
+                marked: self.marked.as_ref(),
             };
             let log = &mut self.log;
             egui::CentralPanel::default()
                 .frame(egui::Frame::central_panel(&ui.ctx().global_style()).inner_margin(0))
                 .show(ui, |ui| log.contents(ui, &mut env));
         });
+        for request in self.log.take_compare_requests() {
+            self.compare_request(request);
+        }
         for (repo, spec) in self.log.take_diff_requests() {
             self.diffs.open(repo, spec, &self.settings.diff_window, ctx);
         }

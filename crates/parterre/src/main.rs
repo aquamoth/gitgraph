@@ -159,6 +159,15 @@ struct Cli {
     #[arg(long, value_name = "COMMIT:PATH", hide = true)]
     demo_diff: Option<String>,
 
+    /// Open the compare window on FIRST..SECOND (refs or hash prefixes, as if those nodes were
+    /// selected in that order) before taking the screenshot.
+    #[arg(long, value_name = "REF..REF", hide = true)]
+    demo_compare: Option<String>,
+
+    /// Mark REF (a ref or hash prefix) for comparison before taking the screenshot.
+    #[arg(long, value_name = "REF", hide = true)]
+    demo_mark: Option<String>,
+
     /// The diff window's form (for --demo-diff).
     #[arg(long, value_enum, hide = true)]
     diff_form: Option<DiffFormArg>,
@@ -354,6 +363,8 @@ fn main() -> ExitCode {
     automation.demo_open = cli.demo_open.clone();
     automation.demo_log = cli.demo_log.clone();
     automation.demo_diff = cli.demo_diff.clone();
+    automation.demo_compare = cli.demo_compare.clone();
+    automation.demo_mark = cli.demo_mark.clone();
     automation.demo_menu = cli.demo_menu.map(|m| match m {
         DemoMenuArg::Node => automation::DemoMenu::Node,
         DemoMenuArg::Canvas => automation::DemoMenu::Canvas,

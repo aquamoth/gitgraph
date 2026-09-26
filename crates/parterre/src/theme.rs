@@ -90,6 +90,8 @@ pub struct Palette {
     pub draft_pull_request: Color32,
     pub selection: Color32,
     pub search_hit: Color32,
+    /// The commit marked for comparison. Not in TortoiseGit's graph, which has no mark.
+    pub marked: Color32,
     /// Colours by branch name, first match first; they override the ref-kind colours.
     pub branch_colors: Vec<(BranchPatterns, Color32)>,
 }
@@ -131,6 +133,7 @@ impl Palette {
             draft_pull_request: Color32::from_rgb(0xD2, 0xDA, 0xE2),
             selection: Color32::from_rgb(0, 120, 215),
             search_hit: Color32::from_rgb(255, 140, 0),
+            marked: Color32::from_rgb(190, 30, 140),
             branch_colors: Vec::new(),
         }
     }
@@ -155,6 +158,7 @@ impl Palette {
             draft_pull_request: invert_lightness(l.draft_pull_request),
             selection: Color32::from_rgb(80, 170, 255),
             search_hit: Color32::from_rgb(255, 160, 40),
+            marked: Color32::from_rgb(255, 105, 190),
             branch_colors: Vec::new(),
         }
     }
