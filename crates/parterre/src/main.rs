@@ -164,6 +164,11 @@ struct Cli {
     #[arg(long, value_name = "COMMIT:PATH", hide = true)]
     demo_diff: Option<String>,
 
+    /// Open a blame window before taking the screenshot: of PATH at COMMIT (a ref or hash
+    /// prefix, or WORKING_TREE), with line LINE (from 1) chosen if given.
+    #[arg(long, value_name = "COMMIT:PATH[:LINE]", hide = true)]
+    demo_blame: Option<String>,
+
     /// Open the compare window on FIRST..SECOND (refs or hash prefixes, as if those nodes were
     /// selected in that order; WORKING_TREE for the working tree) before taking the screenshot.
     #[arg(long, value_name = "REF..REF", hide = true)]
@@ -368,6 +373,7 @@ fn main() -> ExitCode {
     automation.demo_open = cli.demo_open.clone();
     automation.demo_log = cli.demo_log.clone();
     automation.demo_diff = cli.demo_diff.clone();
+    automation.demo_blame = cli.demo_blame.clone();
     automation.demo_compare = cli.demo_compare.clone();
     automation.demo_mark = cli.demo_mark.clone();
     automation.demo_menu = cli.demo_menu.map(|m| match m {

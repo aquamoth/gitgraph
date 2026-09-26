@@ -10,6 +10,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+use crate::blame::{Blame, BlameOptions, BlameSpec};
 use crate::changed_files::{ChangedFile, parse_diff_tree};
 use crate::file_diff::{Content, FileDiffSpec, LoadedDiff, Rev, Version, decode};
 use crate::oid::Oid;
@@ -504,6 +505,27 @@ impl Git {
         Ok(command
             .filter(|c| !c.is_empty())
             .map(|c| format!("{value}: {c}")))
+    }
+}
+
+impl Git {
+    /// Blames a file: which commit last changed each of its lines (`git blame
+    /// --line-porcelain`), through the textconv filter of its `diff` attribute, as a diff
+    /// reads it. A root commit is the origin of its lines rather than a boundary; in the
+    /// working tree, lines no commit has yet belong to no commit.
+    pub fn blame(&self, spec: &BlameSpec, options: BlameOptions) -> Result<Blame, GitError> {
+        let mut args = vec!["blame", "--line-porcelain", "--root"];
+        if options.ignore_whitespace {
+            args.push("-w");
+        }
+        args.extend(options.moves.args());
+        let rev = spec.rev.commit().map(|o| o.to_hex());
+        if let Some(rev) = &rev {
+            args.push(rev);
+        }
+        args.extend(["--", &spec.path]);
+        let out = self.run_bytes(&args)?;
+        Blame::parse(&out).map_err(GitError::Parse)
     }
 }
 

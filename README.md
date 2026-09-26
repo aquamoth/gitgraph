@@ -64,7 +64,7 @@ In the window:
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo a move |
 | Drag the background, wheel, Shift+wheel | Pan |
 | Ctrl+wheel, pinch, `+` `-` `0` | Zoom |
-| Ctrl+wheel, pinch anywhere but over the graph | Text size of every window (also *Settings → Appearance*, and `Ctrl`+`+` `-` `0` in the log, compare, diff and settings windows). The graph keeps its own zoom. |
+| Ctrl+wheel, pinch anywhere but over the graph | Text size of every window (also *Settings → Appearance*, and `Ctrl`+`+` `-` `0` in the log, compare, diff, blame and settings windows). The graph keeps its own zoom. |
 | `F`, double-click the background | Fit the whole graph |
 | `Home` / `H` | Go to HEAD |
 | `Ctrl+F`, then `Enter` / `F3` | Find branches, tags, hashes, subjects or authors |
@@ -130,6 +130,17 @@ the node menu or by right-clicking a row in the log) and pick *Compare with mark
 other, from any log. A range log's *Compare files* compares its two ends. The window's
 *Since common ancestor* shows only what the right-hand side changed since the two forked, as
 a pull request does; *Swap sides* turns the comparison round.
+
+**Blame** shows which commit last changed each line of a file: right-click a changed file in
+the log or compare window and pick *Blame*, or click *Blame* in a diff window's toolbar (it
+opens at the change in view). A gutter names each line's commit, author and date, shaded from
+plain (oldest) to amber (newest). Click a line to highlight every line of its commit; the bar
+at the bottom describes the commit under the pointer. Right-click a line to *Blame previous
+revision* (the file as it was before that commit, in the same window; `Alt+Left` goes back),
+*Show changes* (that commit's diff of the file, at the line), *Show log* from the commit, or
+copy its hash. Drag or `Shift`+click to choose lines, `Ctrl+C` to copy them. The toolbar
+says whether whitespace changes and moved or copied lines count (`git blame -w`, `-M`, `-C`).
+Blaming the working tree marks the lines you haven't committed; `F5` blames again.
 
 Colours follow TortoiseGit:
 

@@ -1,6 +1,7 @@
 //! Core of parterre: load a repository, reduce it to a TortoiseGit-style revision graph,
 //! and lay that graph out. Nothing in this crate depends on a GUI toolkit.
 
+pub mod blame;
 pub mod changed_files;
 pub mod compare;
 pub mod file_diff;

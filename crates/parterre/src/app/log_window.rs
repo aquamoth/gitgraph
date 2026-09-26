@@ -14,7 +14,8 @@ use eframe::egui::{
     self, Color32, CornerRadius, CursorIcon, FontId, Galley, Id, Key, Margin, Modifiers, Rangef,
     Rect, Response, RichText, ScrollArea, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2,
 };
-use parterre_core::file_diff::FileDiffSpec;
+use parterre_core::blame::BlameSpec;
+use parterre_core::file_diff::{FileDiffSpec, Rev};
 use parterre_core::glyphs::{self, Glyph};
 use parterre_core::log::LogQuery;
 use parterre_core::log_layout::LogLayout;
@@ -83,6 +84,8 @@ pub struct LogWindow {
     diffs: DiffQueue<(Arc<Repo>, FileDiffSpec)>,
     /// Marks and comparisons asked for, for the app to take.
     requests: Vec<CompareRequest>,
+    /// Blame windows asked for, for the app to take.
+    blames: Vec<(Arc<Repo>, BlameSpec)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -381,6 +384,11 @@ impl LogWindow {
     /// The diff windows asked for since the last call.
     pub fn take_diff_requests(&mut self) -> Vec<(Arc<Repo>, FileDiffSpec)> {
         self.diffs.take()
+    }
+
+    /// The blame windows asked for since the last call.
+    pub fn take_blame_requests(&mut self) -> Vec<(Arc<Repo>, BlameSpec)> {
+        std::mem::take(&mut self.blames)
     }
 
     /// The marks and comparisons asked for since the last call.
@@ -844,7 +852,7 @@ impl LogWindow {
                 git.changed_files(oid).map_err(|e| e.to_string())
             });
         let weak = ui.visuals().weak_text_color();
-        let open = self
+        let action = self
             .table
             .show(ui, c, "log", Id::new(commit.oid), files, |ui| {
                 if merge {
@@ -855,8 +863,16 @@ impl LogWindow {
                     );
                 }
             });
+        if let Some(f) = action.blame {
+            let spec = BlameSpec {
+                rev: Rev::Commit(commit.oid),
+                path: f.path.clone(),
+            };
+            self.blames.push((view.repo.clone(), spec));
+        }
         let parent = commit.parents.first().map(|&p| view.repo.commit(p).oid);
-        let open = open
+        let open = action
+            .open
             .into_iter()
             .map(|f| {
                 let spec = FileDiffSpec::of_commit(commit.oid, parent, f);
@@ -1245,6 +1261,9 @@ impl ParterreApp {
         }
         for (repo, spec) in self.log.take_diff_requests() {
             self.diffs.open(repo, spec, &self.settings.diff_window, ctx);
+        }
+        for (repo, spec) in self.log.take_blame_requests() {
+            self.open_blame(repo, spec, None, ctx);
         }
     }
 }

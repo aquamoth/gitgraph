@@ -1,5 +1,6 @@
 //! User-adjustable settings, persisted between runs by eframe.
 
+use parterre_core::blame::Moves;
 use parterre_core::file_diff::{Whitespace, WordMode};
 use parterre_core::layout::LayoutOptions;
 use parterre_core::log_layout::{Dividers, LogLayout};
@@ -180,6 +181,7 @@ pub struct Settings {
     pub log_window: LogWindowSettings,
     pub diff_window: DiffWindowSettings,
     pub compare_window: CompareWindowSettings,
+    pub blame_window: BlameWindowSettings,
 }
 
 /// What the compare window remembers across runs.
@@ -197,6 +199,28 @@ impl Default for CompareWindowSettings {
         CompareWindowSettings {
             size: [900.0, 640.0],
             since_ancestor: false,
+        }
+    }
+}
+
+/// The choices last made in a blame window, which the next one starts with.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BlameWindowSettings {
+    /// Inner size in points.
+    pub size: [f32; 2],
+    /// Changes in whitespace alone don't make a line new (`git blame -w`).
+    pub ignore_whitespace: bool,
+    /// Whether moved and copied lines keep the commit that wrote them.
+    pub moves: Moves,
+}
+
+impl Default for BlameWindowSettings {
+    fn default() -> Self {
+        BlameWindowSettings {
+            size: [1100.0, 800.0],
+            ignore_whitespace: false,
+            moves: Moves::Off,
         }
     }
 }
@@ -278,6 +302,7 @@ impl Default for Settings {
             log_window: LogWindowSettings::default(),
             diff_window: DiffWindowSettings::default(),
             compare_window: CompareWindowSettings::default(),
+            blame_window: BlameWindowSettings::default(),
         };
         Look::Modern.apply(&mut s);
         s

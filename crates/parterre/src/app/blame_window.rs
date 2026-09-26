@@ -1,0 +1,1323 @@
+//! Blame windows: a file with the commit that last changed each of its lines, in a window of
+//! its own (an immediate viewport, like the diff windows). Several can be open at once; they
+//! close with the repository. The model is [`parterre_core::blame`].
+//!
+//! A gutter on the left names each run of lines from one commit (hash, author, date), shaded
+//! by the commit's age among the file's commits as TortoiseGitBlame shades lines; clicking a
+//! line highlights every line of its commit, and the bar at the bottom describes the commit
+//! under the pointer or chosen. A line's menu goes on from there, as TortoiseGitBlame's does:
+//! blame the version before its commit (in the same window; Back returns), show its commit's
+//! change to the file in a diff window, or show the log from its commit. The toolbar says
+//! whether whitespace changes and moved lines count, remembered for the next window.
+//!
+//! Deliberate deviations from TortoiseGitBlame (see #104): no log pane of the file's
+//! history beside the text (the log window shows history), and only whole lines are chosen
+//! for copying.
+
+use std::sync::{Arc, mpsc};
+
+use eframe::egui::text::{LayoutJob, TextFormat};
+use eframe::egui::{
+    self, Color32, FontId, Key, Modifiers, Rect, RichText, ScrollArea, Sense, Stroke, Ui,
+    UiBuilder, Vec2, pos2, vec2,
+};
+use parterre_core::blame::{Blame, BlameOptions, BlameSpec, Moves, Origin};
+use parterre_core::file_diff::{FileDiffSpec, Rev};
+use parterre_core::glyphs;
+use parterre_core::text::thousands;
+use parterre_core::{Oid, Repo};
+
+use super::ParterreApp;
+use super::diff_window::{Colors, SCROLLBAR, colors, hscrollbar, message};
+use super::log_window::cell;
+use crate::settings::BlameWindowSettings;
+use crate::text_size;
+use crate::widgets;
+
+/// Height of the toolbar.
+const TOOLBAR: f32 = 44.0;
+/// Height of the header with the file's path.
+const HEADER: f32 = 34.0;
+/// Height of the bar describing a commit at the bottom.
+const INFO: f32 = 26.0;
+const FONT_SIZE: f32 = 13.0;
+/// Width of the author column in the gutter.
+const AUTHOR: f32 = 130.0;
+/// Width of the date column in the gutter.
+const DATE: f32 = 84.0;
+/// Padding inside the gutter's columns.
+const PAD: f32 = 8.0;
+
+/// What a blame window asks the app for.
+#[derive(Debug)]
+pub enum BlameRequest {
+    /// A diff window: a line's commit's change to the file, at the line (from 0, in the new
+    /// version).
+    Diff(Arc<Repo>, FileDiffSpec, usize),
+    /// The log window, from a line's commit.
+    Log(Oid),
+}
+
+/// The open blame windows.
+#[derive(Debug, Default)]
+pub struct BlameWindows {
+    windows: Vec<BlameWindow>,
+    /// How many were opened, to give each its own viewport id.
+    opened: u64,
+    requests: Vec<BlameRequest>,
+}
+
+impl BlameWindows {
+    /// Opens a blame window for `spec`, or brings the one already showing it to the front
+    /// (reloaded, if it reads the working tree). `line` (from 0) is chosen and scrolled to.
+    pub fn open(
+        &mut self,
+        repo: Arc<Repo>,
+        spec: BlameSpec,
+        line: Option<usize>,
+        settings: &BlameWindowSettings,
+        ctx: &egui::Context,
+    ) {
+        if let Some(w) = self.windows.iter_mut().find(|w| w.spec == spec) {
+            w.repo = repo;
+            if spec.reads_working_tree() {
+                w.pending_scroll = Some(w.scroll);
+                w.load(ctx);
+            }
+            if line.is_some() {
+                w.pending_line = line;
+            }
+            w.focus = true;
+            return;
+        }
+        self.opened += 1;
+        let mut w = BlameWindow::new(self.opened, repo, spec, settings);
+        w.pending_line = line;
+        w.load(ctx);
+        self.windows.push(w);
+    }
+
+    /// Closes every blame window (the repository they belong to is closing).
+    pub fn close_all(&mut self) {
+        self.windows.clear();
+        self.requests.clear();
+    }
+
+    /// True while git is still blaming for any window.
+    pub fn is_loading(&self) -> bool {
+        self.windows
+            .iter()
+            .any(|w| matches!(w.load, Load::Loading(_)))
+    }
+
+    /// What the windows asked for since the last call.
+    pub fn take_requests(&mut self) -> Vec<BlameRequest> {
+        std::mem::take(&mut self.requests)
+    }
+}
+
+/// A blame and what the window shows for each origin.
+#[derive(Debug)]
+struct Ready {
+    blame: Blame,
+    options: BlameOptions,
+    /// Per origin: its age among the file's commits, 0 (oldest) to 1 (newest).
+    ages: Vec<f32>,
+    /// Per origin: the author date as the log shows it (local time), or in the author's zone
+    /// for a commit the snapshot doesn't have; empty for uncommitted lines.
+    dates: Vec<String>,
+    /// Per origin: the commit is in the snapshot, so the log can show it.
+    in_repo: Vec<bool>,
+    commits: usize,
+}
+
+impl Ready {
+    fn new(blame: Blame, options: BlameOptions, repo: &Repo) -> Ready {
+        let ages = blame.ages();
+        let (dates, in_repo) = blame
+            .origins
+            .iter()
+            .map(|o| match o.commit.and_then(|oid| repo.lookup(&oid)) {
+                Some(ix) => (repo.commit(ix).author_date.clone(), true),
+                None if o.commit.is_some() => (o.author_date(), false),
+                None => (String::new(), false),
+            })
+            .unzip();
+        Ready {
+            commits: blame.commit_count(),
+            blame,
+            options,
+            ages,
+            dates,
+            in_repo,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum Load {
+    /// git runs on a worker thread.
+    Loading(mpsc::Receiver<Result<Ready, String>>),
+    Ready(Box<Ready>),
+    Failed(String),
+}
+
+/// A blame the window showed before "Blame previous revision", for Back.
+#[derive(Debug)]
+struct Visit {
+    spec: BlameSpec,
+    selection: Option<(usize, usize)>,
+    scroll: f32,
+    ready: Option<Box<Ready>>,
+}
+
+/// What a line's menu asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LineAction {
+    BlamePrevious(usize),
+    ShowChanges(usize),
+    ShowLog(usize),
+    CopyHash(usize),
+    CopyLines,
+}
+
+#[derive(Debug)]
+struct BlameWindow {
+    id: u64,
+    repo: Arc<Repo>,
+    spec: BlameSpec,
+    /// The size the window opened with (the viewport builder must not change while it is open).
+    size: Vec2,
+    load: Load,
+    /// The options chosen in the toolbar, and those of the last load started.
+    options: BlameOptions,
+    requested: BlameOptions,
+    back: Vec<Visit>,
+    /// Lines chosen, from and to (indices into the lines, either way round). The first one's
+    /// commit is highlighted.
+    selection: Option<(usize, usize)>,
+    /// The mouse is choosing lines.
+    dragging: bool,
+    /// Choose this line and scroll to it once loaded.
+    pending_line: Option<usize>,
+    /// Scroll to this offset once loaded (a reload, or Back).
+    pending_scroll: Option<f32>,
+    /// Scroll to this offset in the next frame.
+    scroll_to: Option<f32>,
+    /// The scroll offset in the last frame.
+    scroll: f32,
+    /// Sideways scroll of the text, in points.
+    hoff: f32,
+    /// Bring the window to the front in the next frame.
+    focus: bool,
+    closed: bool,
+    /// The theme last given to the window's title bar.
+    title_theme: Option<egui::SystemTheme>,
+}
+
+impl BlameWindow {
+    /// A window for `spec`, not loading yet ([`BlameWindow::load`]).
+    fn new(
+        id: u64,
+        repo: Arc<Repo>,
+        spec: BlameSpec,
+        settings: &BlameWindowSettings,
+    ) -> BlameWindow {
+        let [w, h] = settings.size;
+        let options = BlameOptions {
+            ignore_whitespace: settings.ignore_whitespace,
+            moves: settings.moves,
+        };
+        BlameWindow {
+            id,
+            repo,
+            spec,
+            size: vec2(w, h),
+            load: Load::Failed(String::new()),
+            options,
+            requested: options,
+            back: Vec::new(),
+            selection: None,
+            dragging: false,
+            pending_line: None,
+            pending_scroll: None,
+            scroll_to: None,
+            scroll: 0.0,
+            hoff: 0.0,
+            focus: false,
+            closed: false,
+            title_theme: None,
+        }
+    }
+
+    /// Blames `spec` with the current options on a worker thread.
+    fn load(&mut self, ctx: &egui::Context) {
+        let (tx, rx) = mpsc::channel();
+        let git = parterre_core::git::Git::new(&self.repo.path);
+        let (spec, options, repo) = (self.spec.clone(), self.options, self.repo.clone());
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = git
+                .blame(&spec, options)
+                .map(|blame| Ready::new(blame, options, &repo))
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+        self.requested = options;
+        self.load = Load::Loading(rx);
+        self.dragging = false;
+    }
+
+    /// Takes the worker's result when it is there, and blames again if the options changed.
+    fn poll(&mut self, ctx: &egui::Context) {
+        if let Load::Loading(rx) = &self.load
+            && let Ok(result) = rx.try_recv()
+        {
+            self.load = match result {
+                Ok(ready) => Load::Ready(Box::new(ready)),
+                Err(e) => Load::Failed(e),
+            };
+        }
+        if self.options != self.requested {
+            // Keep the place: the lines stay, only their commits may change.
+            self.pending_scroll = Some(self.scroll);
+            self.load(ctx);
+        }
+    }
+
+    fn ready(&self) -> Option<&Ready> {
+        match &self.load {
+            Load::Ready(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    fn viewport_id(&self) -> egui::ViewportId {
+        egui::ViewportId::from_hash_of(("blame", self.id))
+    }
+
+    /// `<short hash>` or "working tree".
+    fn rev_name(&self, rev: Rev) -> String {
+        match rev {
+            Rev::Commit(oid) => oid.short(self.repo.abbrev_len),
+            Rev::WorkingTree => "working tree".to_owned(),
+        }
+    }
+
+    /// `<file> (<short hash>) – <repo> – Blame`
+    fn title(&self) -> String {
+        let path = &self.spec.path;
+        let file = path.rsplit('/').next().unwrap_or(path);
+        let rev = self.rev_name(self.spec.rev);
+        format!("{file} ({rev}) – {} – Blame", self.repo.display_name())
+    }
+
+    /// The origin of line `i`.
+    fn origin(&self, i: usize) -> Option<&Origin> {
+        let blame = &self.ready()?.blame;
+        blame.origins.get(blame.lines.get(i)?.origin)
+    }
+
+    /// The commit whose lines are highlighted: the first chosen line's (`None` inside is
+    /// uncommitted).
+    fn highlighted(&self) -> Option<Option<Oid>> {
+        let (a, _) = self.selection?;
+        Some(self.origin(a)?.commit)
+    }
+
+    /// The chosen lines as in the file, each ending with a newline.
+    fn selected_text(&self) -> Option<String> {
+        let (a, b) = self.selection?;
+        let lines = &self.ready()?.blame.lines;
+        let (a, b) = (a.min(b), a.max(b).min(lines.len().checked_sub(1)?));
+        let mut text = String::new();
+        for line in &lines[a..=b] {
+            text.push_str(&line.raw);
+            text.push('\n');
+        }
+        Some(text)
+    }
+
+    fn select_all(&mut self) {
+        if let Some(n) = self.ready().map(|r| r.blame.lines.len())
+            && n > 0
+        {
+            self.selection = Some((0, n - 1));
+        }
+    }
+
+    /// Blames the version before line `i`'s commit, in this window, keeping what it showed for
+    /// Back. The line's place in that commit's version is chosen, near where it came in.
+    fn blame_previous(&mut self, i: usize, ctx: &egui::Context) {
+        let Some(origin) = self.origin(i) else { return };
+        let Some(spec) = origin.previous_blame() else {
+            return;
+        };
+        let line = self.ready().map(|r| r.blame.lines[i].orig_line as usize);
+        let ready = match std::mem::replace(&mut self.load, Load::Failed(String::new())) {
+            Load::Ready(r) => Some(r),
+            _ => None,
+        };
+        self.back.push(Visit {
+            spec: std::mem::replace(&mut self.spec, spec),
+            selection: self.selection.take(),
+            scroll: self.scroll,
+            ready,
+        });
+        self.pending_line = line;
+        self.hoff = 0.0;
+        self.load(ctx);
+        ctx.send_viewport_cmd_to(
+            self.viewport_id(),
+            egui::ViewportCommand::Title(self.title()),
+        );
+    }
+
+    /// Back to the blame shown before "Blame previous revision".
+    fn go_back(&mut self, ctx: &egui::Context) {
+        let Some(visit) = self.back.pop() else { return };
+        self.spec = visit.spec;
+        self.selection = visit.selection;
+        self.pending_line = None;
+        self.pending_scroll = Some(visit.scroll);
+        self.hoff = 0.0;
+        match visit.ready {
+            Some(ready) => {
+                self.requested = ready.options;
+                self.load = Load::Ready(ready);
+            }
+            None => self.load(ctx),
+        }
+        ctx.send_viewport_cmd_to(
+            self.viewport_id(),
+            egui::ViewportCommand::Title(self.title()),
+        );
+    }
+
+    /// Esc closes; Alt+Left goes back; Ctrl+A chooses every line.
+    fn handle_keys(&mut self, ui: &Ui) {
+        if ui.ctx().egui_wants_keyboard_input() {
+            return;
+        }
+        if ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::A)) {
+            self.select_all();
+        }
+        if ui.input_mut(|i| i.consume_key(Modifiers::ALT, Key::ArrowLeft)) {
+            self.go_back(ui.ctx());
+        }
+        if ui.input(|i| i.key_pressed(Key::Escape)) {
+            self.closed = true;
+        }
+    }
+
+    fn contents(&mut self, ui: &mut Ui, settings: &mut BlameWindowSettings) -> Vec<BlameRequest> {
+        let c = colors(ui);
+        self.toolbar(ui, settings);
+        self.header(ui, &c);
+        let rest = ui.available_rect_before_wrap();
+        let body = Rect::from_min_max(rest.min, pos2(rest.right(), rest.bottom() - INFO));
+        let info = Rect::from_min_max(pos2(rest.left(), body.bottom()), rest.max);
+        ui.painter().rect_filled(body, 0.0, c.pane);
+        let mut requests = Vec::new();
+        let mut hovered = None;
+        match &self.load {
+            Load::Loading(_) => message(ui, body, "Blaming…", ui.visuals().weak_text_color()),
+            Load::Failed(e) => message(
+                ui,
+                body,
+                &format!("Could not blame the file: {e}"),
+                c.removed,
+            ),
+            Load::Ready(_) => {
+                let mut child = ui.new_child(UiBuilder::new().max_rect(body));
+                child.set_clip_rect(body.intersect(ui.clip_rect()));
+                hovered = self.body(&mut child, body, &c, &mut requests);
+            }
+        }
+        self.info_bar(ui, info, hovered, &c);
+        ui.allocate_rect(rest, Sense::hover());
+        requests
+    }
+
+    /// Back, then whether whitespace changes and moved lines count.
+    fn toolbar(&mut self, ui: &mut Ui, settings: &mut BlameWindowSettings) {
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), TOOLBAR), Sense::hover());
+        ui.painter().rect_filled(rect, 0.0, ui.visuals().panel_fill);
+        let mut bar = ui.new_child(
+            UiBuilder::new()
+                .max_rect(rect.shrink2(vec2(10.0, 0.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        let ui = &mut bar;
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let weak = ui.visuals().weak_text_color();
+
+        let before = self.back.last().map(|v| self.rev_name(v.spec.rev));
+        let back = ui
+            .add_enabled_ui(before.is_some(), |ui| {
+                let text = before.map_or("Back".to_owned(), |b| format!("Back to {b}"));
+                widgets::tip(
+                    widgets::icon_button(ui, glyphs::CHEVRON_LEFT, false),
+                    &text,
+                    "Alt+Left",
+                )
+            })
+            .inner;
+        if back.clicked() {
+            self.go_back(ui.ctx());
+        }
+        ui.add_space(14.0);
+
+        let spaces = [
+            (false, glyphs::WHITESPACE_COMPARE),
+            (true, glyphs::WHITESPACE_IGNORE_ALL),
+        ];
+        let picked = widgets::segmented(
+            ui,
+            self.options.ignore_whitespace,
+            &spaces,
+            |ignore, r| {
+                let (title, body) = if ignore {
+                    (
+                        "Ignore whitespace",
+                        "A line whose blanks alone changed keeps the commit before. As git blame -w.",
+                    )
+                } else {
+                    (
+                        "Whitespace counts",
+                        "A line whose blanks changed belongs to the commit that changed them.",
+                    )
+                };
+                widgets::tip_explained(r, title, "", body)
+            },
+        );
+        if let Some(ignore) = picked {
+            self.options.ignore_whitespace = ignore;
+            settings.ignore_whitespace = ignore;
+        }
+        ui.add_space(14.0);
+
+        let label = ui.label(RichText::new("Moved lines").size(12.5).color(weak));
+        let mut moves = self.options.moves;
+        let items = Moves::ALL.map(|m| (m, m.label()));
+        widgets::text_segmented(ui, &mut moves, &items);
+        let explained = Moves::ALL
+            .map(|m| format!("{}: {}", m.label(), m.description()))
+            .join("\n\n");
+        widgets::tip_explained(label, "Moved and copied lines", "", &explained);
+        if moves != self.options.moves {
+            self.options.moves = moves;
+            settings.moves = moves;
+        }
+    }
+
+    /// The path and the revision; the counts on the right, and a note on bytes that aren't
+    /// UTF-8.
+    fn header(&self, ui: &mut Ui, c: &Colors) {
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER), Sense::hover());
+        let painter = ui.painter();
+        painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
+        painter.hline(rect.x_range(), rect.top() + 0.5, Stroke::new(1.0, c.line));
+        let (weak, text) = (c.weak, c.text);
+        let small = FontId::proportional(12.5);
+        let mut job = LayoutJob::default();
+        job.append(
+            &self.spec.path,
+            0.0,
+            TextFormat::simple(FontId::proportional(14.5), text),
+        );
+        match self.spec.rev {
+            Rev::Commit(oid) => {
+                job.append("at", 10.0, TextFormat::simple(small.clone(), weak));
+                job.append(
+                    &oid.short(self.repo.abbrev_len),
+                    6.0,
+                    TextFormat::simple(FontId::monospace(12.5), weak),
+                );
+                if let Some(ix) = self.repo.lookup(&oid) {
+                    let subject = &self.repo.commit(ix).subject;
+                    job.append(subject, 8.0, TextFormat::simple(small.clone(), weak));
+                }
+            }
+            Rev::WorkingTree => {
+                job.append(
+                    "in the working tree",
+                    10.0,
+                    TextFormat::simple(small.clone(), weak),
+                );
+            }
+        }
+        let mut counts = String::new();
+        if let Some(r) = self.ready() {
+            let (lines, commits) = (r.blame.lines.len(), r.commits);
+            counts = format!(
+                "{} line{} from {} commit{}",
+                thousands(lines),
+                if lines == 1 { "" } else { "s" },
+                thousands(commits),
+                if commits == 1 { "" } else { "s" },
+            );
+            if r.blame.invalid_bytes > 0 {
+                counts = format!(
+                    "{} bytes not UTF-8, shown as \\xNN   ·   {counts}",
+                    thousands(r.blame.invalid_bytes)
+                );
+            }
+        }
+        let counts = painter.layout_no_wrap(counts, small, weak);
+        let y = rect.center().y;
+        let right = rect.right() - 12.0 - counts.size().x;
+        job.wrap.max_width = (right - rect.left() - 36.0).max(40.0);
+        job.wrap.max_rows = 1;
+        let g = painter.layout_job(job);
+        painter.galley(pos2(rect.left() + 12.0, y - g.size().y / 2.0), g, text);
+        painter.galley(pos2(right, y - counts.size().y / 2.0), counts, weak);
+    }
+
+    /// The lines with their gutter, and the horizontal scrollbar. Returns the line under the
+    /// pointer.
+    fn body(
+        &mut self,
+        ui: &mut Ui,
+        full: Rect,
+        c: &Colors,
+        requests: &mut Vec<BlameRequest>,
+    ) -> Option<usize> {
+        let Load::Ready(ready) = &self.load else {
+            return None;
+        };
+        let blame = &ready.blame;
+        let n = blame.lines.len();
+        if n == 0 {
+            message(ui, full, "The file is empty.", c.weak);
+            return None;
+        }
+        let bc = blame_colors(ui);
+        let font = FontId::monospace(FONT_SIZE);
+        let hash_font = FontId::monospace(12.0);
+        let small = FontId::proportional(12.5);
+        let row_h = ui.fonts_mut(|f| f.row_height(&font)).ceil() + 3.0;
+        let char_w = ui.fonts_mut(|f| f.glyph_width(&font, '0'));
+        let hash_w = ui.fonts_mut(|f| f.glyph_width(&hash_font, '0')) * self.repo.abbrev_len as f32
+            + 2.0 * PAD;
+        let gutter = hash_w + AUTHOR + DATE;
+        let digits = (n as f32).log10().floor() + 1.0;
+        let numbers = digits * char_w + 2.0 * PAD;
+        let text_x = full.left() + gutter + numbers + PAD;
+
+        let text_w = full.right() - text_x;
+        let content_w = blame.widest as f32 * char_w + 24.0;
+        let hmax = (content_w - text_w).max(0.0);
+        let bottom = full.bottom() - if hmax > 0.0 { SCROLLBAR } else { 0.0 };
+        let area = Rect::from_min_max(full.min, pos2(full.right(), bottom));
+
+        // A line asked for: chosen, and a third of the way down.
+        if let Some(line) = self.pending_line.take() {
+            let line = line.min(n - 1);
+            self.selection = Some((line, line));
+            let above = (area.height() / row_h / 3.0).floor();
+            self.scroll_to = Some(((line as f32 - above) * row_h).max(0.0));
+        } else if let Some(offset) = self.pending_scroll.take() {
+            self.scroll_to = Some(offset);
+        }
+        let mut scroll =
+            ScrollArea::vertical()
+                .auto_shrink(false)
+                .id_salt(("blame", self.id, self.back.len()));
+        if let Some(offset) = self.scroll_to.take() {
+            scroll = scroll.vertical_scroll_offset(offset.max(0.0));
+        }
+        if ui.rect_contains_pointer(area) {
+            let dx = ui.input(|i| i.smooth_scroll_delta.x);
+            self.hoff -= dx;
+        }
+        self.hoff = self.hoff.clamp(0.0, hmax);
+
+        let selection = self.selection.map(|(a, b)| (a.min(b), a.max(b)));
+        let highlighted = self.highlighted();
+        let pointer = ui.input(|i| i.pointer.interact_pos());
+        let pressed = ui.input(|i| i.pointer.primary_pressed());
+        let (hoff, abbrev) = (self.hoff, self.repo.abbrev_len);
+        let mut hovered = None;
+        let mut press = None;
+        let mut secondary = None;
+        let mut action = None;
+        let (mut first, mut last) = (None, None);
+        let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+        child.set_clip_rect(area.intersect(ui.clip_rect()));
+        child.spacing_mut().item_spacing = Vec2::ZERO;
+        let out = scroll.show_rows(&mut child, row_h, n, |ui, range| {
+            let top = range.start;
+            for i in range {
+                first.get_or_insert(i);
+                last = Some(i);
+                let (rect, response) = ui.allocate_exact_size(
+                    vec2(ui.available_width(), row_h),
+                    Sense::click_and_drag(),
+                );
+                let line = &blame.lines[i];
+                let origin = &blame.origins[line.origin];
+                let painter = ui.painter();
+                let gutter_rect =
+                    Rect::from_x_y_ranges(rect.left()..=rect.left() + gutter, rect.y_range());
+                let text_rect =
+                    Rect::from_x_y_ranges(rect.left() + gutter..=rect.right(), rect.y_range());
+                painter.rect_filled(gutter_rect, 0.0, bc.age(ready.ages[line.origin]));
+                let chosen = selection.is_some_and(|(a, b)| (a..=b).contains(&i));
+                if chosen {
+                    painter.rect_filled(text_rect, 0.0, c.selection);
+                } else if highlighted == Some(origin.commit) {
+                    painter.rect_filled(text_rect, 0.0, bc.commit);
+                }
+                let run_start = blame.starts_run(i);
+                if run_start && i > 0 {
+                    painter.hline(rect.x_range(), rect.top() + 0.5, Stroke::new(1.0, c.line));
+                }
+                let y = rect.center().y;
+                let put = |g: Arc<egui::Galley>, x: f32| {
+                    painter.galley(pos2(x, y - g.size().y / 2.0), g, c.text);
+                };
+                // The first row in view names its commit too, when its run started above.
+                if run_start || i == top {
+                    let mut x = rect.left() + PAD;
+                    match origin.commit {
+                        Some(oid) => {
+                            put(
+                                cell(ui, &oid.short(abbrev), hash_font.clone(), c.weak, hash_w),
+                                x,
+                            );
+                            x += hash_w - PAD;
+                            put(
+                                cell(ui, &origin.author, small.clone(), c.text, AUTHOR - PAD),
+                                x,
+                            );
+                            x += AUTHOR;
+                            let date = ready.dates[line.origin].split(' ').next().unwrap_or("");
+                            put(cell(ui, date, small.clone(), c.weak, DATE - PAD), x);
+                        }
+                        None => {
+                            let text = "Not committed yet";
+                            put(cell(ui, text, small.clone(), c.note, gutter - 2.0 * PAD), x);
+                        }
+                    }
+                }
+                painter.vline(
+                    gutter_rect.right() - 0.5,
+                    rect.y_range(),
+                    Stroke::new(1.0, c.line),
+                );
+                let no = painter.layout_no_wrap((i + 1).to_string(), font.clone(), c.weak);
+                painter.galley(
+                    pos2(
+                        gutter_rect.right() + numbers - PAD - no.size().x,
+                        y - no.size().y / 2.0,
+                    ),
+                    no,
+                    c.weak,
+                );
+                let clip = Rect::from_x_y_ranges(text_x..=rect.right(), rect.y_range())
+                    .intersect(ui.clip_rect());
+                let g = painter.layout_no_wrap(line.text.clone(), font.clone(), c.text);
+                painter.with_clip_rect(clip).galley(
+                    pos2(text_x - hoff, y - g.size().y / 2.0),
+                    g,
+                    c.text,
+                );
+
+                if pointer.is_some_and(|p| rect.y_range().contains(p.y)) {
+                    hovered = Some(i);
+                }
+                if pressed && response.hovered() {
+                    press = Some(i);
+                }
+                if response.secondary_clicked() {
+                    secondary = Some(i);
+                }
+                let over_gutter = response
+                    .hover_pos()
+                    .is_some_and(|p| gutter_rect.contains(p));
+                let response = if over_gutter {
+                    let date = &ready.dates[line.origin];
+                    response.on_hover_ui(|ui| origin_tip(ui, origin, date, abbrev))
+                } else {
+                    response
+                };
+                egui::Popup::context_menu(&response)
+                    .style(crate::menu::style)
+                    .show(|ui| {
+                        crate::menu::fit_window(ui, |ui| {
+                            ui.set_min_width(crate::menu::MIN_WIDTH);
+                            let chosen =
+                                selection.is_some_and(|(a, b)| a != b && (a..=b).contains(&i));
+                            let in_repo = ready.in_repo[line.origin];
+                            if let Some(a) = line_menu(ui, i, origin, in_repo, chosen) {
+                                action = Some(a);
+                            }
+                        });
+                    });
+            }
+        });
+        self.scroll = out.state.offset.y;
+
+        // Choosing lines: a press chooses (Shift extends), a drag extends, scrolling past the
+        // edges; a right-click outside the chosen lines chooses its line.
+        let (down, shift) = ui.input(|i| (i.pointer.primary_down(), i.modifiers.shift));
+        if let Some(i) = press {
+            self.selection = match self.selection {
+                Some((a, _)) if shift => Some((a, i)),
+                _ => Some((i, i)),
+            };
+            self.dragging = true;
+        } else if let Some(i) = secondary
+            && !selection.is_some_and(|(a, b)| (a..=b).contains(&i))
+        {
+            self.selection = Some((i, i));
+        }
+        if self.dragging {
+            if !down {
+                self.dragging = false;
+            } else if let Some((a, _)) = self.selection {
+                if let Some(i) = hovered {
+                    self.selection = Some((a, i));
+                } else if let Some(p) = pointer {
+                    if p.y < area.top() {
+                        if let Some(f) = first {
+                            self.selection = Some((a, f.saturating_sub(1)));
+                        }
+                        self.scroll_to = Some(self.scroll - row_h);
+                    } else if p.y > area.bottom() {
+                        if let Some(l) = last {
+                            self.selection = Some((a, (l + 1).min(n - 1)));
+                        }
+                        self.scroll_to = Some(self.scroll + row_h);
+                    }
+                    ui.ctx().request_repaint();
+                }
+            }
+        }
+
+        if hmax > 0.0 {
+            let track = Rect::from_min_max(pos2(text_x, bottom), full.max);
+            let id = egui::Id::new(("blame-hbar", self.id));
+            hscrollbar(ui, id, track, &mut self.hoff, text_w / content_w, hmax, c);
+        }
+
+        if let Some(action) = action {
+            self.act(action, ui.ctx(), requests);
+        }
+        hovered
+    }
+
+    fn act(&mut self, action: LineAction, ctx: &egui::Context, requests: &mut Vec<BlameRequest>) {
+        match action {
+            LineAction::BlamePrevious(i) => self.blame_previous(i, ctx),
+            LineAction::ShowChanges(i) => {
+                if let Some(spec) = self.origin(i).and_then(Origin::changes)
+                    && let Some(line) = self.ready().map(|r| r.blame.lines[i].orig_line)
+                {
+                    let repo = self.repo.clone();
+                    requests.push(BlameRequest::Diff(repo, spec, line as usize));
+                }
+            }
+            LineAction::ShowLog(i) => {
+                if let Some(oid) = self.origin(i).and_then(|o| o.commit) {
+                    requests.push(BlameRequest::Log(oid));
+                }
+            }
+            LineAction::CopyHash(i) => {
+                if let Some(oid) = self.origin(i).and_then(|o| o.commit) {
+                    ctx.copy_text(oid.to_hex());
+                }
+            }
+            LineAction::CopyLines => {
+                if let Some(text) = self.selected_text() {
+                    ctx.copy_text(text);
+                }
+            }
+        }
+    }
+
+    /// The commit of the line under the pointer, else of the first chosen line: hash, author,
+    /// date and subject.
+    fn info_bar(&self, ui: &Ui, rect: Rect, hovered: Option<usize>, c: &Colors) {
+        let painter = ui.painter();
+        painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
+        painter.hline(rect.x_range(), rect.top() + 0.5, Stroke::new(1.0, c.line));
+        let Some(ready) = self.ready() else { return };
+        let Some(i) = hovered.or(self.selection.map(|(a, _)| a)) else {
+            return;
+        };
+        let Some(line) = ready.blame.lines.get(i) else {
+            return;
+        };
+        let origin = &ready.blame.origins[line.origin];
+        let small = FontId::proportional(12.5);
+        let mut job = LayoutJob::default();
+        match origin.commit {
+            Some(oid) => {
+                let fmt = |color| TextFormat::simple(small.clone(), color);
+                job.append(
+                    &oid.short(self.repo.abbrev_len),
+                    0.0,
+                    TextFormat::simple(FontId::monospace(12.0), c.weak),
+                );
+                job.append(&origin.author, 12.0, fmt(c.text));
+                job.append(&ready.dates[line.origin], 12.0, fmt(c.weak));
+                job.append(&origin.summary, 12.0, fmt(c.text));
+                if origin.path != self.spec.path {
+                    job.append(&format!("({})", origin.path), 12.0, fmt(c.weak));
+                }
+            }
+            None => job.append(
+                "Not committed yet: changed in the working tree",
+                0.0,
+                TextFormat::simple(small, c.note),
+            ),
+        }
+        job.wrap.max_width = rect.width() - 24.0;
+        job.wrap.max_rows = 1;
+        let g = painter.layout_job(job);
+        painter.galley(
+            pos2(rect.left() + 12.0, rect.center().y - g.size().y / 2.0),
+            g,
+            c.text,
+        );
+    }
+
+    /// Shows the window; sets `closed` when it was closed. Ctrl+wheel and Ctrl+plus, minus
+    /// and 0 change `text_size`.
+    fn show(
+        &mut self,
+        ctx: &egui::Context,
+        settings: &mut BlameWindowSettings,
+        text_size: &mut f32,
+        window_theme: Option<egui::SystemTheme>,
+        icon: &Arc<egui::IconData>,
+    ) -> Vec<BlameRequest> {
+        let builder = egui::ViewportBuilder::default()
+            .with_title(self.title())
+            .with_app_id(crate::settings::APP_ID)
+            .with_icon(icon.clone())
+            .with_inner_size(self.size)
+            .with_min_inner_size([560.0, 320.0]);
+        let id = self.viewport_id();
+        if self.title_theme.is_none() && !ctx.embed_viewports() {
+            ctx.request_repaint();
+        }
+        if std::mem::take(&mut self.focus) && !ctx.embed_viewports() {
+            ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Focus);
+        }
+        let mut requests = Vec::new();
+        ctx.show_viewport_immediate(id, builder, |ui, class| {
+            self.poll(ui.ctx());
+            if class != egui::ViewportClass::EmbeddedWindow {
+                if self.title_theme != window_theme {
+                    self.title_theme = window_theme;
+                    if let Some(theme) = window_theme {
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::SetTheme(theme));
+                    }
+                }
+                let (close, size, reload) = ui.input(|i| {
+                    (
+                        i.viewport().close_requested(),
+                        i.viewport().inner_rect.map(|r| r.size()),
+                        i.key_pressed(Key::F5),
+                    )
+                });
+                if let Some(size) = size
+                    && size.x > 0.0
+                    && size.y > 0.0
+                {
+                    settings.size = [size.x, size.y];
+                }
+                if reload {
+                    self.pending_scroll = Some(self.scroll);
+                    self.load(ui.ctx());
+                }
+                // Keys go to the main window too when the window is embedded in it.
+                self.handle_keys(ui);
+                text_size::read_input(ui, text_size, true);
+                if close {
+                    self.closed = true;
+                }
+            }
+            if ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy)))
+                && let Some(text) = self.selected_text()
+            {
+                ui.ctx().copy_text(text);
+            }
+            egui::CentralPanel::default()
+                .frame(egui::Frame::central_panel(&ui.ctx().global_style()).inner_margin(0))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    requests = self.contents(ui, settings);
+                });
+        });
+        requests
+    }
+}
+
+/// The menu of a line. `lines` says several lines are chosen (for copying).
+fn line_menu(
+    ui: &mut Ui,
+    i: usize,
+    origin: &Origin,
+    in_repo: bool,
+    lines: bool,
+) -> Option<LineAction> {
+    let mut action = None;
+    let mut item = |ui: &mut Ui, enabled: bool, text: &str, why: &str, a: LineAction| {
+        let r = ui
+            .add_enabled(enabled, egui::Button::new(text))
+            .on_disabled_hover_text(why);
+        if r.clicked() {
+            action = Some(a);
+            ui.close();
+        }
+    };
+    let (previous_why, changes_why) = if origin.boundary {
+        let why = "The history before this commit isn't in this repository";
+        (why, why)
+    } else {
+        ("This commit added the file", "")
+    };
+    item(
+        ui,
+        origin.previous_blame().is_some(),
+        "Blame previous revision",
+        previous_why,
+        LineAction::BlamePrevious(i),
+    );
+    item(
+        ui,
+        origin.changes().is_some(),
+        "Show changes",
+        changes_why,
+        LineAction::ShowChanges(i),
+    );
+    let log_why = if origin.commit.is_none() {
+        "Not committed yet"
+    } else {
+        "The commit isn't among the loaded history"
+    };
+    item(ui, in_repo, "Show log", log_why, LineAction::ShowLog(i));
+    crate::menu::separator(ui);
+    item(
+        ui,
+        origin.commit.is_some(),
+        "Copy hash",
+        "Not committed yet",
+        LineAction::CopyHash(i),
+    );
+    let copy = if lines { "Copy lines" } else { "Copy line" };
+    item(ui, true, copy, "", LineAction::CopyLines);
+    action
+}
+
+/// The tooltip over the gutter: the commit's subject, author and date, and hash.
+fn origin_tip(ui: &mut Ui, origin: &Origin, date: &str, abbrev: usize) {
+    ui.set_max_width(420.0);
+    let Some(oid) = origin.commit else {
+        ui.label("Not committed yet: changed in the working tree.");
+        return;
+    };
+    ui.strong(&origin.summary);
+    ui.label(format!("{} <{}>", origin.author, origin.author_email));
+    ui.weak(format!("{date}   {}", oid.short(abbrev.max(12))));
+}
+
+/// Colours of the gutter by age, and of the lines of the highlighted commit.
+struct BlameColors {
+    old: Color32,
+    new: Color32,
+    commit: Color32,
+}
+
+impl BlameColors {
+    /// The gutter's colour for `age`, from the oldest commit (0) to the newest (1).
+    fn age(&self, age: f32) -> Color32 {
+        let t = age.clamp(0.0, 1.0);
+        let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
+        Color32::from_rgb(
+            mix(self.old.r(), self.new.r()),
+            mix(self.old.g(), self.new.g()),
+            mix(self.old.b(), self.new.b()),
+        )
+    }
+}
+
+/// Shades from plain to amber, as TortoiseGitBlame shades from white to yellow; the newest
+/// lines are the most amber.
+fn blame_colors(ui: &Ui) -> BlameColors {
+    if ui.visuals().dark_mode {
+        BlameColors {
+            old: Color32::from_gray(26),
+            new: Color32::from_rgb(0x5c, 0x45, 0x12),
+            commit: Color32::from_rgba_unmultiplied(0x35, 0x84, 0xe4, 40),
+        }
+    } else {
+        BlameColors {
+            old: Color32::from_gray(250),
+            new: Color32::from_rgb(0xff, 0xd9, 0x80),
+            commit: Color32::from_rgba_unmultiplied(0x35, 0x84, 0xe4, 26),
+        }
+    }
+}
+
+impl ParterreApp {
+    /// Every open blame window, and what they ask for.
+    pub(super) fn blame_windows(&mut self, ctx: &egui::Context) {
+        let settings = &mut self.settings;
+        let mut requests = Vec::new();
+        for window in &mut self.blames.windows {
+            requests.extend(window.show(
+                ctx,
+                &mut settings.blame_window,
+                &mut settings.text_size,
+                self.window_theme,
+                &self.window_icon,
+            ));
+        }
+        self.blames.windows.retain(|w| !w.closed);
+        requests.extend(self.blames.take_requests());
+        for request in requests {
+            match request {
+                BlameRequest::Diff(repo, spec, line) => {
+                    let settings = &self.settings.diff_window;
+                    self.diffs.open_at(repo, spec, Some(line), settings, ctx);
+                }
+                BlameRequest::Log(oid) => {
+                    let Some(repo) = self.repo.clone() else {
+                        continue;
+                    };
+                    if let Some(ix) = repo.lookup(&oid) {
+                        self.open_log(repo, &[ix]);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Opens a blame window on `spec`, with `line` (from 0) chosen.
+    pub(super) fn open_blame(
+        &mut self,
+        repo: Arc<Repo>,
+        spec: BlameSpec,
+        line: Option<usize>,
+        ctx: &egui::Context,
+    ) {
+        self.blames
+            .open(repo, spec, line, &self.settings.blame_window, ctx);
+    }
+
+    /// Opens a blame window on `<commit>:<path>` (a ref or hash prefix; `WORKING_TREE` for the
+    /// working tree), for `--demo-blame`. A `:<line>` after the path chooses that line (from 1).
+    pub(super) fn open_demo_blame(&mut self, spec: &str, ctx: &egui::Context) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let Some((rev, path)) = spec.split_once(':') else {
+            eprintln!("--demo-blame: expected <commit>:<path>");
+            return;
+        };
+        let (path, line) = match path.rsplit_once(':') {
+            Some((p, l)) if l.parse::<usize>().is_ok() => (p, l.parse::<usize>().ok()),
+            _ => (path, None),
+        };
+        let rev = if rev == "WORKING_TREE" {
+            Rev::WorkingTree
+        } else {
+            let Some(ix) = repo.resolve(rev) else {
+                eprintln!("--demo-blame: no commit named {rev}");
+                return;
+            };
+            Rev::Commit(repo.commit(ix).oid)
+        };
+        let spec = BlameSpec {
+            rev,
+            path: path.to_owned(),
+        };
+        self.open_blame(repo, spec, line.map(|l| l.saturating_sub(1)), ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use parterre_core::repo::Head;
+
+    const A: &str = "c4275f7dbe7e820e3bb9a21c7d1cc1317657f2d4";
+    const B: &str = "8e09b4551acb469f9df4ce58895b77e2e7e4190e";
+
+    fn entry(hash: &str, orig: u32, fin: u32, time: i64, extra: &str, line: &str) -> String {
+        format!(
+            "{hash} {orig} {fin} 1\nauthor A B\nauthor-mail <a@b>\nauthor-time {time}\n\
+             author-tz +0200\nsummary s{time}\n{extra}filename a.txt\n\t{line}\n"
+        )
+    }
+
+    /// Lines 1, 3 and 4 from A; 2 from B, which changed it.
+    fn sample() -> Blame {
+        let out = [
+            entry(A, 1, 1, 100, "", "one"),
+            entry(B, 2, 2, 200, &format!("previous {A} a.txt\n"), "two\tx"),
+            entry(A, 3, 3, 100, "", "three"),
+            entry(A, 4, 4, 100, "", "four"),
+        ]
+        .concat();
+        Blame::parse(out.as_bytes()).unwrap()
+    }
+
+    fn window() -> BlameWindow {
+        let repo = Arc::new(Repo::new(
+            "/nowhere".into(),
+            Vec::new(),
+            Vec::new(),
+            Head::Branch {
+                name: "main".into(),
+                target: None,
+            },
+        ));
+        let spec = BlameSpec {
+            rev: Rev::Commit(Oid::from_hex(B).unwrap()),
+            path: "a.txt".into(),
+        };
+        let settings = BlameWindowSettings::default();
+        let mut w = BlameWindow::new(1, repo.clone(), spec, &settings);
+        let options = w.options;
+        w.load = Load::Ready(Box::new(Ready::new(sample(), options, &repo)));
+        w
+    }
+
+    /// Runs one frame of the window's contents with `events`.
+    fn frame(
+        ctx: &egui::Context,
+        w: &mut BlameWindow,
+        events: Vec<egui::Event>,
+    ) -> Vec<BlameRequest> {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 700.0))),
+            events,
+            ..Default::default()
+        };
+        let mut settings = BlameWindowSettings::default();
+        let mut requests = Vec::new();
+        ctx.run_ui(input, |ui| requests = w.contents(ui, &mut settings))
+            .textures_delta
+            .clear();
+        requests
+    }
+
+    /// The middle of line `i`'s text.
+    fn at(ctx: &egui::Context, i: usize) -> egui::Pos2 {
+        let font = FontId::monospace(FONT_SIZE);
+        let row_h = ctx.fonts_mut(|f| f.row_height(&font)).ceil() + 3.0;
+        pos2(700.0, TOOLBAR + HEADER + (i as f32 + 0.5) * row_h)
+    }
+
+    fn button(at: egui::Pos2, pressed: bool, secondary: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: at,
+            button: if secondary {
+                egui::PointerButton::Secondary
+            } else {
+                egui::PointerButton::Primary
+            },
+            pressed,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn a_click_chooses_a_line_and_highlights_its_commit_and_a_drag_chooses_more() {
+        let ctx = egui::Context::default();
+        let mut w = window();
+        frame(&ctx, &mut w, Vec::new());
+        let p = at(&ctx, 2);
+        frame(
+            &ctx,
+            &mut w,
+            vec![egui::Event::PointerMoved(p), button(p, true, false)],
+        );
+        frame(&ctx, &mut w, vec![button(p, false, false)]);
+        assert_eq!(w.selection, Some((2, 2)));
+        assert_eq!(w.highlighted(), Some(Some(Oid::from_hex(A).unwrap())));
+
+        let q = at(&ctx, 1);
+        frame(
+            &ctx,
+            &mut w,
+            vec![egui::Event::PointerMoved(q), button(q, true, false)],
+        );
+        frame(&ctx, &mut w, vec![egui::Event::PointerMoved(at(&ctx, 3))]);
+        frame(&ctx, &mut w, vec![button(at(&ctx, 3), false, false)]);
+        assert_eq!(w.selection, Some((1, 3)));
+        // Copied as in the file: tabs kept, a newline after each line.
+        assert_eq!(w.selected_text().as_deref(), Some("two\tx\nthree\nfour\n"));
+    }
+
+    #[test]
+    fn blaming_the_previous_revision_keeps_the_way_back() {
+        let ctx = egui::Context::default();
+        let mut w = window();
+        frame(&ctx, &mut w, Vec::new());
+        w.selection = Some((1, 1));
+        w.blame_previous(1, &ctx);
+        assert_eq!(
+            w.spec,
+            BlameSpec {
+                rev: Rev::Commit(Oid::from_hex(A).unwrap()),
+                path: "a.txt".into()
+            }
+        );
+        // The line's place in its commit's version is chosen once the blame is there.
+        assert_eq!(w.pending_line, Some(1));
+        assert_eq!(w.back.len(), 1);
+        assert!(matches!(w.load, Load::Loading(_)));
+
+        // Back shows the blame kept, without git.
+        w.go_back(&ctx);
+        assert!(w.back.is_empty());
+        assert!(w.ready().is_some());
+        assert_eq!(w.selection, Some((1, 1)));
+        assert_eq!(w.spec.rev, Rev::Commit(Oid::from_hex(B).unwrap()));
+    }
+
+    #[test]
+    fn a_line_of_the_first_commit_has_nothing_before_it() {
+        let w = window();
+        let origin = w.origin(0).unwrap();
+        assert_eq!(origin.previous_blame(), None);
+        // Its change is the file being added.
+        let spec = origin.changes().unwrap();
+        assert_eq!(spec.old, None);
+        let mut requests = Vec::new();
+        let mut w = w;
+        w.act(
+            LineAction::ShowChanges(1),
+            &egui::Context::default(),
+            &mut requests,
+        );
+        let [BlameRequest::Diff(_, spec, 1)] = requests.as_slice() else {
+            panic!("expected a diff: {requests:?}");
+        };
+        assert_eq!(
+            spec.old.as_ref().map(|v| v.rev),
+            Some(Rev::Commit(Oid::from_hex(A).unwrap()))
+        );
+    }
+
+    #[test]
+    fn the_gutter_shades_from_old_to_new() {
+        let c = BlameColors {
+            old: Color32::from_rgb(0, 0, 0),
+            new: Color32::from_rgb(200, 100, 50),
+            commit: Color32::TRANSPARENT,
+        };
+        assert_eq!(c.age(0.0), c.old);
+        assert_eq!(c.age(1.0), c.new);
+        assert_eq!(c.age(0.5), Color32::from_rgb(100, 50, 25));
+    }
+}

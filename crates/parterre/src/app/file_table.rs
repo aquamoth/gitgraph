@@ -14,6 +14,7 @@ use eframe::egui::{
 use parterre_core::changed_files::{
     ChangedFile, FileColumn, FileOrder, FileStatus, filter_and_sort,
 };
+use parterre_core::file_diff::GITLINK_MODE;
 use parterre_core::git::Git;
 use parterre_core::text::{elide_start, thousands};
 
@@ -50,6 +51,24 @@ struct FileSelection {
 enum FileClick {
     Select(usize, Modifiers),
     Open(usize),
+    /// A right-click: the row becomes the selection unless it is already in it.
+    Menu(usize),
+}
+
+/// What a row's menu asked for, by row in the list as shown.
+enum MenuPick {
+    /// Show changes: the selected files, or this one.
+    Open(usize),
+    Blame(usize),
+}
+
+/// What the table asks its window for.
+#[derive(Default)]
+pub struct TableAction<'f> {
+    /// Diff windows to open: a double-click, Enter, or *Show changes*.
+    pub open: Vec<&'f ChangedFile>,
+    /// A blame window to open (the row menu's *Blame*).
+    pub blame: Option<&'f ChangedFile>,
 }
 
 impl FileTable {
@@ -62,7 +81,7 @@ impl FileTable {
     /// and the rows of `files`, or a line saying they are loading or failed. `name` tells the
     /// window's widgets apart from another window's; `owner` tells lists apart: the selection
     /// and the scroll position belong to it. Returns the files to open (a double-click, or
-    /// Enter on the selection).
+    /// Enter on the selection) and the file to blame; a row's menu asks for either.
     pub fn show<'f>(
         &mut self,
         ui: &mut Ui,
@@ -71,7 +90,7 @@ impl FileTable {
         owner: Id,
         files: Option<&'f Listing>,
         bar: impl FnOnce(&mut Ui),
-    ) -> Vec<&'f ChangedFile> {
+    ) -> TableAction<'f> {
         if self.selection.owner != Some(owner) {
             self.selection = FileSelection {
                 owner: Some(owner),
@@ -123,7 +142,7 @@ impl FileTable {
                     ui.add_space(16.0);
                     ui.weak("Loading…");
                 });
-                return Vec::new();
+                return TableAction::default();
             }
             Some(Err(e)) => {
                 ui.add_space(16.0);
@@ -131,7 +150,7 @@ impl FileTable {
                     ui.add_space(16.0);
                     ui.colored_label(c.removed, format!("Could not list the changed files: {e}"));
                 });
-                return Vec::new();
+                return TableAction::default();
             }
             Some(Ok(files)) => files,
         };
@@ -195,13 +214,14 @@ impl FileTable {
                     "No file matches the filter."
                 });
             });
-            return Vec::new();
+            return TableAction::default();
         }
 
         ui.spacing_mut().item_spacing.y = 0.0;
         let body = egui::TextStyle::Body.resolve(ui.style());
         let text = ui.visuals().text_color();
         let mut click = None;
+        let mut pick = None;
         let selection = &self.selection;
         ScrollArea::vertical()
             .id_salt(("files", owner))
@@ -215,6 +235,8 @@ impl FileTable {
                         click = Some(FileClick::Open(row));
                     } else if response.clicked() {
                         click = Some(FileClick::Select(row, ui.input(|i| i.modifiers)));
+                    } else if response.secondary_clicked() {
+                        click = Some(FileClick::Menu(row));
                     }
                     if selection.paths.contains(&file.path) {
                         ui.painter().rect_filled(rect, 0.0, c.selected_bg);
@@ -277,11 +299,26 @@ impl FileTable {
                     put_right(count(file.added, c.added), x[3] + w[3] - CELL_PAD);
                     put_right(count(file.removed, c.removed), x[4] + w[4] - CELL_PAD);
                     let path_rect = Rect::from_x_y_ranges(x[0]..=x[0] + w[0], rect.y_range());
-                    if elided && response.hover_pos().is_some_and(|p| path_rect.contains(p)) {
-                        response.on_hover_ui(|ui| {
-                            ui.label(path_job(&pieces, 0, &body, text, weak));
+                    let response =
+                        if elided && response.hover_pos().is_some_and(|p| path_rect.contains(p)) {
+                            response.on_hover_ui(|ui| {
+                                ui.label(path_job(&pieces, 0, &body, text, weak));
+                            })
+                        } else {
+                            response
+                        };
+                    egui::Popup::context_menu(&response)
+                        .style(crate::menu::style)
+                        .show(|ui| {
+                            crate::menu::fit_window(ui, |ui| {
+                                ui.set_min_width(crate::menu::MIN_WIDTH);
+                                let chosen = selection.paths.len();
+                                let many = chosen > 1 && selection.paths.contains(&file.path);
+                                if let Some(p) = row_menu(ui, row, file, many.then_some(chosen)) {
+                                    pick = Some(p);
+                                }
+                            });
                         });
-                    }
                 }
             });
 
@@ -290,6 +327,25 @@ impl FileTable {
             && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
         let sel = &mut self.selection;
         let mut open = Vec::new();
+        let mut blame = None;
+        match pick {
+            // The selection, if the row is in it; the row became the selection otherwise.
+            Some(MenuPick::Open(row)) => {
+                let file = &files[shown[row]];
+                if sel.paths.contains(&file.path) {
+                    open.extend(
+                        shown
+                            .iter()
+                            .map(|&i| &files[i])
+                            .filter(|f| sel.paths.contains(&f.path)),
+                    );
+                } else {
+                    open.push(file);
+                }
+            }
+            Some(MenuPick::Blame(row)) => blame = Some(&files[shown[row]]),
+            None => {}
+        }
         match click {
             Some(FileClick::Open(row)) => {
                 let file = &files[shown[row]];
@@ -321,6 +377,13 @@ impl FileTable {
                     sel.anchor = Some(path);
                 }
             }
+            Some(FileClick::Menu(row)) => {
+                let path = files[shown[row]].path.clone();
+                if !sel.paths.contains(&path) {
+                    sel.paths = HashSet::from([path.clone()]);
+                    sel.anchor = Some(path);
+                }
+            }
             None => {}
         }
         if enter {
@@ -331,8 +394,47 @@ impl FileTable {
                     .filter(|f| sel.paths.contains(&f.path)),
             );
         }
-        open
+        TableAction { open, blame }
     }
+}
+
+/// The menu of a changed file's row: its diff (or the diffs of the `many` files chosen, when
+/// it is one of them), blame, and copying its path.
+fn row_menu(ui: &mut Ui, row: usize, file: &ChangedFile, many: Option<usize>) -> Option<MenuPick> {
+    let mut pick = None;
+    let text = match many {
+        Some(n) => format!("Show changes ({n} files)"),
+        None => "Show changes".to_owned(),
+    };
+    if ui
+        .add(egui::Button::new(text).shortcut_text("Enter"))
+        .clicked()
+    {
+        pick = Some(MenuPick::Open(row));
+        ui.close();
+    }
+    let why = if file.status == FileStatus::Deleted {
+        Some("The file is gone in this version")
+    } else if file.modes.contains(&GITLINK_MODE) {
+        Some("A submodule has no lines to blame")
+    } else if file.is_binary() {
+        Some("A binary file has no lines to blame")
+    } else {
+        None
+    };
+    let blame = ui
+        .add_enabled(why.is_none(), egui::Button::new("Blame"))
+        .on_disabled_hover_text(why.unwrap_or_default());
+    if blame.clicked() {
+        pick = Some(MenuPick::Blame(row));
+        ui.close();
+    }
+    crate::menu::separator(ui);
+    if ui.button("Copy path").clicked() {
+        ui.ctx().copy_text(file.path.clone());
+        ui.close();
+    }
+    pick
 }
 
 /// Diff windows asked for, held back while "Open all?" is asked when there are many.

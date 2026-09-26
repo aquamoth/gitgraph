@@ -15,6 +15,7 @@ use parterre_core::recent::Recent;
 use parterre_core::{Oid, Repo};
 
 mod auto_reload;
+mod blame_window;
 mod compare_window;
 mod diff_window;
 mod file_table;
@@ -254,6 +255,8 @@ pub struct ParterreApp {
     focus_log: bool,
     /// The open diff windows, one file diff each.
     diffs: diff_window::DiffWindows,
+    /// The open blame windows, one file each.
+    blames: blame_window::BlameWindows,
     /// The compare window (Compare revisions and the like).
     compare: compare_window::CompareWindow,
     /// Raise the compare window in the next frame.
@@ -396,6 +399,7 @@ impl ParterreApp {
             log: log_window::LogWindow::default(),
             focus_log: false,
             diffs: diff_window::DiffWindows::default(),
+            blames: blame_window::BlameWindows::default(),
             compare: compare_window::CompareWindow::default(),
             focus_compare: false,
             marked: None,
@@ -450,6 +454,9 @@ impl ParterreApp {
         }
         if let Some(spec) = app.automation.demo_diff.clone() {
             app.open_demo_diff(&spec, &cc.egui_ctx);
+        }
+        if let Some(spec) = app.automation.demo_blame.clone() {
+            app.open_demo_blame(&spec, &cc.egui_ctx);
         }
         app
     }
@@ -767,6 +774,7 @@ impl ParterreApp {
         // The log and the diffs show the old repository's history.
         self.log.close();
         self.diffs.close_all();
+        self.blames.close_all();
         self.compare.close();
         self.marked = None;
     }
@@ -2230,6 +2238,7 @@ impl eframe::App for ParterreApp {
         self.log_window(&ctx);
         self.compare_window(&ctx);
         self.diff_windows(&ctx);
+        self.blame_windows(&ctx);
         self.about_window(&ctx);
 
         // Scripted runs wait for the graph, unless there is none to wait for, and for the diffs
@@ -2239,7 +2248,8 @@ impl eframe::App for ParterreApp {
                 || self.pull_requests_active()
                     && self.pull_requests.list().is_some()
                     && self.job.is_some();
-            self.automation.waiting = self.diffs.is_loading() || pulling;
+            self.automation.waiting =
+                self.diffs.is_loading() || self.blames.is_loading() || pulling;
             self.automation.drive(
                 &ctx,
                 self.scene.as_mut(),
