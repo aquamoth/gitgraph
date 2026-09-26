@@ -1793,6 +1793,7 @@ dependencies = [
  "embed-resource",
  "image",
  "parterre-core",
+ "ron",
  "serde",
  "tempfile",
  "winit",

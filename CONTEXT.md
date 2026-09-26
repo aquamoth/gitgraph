@@ -31,7 +31,7 @@ _Avoid_: log filter, range spec
 
 **Log layout**:
 One of a fixed set of arrangements of the log window's three panes (commits, details, changed
-files).
+files): stacked (A), side by side (B), details and files below (C), files on the right (D).
 _Avoid_: view, perspective, docking
 
 **Changed files**:

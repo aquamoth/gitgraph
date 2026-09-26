@@ -4,26 +4,29 @@
 //! prototype is on the branch `prototype/log-window`.
 //!
 //! The window is handed a [`LogQuery`] and knows nothing about the graph. Its three panes are
-//! separate functions that a layout arranges; for now there is one layout, stacked (A).
+//! separate functions that a [`LogLayout`] arranges; the layout is picked in the header or in
+//! the settings, and it and the dividers of each layout are saved with the settings.
 
 use std::collections::HashMap;
 use std::sync::{Arc, mpsc};
 
 use eframe::egui::text::{LayoutJob, TextFormat, TextWrapping};
 use eframe::egui::{
-    self, Color32, CornerRadius, CursorIcon, FontId, Galley, Id, Key, Margin, Modifiers, Rect,
-    Response, RichText, ScrollArea, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2,
+    self, Color32, CornerRadius, CursorIcon, FontId, Galley, Id, Key, Margin, Modifiers, Rangef,
+    Rect, Response, RichText, ScrollArea, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 use parterre_core::changed_files::{
     ChangedFile, FileColumn, FileOrder, FileStatus, filter_and_sort,
 };
+use parterre_core::glyphs::{self, Glyph};
 use parterre_core::log::LogQuery;
+use parterre_core::log_layout::LogLayout;
 use parterre_core::revgraph::GraphOptions;
 use parterre_core::text::{elide_start, find_urls, thousands};
 use parterre_core::{CommitIx, GitRef, Oid, Repo};
-use serde::{Deserialize, Serialize};
 
 use super::{Messages, ParterreApp};
+use crate::settings::LogWindowSettings;
 use crate::theme::{Palette, text_on};
 use crate::widgets;
 
@@ -36,6 +39,11 @@ const HEADING: f32 = 26.0;
 const DIVIDER: f32 = 6.0;
 const AUTHOR_WIDTH: f32 = 170.0;
 const DATE_WIDTH: f32 = 128.0;
+/// A commit list narrower than this (beside another pane) gets narrower author and date
+/// columns, as in the prototype's layouts B and D.
+const NARROW_LIST: f32 = 720.0;
+const NARROW_AUTHOR_WIDTH: f32 = 128.0;
+const NARROW_DATE_WIDTH: f32 = 118.0;
 const CELL_PAD: f32 = 8.0;
 /// How long a Copy button says "Copied".
 const COPIED_SECONDS: f64 = 1.2;
@@ -44,36 +52,23 @@ fn viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("log")
 }
 
-/// Where the dividers between the panes are, per layout, as fractions of the window body.
-/// Kept for the session; #40 saves them per layout and adds the other layouts.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Dividers {
-    /// Stacked (A): the commit list's and the details' shares of the height; the changed files
-    /// get the rest.
-    pub stacked: [f32; 2],
-}
-
-impl Dividers {
-    const STACKED: [f32; 2] = [0.45, 0.22];
-    /// The smallest share of a pane.
-    const MIN: f32 = 0.08;
-}
-
-impl Default for Dividers {
-    fn default() -> Self {
-        Dividers {
-            stacked: Dividers::STACKED,
-        }
+/// The icon of a layout in the pickers: the arrangement of its panes.
+pub fn layout_glyph(layout: LogLayout) -> Glyph {
+    match layout {
+        LogLayout::Stacked => glyphs::LAYOUT_STACKED,
+        LogLayout::SideBySide => glyphs::LAYOUT_SIDE_BY_SIDE,
+        LogLayout::DetailsBelow => glyphs::LAYOUT_DETAILS_BELOW,
+        LogLayout::FilesRight => glyphs::LAYOUT_FILES_RIGHT,
     }
 }
 
-/// The log window's state that outlives its contents: the dividers, the changed files' sort
-/// and filter (kept as you move between commits and logs), and caches.
+/// The log window's state that outlives its contents: the changed files' sort and filter
+/// (kept as you move between commits and logs), and caches. The layout and its dividers are
+/// in the settings ([`LogWindowSettings`]).
 #[derive(Debug, Default)]
 pub struct LogWindow {
     /// What the window shows; `None` while it is closed.
     view: Option<LogView>,
-    dividers: Dividers,
     order: FileOrder,
     filter: String,
     files: ChangedFiles,
@@ -233,6 +228,142 @@ struct Env<'a> {
     messages: &'a mut Messages,
     palette: Palette,
     graph: &'a GraphOptions,
+    /// The layout and the dividers.
+    settings: &'a mut LogWindowSettings,
+}
+
+/// Where a layout puts the panes and dividers in the window body.
+#[derive(Clone, Copy, Debug)]
+struct Arrangement {
+    /// Commits, details, changed files.
+    panes: [Rect; 3],
+    bars: [Bar; 2],
+}
+
+/// A draggable divider, and how a pointer position turns into its fraction in
+/// [`Dividers`](parterre_core::log_layout::Dividers).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Bar {
+    rect: Rect,
+    /// Dragged sideways: a vertical bar between panes side by side.
+    vertical: bool,
+    /// Where the bar's middle is (along x for a vertical bar, else y) at fraction 0, and the
+    /// room its fraction is of.
+    origin: f32,
+    room: f32,
+}
+
+impl Bar {
+    /// The fraction that puts the bar's middle at `at`.
+    fn fraction(&self, at: f32) -> f32 {
+        (at - self.origin) / self.room
+    }
+}
+
+/// A range cut in two by a divider at `fraction` of the room the two parts share.
+struct Cut {
+    first: Rangef,
+    bar: Rangef,
+    second: Rangef,
+    origin: f32,
+    room: f32,
+}
+
+fn cut(range: Rangef, fraction: f32) -> Cut {
+    let room = (range.span() - DIVIDER).max(1.0);
+    let at = range.min + (room * fraction).round();
+    Cut {
+        first: Rangef::new(range.min, at),
+        bar: Rangef::new(at, at + DIVIDER),
+        second: Rangef::new(at + DIVIDER, range.max.max(at + DIVIDER)),
+        origin: range.min + DIVIDER / 2.0,
+        room,
+    }
+}
+
+/// Where `layout`, with its dividers at `fractions`, puts the panes and dividers in `body`.
+fn arrange(layout: LogLayout, [a, b]: [f32; 2], body: Rect) -> Arrangement {
+    let rect = Rect::from_x_y_ranges;
+    let (xs, ys) = (body.x_range(), body.y_range());
+    let bar = |rect: Rect, vertical: bool, c: &Cut| Bar {
+        rect,
+        vertical,
+        origin: c.origin,
+        room: c.room,
+    };
+    match layout {
+        LogLayout::Stacked => {
+            // Both dividers share the height, so the files' share is what the others leave.
+            let room = (body.height() - 2.0 * DIVIDER).max(1.0);
+            let y1 = body.top() + (room * a).round();
+            let y2 = y1 + DIVIDER + (room * b).round();
+            let stacked_bar = |y: f32, origin: f32| Bar {
+                rect: rect(xs, Rangef::new(y, y + DIVIDER)),
+                vertical: false,
+                origin,
+                room,
+            };
+            Arrangement {
+                panes: [
+                    rect(xs, Rangef::new(body.top(), y1)),
+                    rect(xs, Rangef::new(y1 + DIVIDER, y2)),
+                    rect(
+                        xs,
+                        Rangef::new(y2 + DIVIDER, body.bottom().max(y2 + DIVIDER)),
+                    ),
+                ],
+                bars: [
+                    stacked_bar(y1, body.top() + DIVIDER / 2.0),
+                    stacked_bar(y2, body.top() + 1.5 * DIVIDER),
+                ],
+            }
+        }
+        LogLayout::SideBySide => {
+            let across = cut(xs, a);
+            let right = cut(ys, b);
+            Arrangement {
+                panes: [
+                    rect(across.first, ys),
+                    rect(across.second, right.first),
+                    rect(across.second, right.second),
+                ],
+                bars: [
+                    bar(rect(across.bar, ys), true, &across),
+                    bar(rect(across.second, right.bar), false, &right),
+                ],
+            }
+        }
+        LogLayout::DetailsBelow => {
+            let down = cut(ys, a);
+            let below = cut(xs, b);
+            Arrangement {
+                panes: [
+                    rect(xs, down.first),
+                    rect(below.first, down.second),
+                    rect(below.second, down.second),
+                ],
+                bars: [
+                    bar(rect(xs, down.bar), false, &down),
+                    bar(rect(below.bar, down.second), true, &below),
+                ],
+            }
+        }
+        LogLayout::FilesRight => {
+            let across = cut(xs, a);
+            let left = cut(ys, b);
+            Arrangement {
+                panes: [
+                    rect(across.first, left.first),
+                    rect(across.first, left.second),
+                    rect(across.second, ys),
+                ],
+                bars: [
+                    bar(rect(across.bar, ys), true, &across),
+                    bar(rect(across.first, left.bar), false, &left),
+                ],
+            }
+        }
+    }
 }
 
 /// Colours of the log window beyond egui's visuals, after the prototype.
@@ -354,18 +485,27 @@ impl LogWindow {
         }
     }
 
-    /// The header and the panes, in the stacked layout.
+    /// The header and the panes, in the chosen layout.
     fn contents(&mut self, ui: &mut Ui, env: &mut Env) {
         let c = colors(ui);
-        self.header(ui, &c, env.graph);
+        self.header(ui, &c, env);
         let body = ui.available_rect_before_wrap();
-        self.stacked(ui, body, env);
+        self.body(ui, body, env);
     }
 
-    /// The range at the top left, as TortoiseGit shows it, and the commit count on the right.
-    fn header(&self, ui: &mut Ui, c: &Colors, graph: &GraphOptions) {
+    /// The range at the top left, as TortoiseGit shows it; on the right the commit count, the
+    /// layout picker and the button that resets the layout's dividers.
+    fn header(&self, ui: &mut Ui, c: &Colors, env: &mut Env) {
         let Some(view) = &self.view else { return };
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
+        let mut tools = ui.new_child(
+            UiBuilder::new()
+                .max_rect(rect.shrink2(vec2(8.0, 0.0)))
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        );
+        tools.spacing_mut().item_spacing.x = 4.0;
+        layout_tools(&mut tools, env.settings);
+        let tools_left = tools.min_rect().left();
         let painter = ui.painter();
         painter.hline(
             rect.x_range(),
@@ -374,7 +514,7 @@ impl LogWindow {
         );
         let label = view
             .query
-            .label(&view.repo, &view.refs, |r| graph.shows(r.kind));
+            .label(&view.repo, &view.refs, |r| env.graph.shows(r.kind));
         let font = FontId::proportional(13.5);
         let weak = ui.visuals().weak_text_color();
         let mut job = LayoutJob::default();
@@ -389,8 +529,9 @@ impl LogWindow {
         let n = view.commits.len();
         let count = format!("{} commit{}", thousands(n), if n == 1 { "" } else { "s" });
         let count = painter.layout_no_wrap(count, FontId::proportional(13.0), weak);
+        let count_left = tools_left - 14.0 - count.size().x;
         job.wrap = TextWrapping {
-            max_width: (rect.width() - count.size().x - 36.0).max(0.0),
+            max_width: (count_left - rect.left() - 36.0).max(0.0),
             max_rows: 1,
             break_anywhere: true,
             overflow_character: Some('…'),
@@ -402,43 +543,25 @@ impl LogWindow {
             weak,
         );
         painter.galley(
-            pos2(
-                rect.right() - 12.0 - count.size().x,
-                rect.center().y - count.size().y / 2.0,
-            ),
+            pos2(count_left, rect.center().y - count.size().y / 2.0),
             count,
             weak,
         );
     }
 
-    /// Layout A: commits, details and changed files from top to bottom, with a draggable
-    /// divider between each two.
-    fn stacked(&mut self, ui: &mut Ui, body: Rect, env: &mut Env) {
-        let usable = (body.height() - 2.0 * DIVIDER).max(1.0);
-        let [commits, details] = self.dividers.stacked;
-        let y1 = body.top() + (usable * commits).round();
-        let y2 = y1 + DIVIDER + (usable * details).round();
-        let commits_rect = Rect::from_x_y_ranges(body.x_range(), body.top()..=y1);
-        let details_rect = Rect::from_x_y_ranges(body.x_range(), y1 + DIVIDER..=y2);
-        let files_rect = Rect::from_x_y_ranges(body.x_range(), y2 + DIVIDER..=body.bottom());
-        self.pane(ui, Pane::Commits, commits_rect, env);
-        self.pane(ui, Pane::Details, details_rect, env);
-        self.pane(ui, Pane::Files, files_rect, env);
-
-        let first = Rect::from_x_y_ranges(body.x_range(), y1..=y1 + DIVIDER);
-        let second = Rect::from_x_y_ranges(body.x_range(), y2..=y2 + DIVIDER);
-        let d = &mut self.dividers.stacked;
-        // Each divider moves only the boundary between its two panes.
-        let delta = divider(ui, Id::new("log-divider-a0"), first) / usable;
-        if delta != 0.0 {
-            let delta = delta.clamp(Dividers::MIN - d[0], d[1] - Dividers::MIN);
-            d[0] += delta;
-            d[1] -= delta;
+    /// The panes where the layout puts them, and the dividers between them.
+    fn body(&mut self, ui: &mut Ui, body: Rect, env: &mut Env) {
+        let layout = env.settings.layout;
+        let arrangement = arrange(layout, env.settings.dividers.of(layout), body);
+        let panes = [Pane::Commits, Pane::Details, Pane::Files];
+        for (pane, rect) in panes.into_iter().zip(arrangement.panes) {
+            self.pane(ui, pane, rect, env);
         }
-        let delta = divider(ui, Id::new("log-divider-a1"), second) / usable;
-        if delta != 0.0 {
-            let room = 1.0 - d[0] - d[1] - Dividers::MIN;
-            d[1] += delta.clamp(Dividers::MIN - d[1], room.max(0.0));
+        for (which, bar) in arrangement.bars.iter().enumerate() {
+            let id = Id::new(("log-divider", layout, which));
+            if let Some(at) = divider(ui, id, bar) {
+                env.settings.dividers.set(layout, which, bar.fraction(at));
+            }
         }
         ui.allocate_rect(body, Sense::hover());
     }
@@ -474,16 +597,21 @@ impl LogWindow {
         let hash_width = digit * view.repo.abbrev_len as f32 + 2.0 * CELL_PAD + 2.0;
         let weak = ui.visuals().weak_text_color();
         let text = ui.visuals().text_color();
+        let (author_width, date_width) = if ui.available_width() < NARROW_LIST {
+            (NARROW_AUTHOR_WIDTH, NARROW_DATE_WIDTH)
+        } else {
+            (AUTHOR_WIDTH, DATE_WIDTH)
+        };
 
         let columns = |width: f32, left: f32| {
-            let subject = (width - hash_width - AUTHOR_WIDTH - DATE_WIDTH).max(80.0);
+            let subject = (width - hash_width - author_width - date_width).max(80.0);
             let x = [
                 left,
                 left + hash_width,
                 left + hash_width + subject,
-                left + hash_width + subject + AUTHOR_WIDTH,
+                left + hash_width + subject + author_width,
             ];
-            let w = [hash_width, subject, AUTHOR_WIDTH, DATE_WIDTH];
+            let w = [hash_width, subject, author_width, date_width];
             (x, w)
         };
 
@@ -778,10 +906,15 @@ impl LogWindow {
         let (head, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADING), Sense::hover());
         heading_background(ui, head, c);
         let (x, w) = file_columns(head.width(), head.left());
+        let compact = compact_files(head.width());
         let heading_font = FontId::proportional(12.0);
         for (i, column) in FileColumn::ALL.into_iter().enumerate() {
             let rect = Rect::from_x_y_ranges(x[i]..=x[i] + w[i], head.y_range());
-            let response = ui.interact(rect, Id::new(("log-sort", i)), Sense::click());
+            let mut response = ui.interact(rect, Id::new(("log-sort", i)), Sense::click());
+            let heading = file_heading(column, compact);
+            if heading != column.title() {
+                response = response.on_hover_text(column.title());
+            }
             if response.clicked() {
                 self.order.click(column);
             }
@@ -792,7 +925,7 @@ impl LogWindow {
             };
             let g = cell(
                 ui,
-                column.title(),
+                heading,
                 heading_font.clone(),
                 color,
                 w[i] - 2.0 * CELL_PAD - 12.0,
@@ -993,9 +1126,35 @@ fn path_galley(
     (painter.layout_job(job(&shown)), shown != full)
 }
 
+/// Whether a changed-files table `width` wide is compact: in a narrow pane (beside another
+/// one in layouts B and D) the columns after the path shrink, with shorter headings, so that
+/// the path keeps room.
+fn compact_files(width: f32) -> bool {
+    const ROOMY_PATH: f32 = 260.0;
+    width - FILE_COLUMNS.iter().sum::<f32>() < ROOMY_PATH
+}
+
+/// Widths of the columns after the path: extension, status, lines added, lines removed.
+const FILE_COLUMNS: [f32; 4] = [90.0, 100.0, 100.0, 110.0];
+const COMPACT_FILE_COLUMNS: [f32; 4] = [56.0, 78.0, 66.0, 82.0];
+
+/// A changed-files column's heading; shorter in a compact table.
+fn file_heading(column: FileColumn, compact: bool) -> &'static str {
+    match column {
+        FileColumn::Extension if compact => "Ext.",
+        FileColumn::Added if compact => "Added",
+        FileColumn::Removed if compact => "Removed",
+        _ => column.title(),
+    }
+}
+
 /// x and widths of the changed-files columns: the path takes what the others leave.
 fn file_columns(width: f32, left: f32) -> ([f32; 5], [f32; 5]) {
-    let fixed = [90.0, 100.0, 100.0, 110.0];
+    let fixed = if compact_files(width) {
+        COMPACT_FILE_COLUMNS
+    } else {
+        FILE_COLUMNS
+    };
     let path = (width - fixed.iter().sum::<f32>()).max(120.0);
     let w = [path, fixed[0], fixed[1], fixed[2], fixed[3]];
     let mut x = [left; 5];
@@ -1079,12 +1238,17 @@ fn sort_arrow(ui: &Ui, at: egui::Pos2, descending: bool, color: Color32) {
         .add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
 }
 
-/// A divider between two panes in `rect`. Returns how far it was dragged.
-fn divider(ui: &mut Ui, id: Id, rect: Rect) -> f32 {
+/// A divider between two panes. While it is dragged, returns where its middle should go: the
+/// pointer's position across the bar, less where on the bar it was grabbed.
+fn divider(ui: &mut Ui, id: Id, bar: &Bar) -> Option<f32> {
     let c = colors(ui);
-    let response = ui
-        .interact(rect, id, Sense::drag())
-        .on_hover_cursor(CursorIcon::ResizeVertical);
+    let rect = bar.rect;
+    let cursor = if bar.vertical {
+        CursorIcon::ResizeHorizontal
+    } else {
+        CursorIcon::ResizeVertical
+    };
+    let response = ui.interact(rect, id, Sense::drag()).on_hover_cursor(cursor);
     let active = response.hovered() || response.dragged();
     let painter = ui.painter();
     let fill = if active {
@@ -1093,17 +1257,53 @@ fn divider(ui: &mut Ui, id: Id, rect: Rect) -> f32 {
         ui.visuals().panel_fill
     };
     painter.rect_filled(rect, 0.0, fill);
-    painter.hline(rect.x_range(), rect.top() + 0.5, Stroke::new(1.0, c.line));
-    painter.hline(
-        rect.x_range(),
-        rect.bottom() - 0.5,
-        Stroke::new(1.0, c.line),
-    );
-    if response.dragged() {
-        response.drag_delta().y
+    let line = Stroke::new(1.0, c.line);
+    if bar.vertical {
+        painter.vline(rect.left() + 0.5, rect.y_range(), line);
+        painter.vline(rect.right() - 0.5, rect.y_range(), line);
     } else {
-        0.0
+        painter.hline(rect.x_range(), rect.top() + 0.5, line);
+        painter.hline(rect.x_range(), rect.bottom() - 0.5, line);
     }
+    let along = |p: egui::Pos2| if bar.vertical { p.x } else { p.y };
+    let pointer = response.interact_pointer_pos().map(along)?;
+    if response.drag_started() {
+        let middle = along(rect.center());
+        ui.data_mut(|d| d.insert_temp(id, pointer - middle));
+    }
+    if !response.dragged() {
+        return None;
+    }
+    let grabbed = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
+    Some(pointer - grabbed)
+}
+
+/// The layout picker and the reset button, laid out right to left.
+fn layout_tools(ui: &mut Ui, settings: &mut LogWindowSettings) {
+    let current = settings.layout;
+    let reset = ui.add_enabled_ui(!settings.dividers.is_default(current), |ui| {
+        widgets::icon_button(ui, glyphs::RESET, false)
+    });
+    let reset = widgets::tip_explained(
+        reset.inner,
+        "Reset layout",
+        "",
+        "Put the dividers of this layout back where they started.",
+    );
+    if reset.clicked() {
+        settings.dividers.reset(current);
+    }
+    if let Some(layout) = layout_picker(ui, current) {
+        settings.layout = layout;
+    }
+}
+
+/// The four layouts as icon segments, each named in its tooltip. Returns the one clicked.
+pub fn layout_picker(ui: &mut Ui, current: LogLayout) -> Option<LogLayout> {
+    let items = LogLayout::ALL.map(|l| (l, layout_glyph(l)));
+    widgets::segmented(ui, current, &items, |layout, response| {
+        response.on_hover_text(layout.label())
+    })
 }
 
 /// The filter field of the changed files, with a magnifier.
@@ -1310,6 +1510,7 @@ impl ParterreApp {
                 messages: &mut self.messages,
                 palette,
                 graph: &self.settings.graph,
+                settings: &mut self.settings.log_window,
             };
             let log = &mut self.log;
             egui::CentralPanel::default()
@@ -1322,6 +1523,7 @@ impl ParterreApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parterre_core::log_layout::Dividers;
 
     fn renamed() -> ChangedFile {
         ChangedFile {
@@ -1374,9 +1576,69 @@ mod tests {
     }
 
     #[test]
-    fn dividers_leave_room_for_every_pane() {
+    fn layouts_tile_the_body_with_their_panes_and_dividers() {
+        let body = Rect::from_min_size(pos2(10.0, 50.0), vec2(1100.0, 700.0));
         let d = Dividers::default();
-        assert!(d.stacked.iter().all(|&s| s >= Dividers::MIN));
-        assert!(d.stacked.iter().sum::<f32>() <= 1.0 - Dividers::MIN);
+        for layout in LogLayout::ALL {
+            let a = arrange(layout, d.of(layout), body);
+            let rects: Vec<Rect> = a
+                .panes
+                .iter()
+                .copied()
+                .chain(a.bars.map(|b| b.rect))
+                .collect();
+            let area: f32 = rects.iter().map(|r| r.area()).sum();
+            assert!(
+                (area - body.area()).abs() < 1.0,
+                "{layout:?} leaves gaps or overlaps"
+            );
+            for (i, r) in rects.iter().enumerate() {
+                assert!(
+                    body.expand(0.01).contains_rect(*r),
+                    "{layout:?}: {r:?} outside"
+                );
+                for s in &rects[i + 1..] {
+                    assert!(
+                        r.intersect(*s).area() < 0.01,
+                        "{layout:?}: {r:?} overlaps {s:?}"
+                    );
+                }
+            }
+            for (which, bar) in a.bars.iter().enumerate() {
+                assert_eq!(bar.vertical, Dividers::splits_width(layout, which));
+                let thickness = if bar.vertical {
+                    bar.rect.width()
+                } else {
+                    bar.rect.height()
+                };
+                assert_eq!(thickness, DIVIDER);
+            }
+        }
+    }
+
+    #[test]
+    fn a_divider_dragged_by_its_middle_stays_under_the_pointer() {
+        let body = Rect::from_min_size(pos2(0.0, 40.0), vec2(1000.0, 600.0));
+        for layout in LogLayout::ALL {
+            for which in 0..2 {
+                let mut d = Dividers::default();
+                let before = arrange(layout, d.of(layout), body).bars[which];
+                let along = |r: Rect| {
+                    if before.vertical {
+                        r.center().x
+                    } else {
+                        r.center().y
+                    }
+                };
+                let target = along(before.rect) + 37.0;
+                d.set(layout, which, before.fraction(target));
+                let after = arrange(layout, d.of(layout), body).bars[which];
+                assert!(
+                    (along(after.rect) - target).abs() <= 0.5,
+                    "{layout:?} divider {which}: {} instead of {target}",
+                    along(after.rect)
+                );
+            }
+        }
     }
 }

@@ -127,8 +127,10 @@ This renders a few frames, saves the window to `out.png`, and exits. `--demo-dra
 the centre node first, to show the physics. `--demo-menu node` (or `canvas`) right-clicks the
 centre node (or `--demo-node NAME`, or empty canvas) and hovers the second item, to show the
 context menu. `--demo-open menu` (or `filter`, `zoom`, `drag`, `settings`, `settings:advanced`
-and the other pages) opens the ☰ menu, a toolbar popover or the settings. Without `--theme` the
-theme follows the desktop.
+and the other pages) opens the ☰ menu, a toolbar popover or the settings. `--demo-log REF` (or
+`FIRST..SECOND`) opens the log window, and `--log-layout a` (to `d`, or `stacked`,
+`side-by-side`, `details-below`, `files-right`) picks its layout. Screenshot runs ignore the
+saved settings and don't save any. Without `--theme` the theme follows the desktop.
 
 ## Icon
 
