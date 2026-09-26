@@ -125,7 +125,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             if u.path == "/api/repo":
                 name = os.path.basename(os.path.abspath(git(self.repo, "rev-parse", "--show-toplevel").strip()))
-                return self.send_json({"name": name, "refs": refs(self.repo)})
+                # git's own abbreviation length for this repository (core.abbrev=auto grows with its size).
+                abbrev = len(git(self.repo, "log", "-1", "--format=%h").strip())
+                return self.send_json({"name": name, "refs": refs(self.repo), "abbrev": abbrev})
             if u.path == "/api/log":
                 return self.send_json(log(self.repo, q["spec"]))
             if u.path == "/api/message":

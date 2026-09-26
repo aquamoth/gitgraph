@@ -56,8 +56,8 @@ body { background: var(--desk); font: 13px/1.25 "egui", "Ubuntu", sans-serif; co
 
 /* Commit list */
 .list { flex: 1; min-height: 0; overflow: auto; position: relative; outline: none; }
-.lhead, .row { display: grid; grid-template-columns: 76px minmax(200px, 1fr) 170px 128px; align-items: center; }
-.list.narrow .lhead, .list.narrow .row { grid-template-columns: 70px minmax(150px, 1fr) 128px 118px; }
+.lhead, .row { display: grid; grid-template-columns: var(--hashw, 76px) minmax(200px, 1fr) 170px 128px; align-items: center; }
+.list.narrow .lhead, .list.narrow .row { grid-template-columns: var(--hashw, 70px) minmax(150px, 1fr) 128px 118px; }
 .lhead { position: sticky; top: 0; z-index: 2; background: var(--panel); height: 26px; border-bottom: 1px solid var(--line); color: var(--weak); font-size: 12px; }
 .lhead > div, .row > div { padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row { position: absolute; left: 0; right: 0; height: 24px; cursor: default; }
@@ -82,6 +82,9 @@ body { background: var(--desk); font: 13px/1.25 "egui", "Ubuntu", sans-serif; co
 .details pre { margin: 0; white-space: pre-wrap; font: 12.5px/1.45 eguimono, monospace; }
 .details pre .subject { font-weight: bold; }
 .details a { color: var(--link); }
+.copy { border: 0; background: transparent; color: var(--weak); border-radius: 5px; padding: 1px 5px; margin-left: 4px; font: 12px "egui", sans-serif; cursor: default; vertical-align: 0; }
+.copy:hover { background: var(--hover); color: var(--text); }
+.copy.done { color: var(--add); }
 
 /* Files */
 .fbar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--panel); }
@@ -185,7 +188,8 @@ function badge(r) {
   const lum = (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255;
   return `<span class="badge" style="background:rgb(${c});color:${lum < .55 ? "#fff" : "#000"}" title="${esc(r.full)}">${esc(r.name)}</span>`;
 }
-const short = (h) => h.slice(0, 7);
+let ABBREV = 7;
+const short = (h) => h.slice(0, ABBREV);
 function refLabel(h) { const rs = S.refs[h]; return rs && rs.length ? rs[0].name : short(h); }
 
 // ---------- data ----------
@@ -217,6 +221,7 @@ function need(h) {
 }
 
 // ---------- pieces ----------
+function copyBtn(text, what) { return `<button class="copy" data-copy="${esc(text)}" title="${what}">⧉ Copy</button>`; }
 function linkify(s) {
   return esc(s).replace(/https?:\/\/[^\s<>"')\]]+/g, (u) => `<a href="${u}" target="_blank" rel="noreferrer">${u}</a>`);
 }
@@ -228,9 +233,22 @@ function detailsHTML() {
   const nl = text.indexOf("\n");
   const body = nl < 0 ? `<span class="subject">${linkify(text)}</span>`
     : `<span class="subject">${linkify(text.slice(0, nl))}</span>${linkify(text.slice(nl))}`;
-  return `<div class="meta"><span>Commit</span><b class="mono">${h}</b><span>Author</span><b>${esc(an)} &lt;${esc(ae)}&gt;</b><span>Date</span><b>${esc(ad)}</b></div><pre>${body}</pre>`;
+  return `<div class="meta"><span>Commit</span><b><span class="mono">${h}</span>${copyBtn(h, "Copy hash")}</b><span>Author</span><b>${esc(an)} &lt;${esc(ae)}&gt;${copyBtn(ae, "Copy email")}</b><span>Date</span><b>${esc(ad)}</b></div><pre>${body}</pre>`;
 }
 const STATUS = { A: "Added", M: "Modified", D: "Deleted", R: "Renamed", C: "Copied", T: "Type changed", U: "Unmerged" };
+// Within a folder, its files come before its subfolders; names compare case-insensitively.
+function pathCmp(a, b) {
+  const x = a.split("/"), y = b.split("/");
+  for (let i = 0; ; i++) {
+    const xf = i === x.length - 1, yf = i === y.length - 1;
+    if (x[i] !== y[i]) {
+      if (xf !== yf) return xf ? -1 : 1;
+      const c = x[i].toLowerCase().localeCompare(y[i].toLowerCase());
+      return c || (x[i] < y[i] ? -1 : 1);
+    }
+    if (xf && yf) return 0;
+  }
+}
 const extOf = (p) => { const b = p.split("/").pop(); const i = b.lastIndexOf("."); return i > 0 ? b.slice(i) : ""; };
 function filesHTML() {
   const r = S.rows[S.sel]; if (!r) return { bar: "", table: "" };
@@ -243,14 +261,18 @@ function filesHTML() {
     const q = S.filter.toLowerCase();
     let list = f.files.filter((x) => !q || x.path.toLowerCase().includes(q) || (x.old || "").toLowerCase().includes(q));
     count = q ? `${list.length} of ${f.files.length} files` : `${f.files.length} file${f.files.length === 1 ? "" : "s"}`;
-    if (S.sort) {
-      const k = S.sort.key, d = S.sort.dir;
+    {
+      const k = S.sort ? S.sort.key : "path", d = S.sort ? S.sort.dir : 1;
       const val = (x) => k === "path" ? x.path.toLowerCase() : k === "ext" ? extOf(x.path).toLowerCase()
         : k === "status" ? STATUS[x.status] : k === "added" ? (x.added === "-" ? -1 : +x.added) : (x.removed === "-" ? -1 : +x.removed);
-      list = list.map((x, i) => [x, i]).sort((a, b) => { const va = val(a[0]), vb = val(b[0]); return (va < vb ? -1 : va > vb ? 1 : a[1] - b[1]) * d; }).map((p) => p[0]);
+      list = list.slice().sort((a, b) => {
+        if (k === "path") return pathCmp(a.path, b.path) * d;
+        const va = val(a), vb = val(b);
+        return va < vb ? -d : va > vb ? d : pathCmp(a.path, b.path);
+      });
     }
     const th = (key, text, cls = "") => {
-      const a = S.sort && S.sort.key === key ? `<span class="arrow">${S.sort.dir > 0 ? "▲" : "▼"}</span>` : "";
+      const a = (S.sort ? S.sort.key === key : key === "path") ? `<span class="arrow">${!S.sort || S.sort.dir > 0 ? "▲" : "▼"}</span>` : "";
       return `<th class="${cls}" data-sort="${key}">${text}${a}</th>`;
     };
     const pathCell = (p) => { const i = p.lastIndexOf("/"); return i < 0 ? esc(p) : `<span class="dir">${esc(p.slice(0, i + 1))}</span>${esc(p.slice(i + 1))}`; };
@@ -266,12 +288,12 @@ function filesHTML() {
 
 // ---------- the virtualised list ----------
 function listHTML(narrow) {
-  return `<div class="list${narrow ? " narrow" : ""}" id="list" tabindex="0"><div class="lhead"><div>Hash</div><div>Subject</div><div>Author</div><div>Date</div></div><div id="rows" style="position:relative"></div></div>`;
+  return `<div class="list${narrow ? " narrow" : ""}" id="list" tabindex="0" style="--hashw:${ABBREV * 7.3 + 18}px"><div class="lhead"><div>Hash</div><div>Subject</div><div>Author</div><div>Date</div></div><div id="rows" style="position:relative"></div></div>`;
 }
 function rowHTML(i, top) {
-  const [h, an, , ad, subj] = S.rows[i];
+  const [h, an, ae, ad, subj] = S.rows[i];
   const refs = (S.refs[h] || []).map(badge).join("");
-  return `<div class="row${i === S.sel ? " sel" : ""}" data-i="${i}" style="top:${top}px"><div class="hash mono">${short(h)}</div><div class="subj">${refs}<span class="t">${esc(subj)}</span></div><div>${esc(an)}</div><div class="date">${esc(ad)}</div></div>`;
+  return `<div class="row${i === S.sel ? " sel" : ""}" data-i="${i}" style="top:${top}px"><div class="hash mono">${short(h)}</div><div class="subj">${refs}<span class="t">${esc(subj)}</span></div><div title="${esc(an)} &lt;${esc(ae)}&gt;">${esc(an)}</div><div class="date">${esc(ad)}</div></div>`;
 }
 function inlineOpen() { return variant === "C" && S.rows.length > 0; }
 const rowTop = (i) => i * ROW + (inlineOpen() && i > S.sel ? INLINE_H : 0);
@@ -349,9 +371,12 @@ function select(i) { S.sel = Math.max(0, Math.min(S.rows.length - 1, i)); refres
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
+  const cp = e.target.closest("[data-copy]");
+  if (cp) { navigator.clipboard?.writeText(cp.dataset.copy); cp.textContent = "✓ Copied"; cp.classList.add("done");
+    setTimeout(() => { cp.textContent = "⧉ Copy"; cp.classList.remove("done"); }, 1200); return; }
   const row = e.target.closest(".row"); if (row) { select(+row.dataset.i); $("list").focus(); return; }
   const th = e.target.closest("th[data-sort]");
-  if (th) { const k = th.dataset.sort; S.sort = S.sort && S.sort.key === k ? { key: k, dir: -S.sort.dir } : { key: k, dir: 1 }; refreshSelection(); }
+  if (th) { const k = th.dataset.sort; const cur = S.sort || { key: "path", dir: 1 }; S.sort = cur.key === k ? { key: k, dir: -cur.dir } : { key: k, dir: 1 }; refreshSelection(); }
 });
 document.addEventListener("input", (e) => { if (e.target.id === "pathfilter") { S.filter = e.target.value; refreshSelection(); } });
 document.addEventListener("keydown", (e) => {
@@ -395,7 +420,7 @@ $("first").onchange = $("second").onchange = () => { params.set("first", $("firs
 
 (async function init() {
   const repo = await api("/api/repo");
-  S.repo = repo.name; S.refs = repo.refs;
+  S.repo = repo.name; S.refs = repo.refs; ABBREV = repo.abbrev || 7;
   const names = [];
   for (const rs of Object.values(repo.refs)) for (const r of rs) names.push(r);
   const order = { current: 0, local: 1, remote: 2, tag: 3 };
