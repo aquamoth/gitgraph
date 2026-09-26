@@ -2,6 +2,8 @@
 //! menu offers all of it again, in the toolbar's order, and the rest besides. Chosen on
 //! 2026-09-26; the prototype is on the branch `prototype/menus`.
 
+use std::path::{Path, PathBuf};
+
 use eframe::egui::{
     self, Align, Id, Key, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText,
     Sense, Stroke, Ui, Vec2, vec2,
@@ -9,6 +11,7 @@ use eframe::egui::{
 use parterre_core::glyphs::{self, Glyph};
 use parterre_core::layout::Direction;
 use parterre_core::physics::DragModel;
+use parterre_core::recent::same_path;
 use parterre_core::revgraph::Simplification;
 
 use super::{ParterreApp, SettingsPage};
@@ -314,6 +317,52 @@ impl ParterreApp {
     }
 
     fn main_menu(&mut self, ui: &mut Ui) {
+        if menu::item(ui, "Open folder…", "Ctrl+O", Mark::None).clicked() {
+            self.pick_folder = true;
+        }
+        // The repository shown is left out: it is open already.
+        let open = self.repo.as_ref().map(|r| r.path.clone());
+        let recent: Vec<PathBuf> = self
+            .recent
+            .iter()
+            .filter(|p| open.as_deref().is_none_or(|o| !same_path(p, o)))
+            .map(Path::to_path_buf)
+            .collect();
+        let mut picked = None;
+        let mut clear = false;
+        ui.add_enabled_ui(!recent.is_empty(), |ui| {
+            menu::submenu(ui, "Recent folders", |ui| {
+                for path in &recent {
+                    // The folder it is in, where the shortcut would go, tells same names apart.
+                    let (name, place) = super::name_and_place(path);
+                    if menu::item(ui, &name, &place, Mark::None).clicked() {
+                        picked = Some(path.clone());
+                    }
+                }
+                menu::separator(ui);
+                if menu::item(ui, "Clear recent folders", "", Mark::None).clicked() {
+                    clear = true;
+                }
+            });
+        });
+        if let Some(path) = picked {
+            self.open_folder(&path);
+        }
+        if clear {
+            self.recent.clear();
+            // The open one comes back, so that it is listed once another is opened.
+            if let Some(open) = &open {
+                self.recent.add(open);
+            }
+        }
+        let close = ui.add_enabled_ui(self.repo.is_some(), |ui| {
+            menu::item(ui, "Close folder", "Ctrl+W", Mark::None)
+        });
+        if close.inner.clicked() {
+            self.close_folder();
+        }
+        menu::separator(ui);
+
         let (can_undo, can_redo) = self
             .scene
             .as_ref()
@@ -332,10 +381,15 @@ impl ParterreApp {
         }
         menu::separator(ui);
 
-        if menu::item(ui, "Reload", "F5", Mark::None).clicked() {
+        let has_repo = open.is_some();
+        let reload = ui.add_enabled_ui(has_repo, |ui| menu::item(ui, "Reload", "F5", Mark::None));
+        if reload.inner.clicked() {
             self.reload();
         }
-        if menu::item(ui, "Export as SVG…", "", Mark::None).clicked() {
+        let export = ui.add_enabled_ui(has_repo, |ui| {
+            menu::item(ui, "Export as SVG…", "", Mark::None)
+        });
+        if export.inner.clicked() {
             self.open_export();
         }
         menu::separator(ui);

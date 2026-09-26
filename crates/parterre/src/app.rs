@@ -1,6 +1,6 @@
 //! The eframe application: menus, toolbar, canvas interaction and status bar.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui::{
     self, Color32, FontId, Key, Modifiers, PointerButton, Pos2, Rect, RichText, Sense, Ui, Vec2,
@@ -11,6 +11,7 @@ use parterre_core::physics::DragModel;
 use parterre_core::revgraph::{GraphOptions, RevEdge};
 use std::sync::Arc;
 
+use parterre_core::recent::Recent;
 use parterre_core::{Oid, Repo};
 
 mod settings_window;
@@ -24,7 +25,7 @@ use crate::automation::Automation;
 use crate::menu;
 use crate::render::{self, Marks};
 use crate::scene::{FONT_SIZE, Scene, to_point};
-use crate::settings::{MOVES_KEY, RememberedMoves, STORAGE_KEY, Settings, load_moves};
+use crate::settings::{MOVES_KEY, RECENT_KEY, RememberedMoves, STORAGE_KEY, Settings, load_moves};
 use crate::system_theme::SystemTheme;
 use crate::theme::{Palette, ThemeChoice};
 use crate::view::View;
@@ -182,10 +183,15 @@ struct Search {
 }
 
 pub struct ParterreApp {
-    repo_path: PathBuf,
     /// The most recently loaded snapshot, used for new layouts. The scene on screen keeps its
-    /// own snapshot until a new layout replaces it.
-    repo: Arc<Repo>,
+    /// own snapshot until a new layout replaces it. `None` until a repository is opened.
+    repo: Option<Arc<Repo>>,
+    /// Repositories opened before, newest first.
+    recent: Recent,
+    /// Show the folder picker at the end of this frame.
+    pick_folder: bool,
+    /// The window title last set.
+    title: String,
     settings: Settings,
     /// False for automated runs, so they don't overwrite the user's settings.
     persist: bool,
@@ -234,7 +240,7 @@ pub struct ParterreApp {
 impl std::fmt::Debug for ParterreApp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ParterreApp")
-            .field("repo_path", &self.repo_path)
+            .field("repo", &self.repo.as_ref().map(|r| &r.path))
             .finish_non_exhaustive()
     }
 }
@@ -242,8 +248,7 @@ impl std::fmt::Debug for ParterreApp {
 impl ParterreApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
-        repo_path: PathBuf,
-        repo: Repo,
+        repo: Option<Repo>,
         overrides: impl FnOnce(&mut Settings),
         automation: Automation,
     ) -> ParterreApp {
@@ -259,6 +264,14 @@ impl ParterreApp {
             .filter(|_| persist)
             .map(load_moves)
             .unwrap_or_default();
+        let mut recent: Recent = cc
+            .storage
+            .filter(|_| persist)
+            .and_then(|s| eframe::get_value(s, RECENT_KEY))
+            .unwrap_or_default();
+        if let Some(repo) = &repo {
+            recent.add(&repo.path);
+        }
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         // One screenshot shows everything: the settings in the main window.
         cc.egui_ctx.set_embed_viewports(automation.is_active());
@@ -268,8 +281,10 @@ impl ParterreApp {
             .and_then(|o| o.strip_prefix("settings"))
             .map(|page| SettingsPage::named(page.trim_start_matches(':')).unwrap_or_default());
         ParterreApp {
-            repo_path,
-            repo: Arc::new(repo),
+            title: window_title(repo.as_ref()),
+            repo: repo.map(Arc::new),
+            recent,
+            pick_folder: false,
             settings,
             persist,
             scene: None,
@@ -308,6 +323,7 @@ impl ParterreApp {
     /// Starts a new layout when the graph or layout options changed, and installs finished
     /// layouts. Layout runs on a worker thread; the previous scene stays visible meanwhile.
     fn ensure_scene(&mut self, ctx: &egui::Context) {
+        let Some(repo) = &self.repo else { return };
         let key = (self.settings.graph.clone(), self.settings.layout.clone());
         if self.requested.as_ref() != Some(&key) {
             self.requested = Some(key);
@@ -319,7 +335,7 @@ impl ParterreApp {
                         .size()
                         .x
                 };
-                Scene::prepare(&self.repo, &self.settings, &mut width, text_height)
+                Scene::prepare(repo, &self.settings, &mut width, text_height)
             });
             let (tx, rx) = std::sync::mpsc::channel();
             let repaint = ctx.clone();
@@ -389,8 +405,8 @@ impl ParterreApp {
         scene.graph.represented_by(commit).map(|n| n as usize)
     }
 
-    fn repo_key(&self) -> String {
-        self.repo.path.display().to_string()
+    fn repo_key(&self) -> Option<String> {
+        Some(self.repo.as_ref()?.path.display().to_string())
     }
 
     /// Puts remembered nodes back where they were in a freshly laid-out scene.
@@ -398,7 +414,7 @@ impl ParterreApp {
         if !self.settings.remember_moves {
             return;
         }
-        let Some(moves) = self.moves.get(&self.repo_key()) else {
+        let Some(moves) = self.repo_key().and_then(|key| self.moves.get(&key)) else {
             return;
         };
         let Some(scene) = &mut self.scene else { return };
@@ -438,7 +454,7 @@ impl ParterreApp {
                 )
             })
             .collect();
-        let key = self.repo_key();
+        let Some(key) = self.repo_key() else { return };
         if offsets.is_empty() {
             self.moves.remove(&key);
         } else {
@@ -508,19 +524,85 @@ impl ParterreApp {
     }
 
     fn open_export(&mut self) {
+        let Some(repo) = &self.repo else { return };
         let default = std::env::current_dir()
             .unwrap_or_default()
-            .join(format!("{}-parterre.svg", self.repo.display_name()));
+            .join(format!("{}-parterre.svg", repo.display_name()));
         self.export_path = Some(default.display().to_string());
     }
 
+    /// Opens the repository containing `dir` in place of the one shown. On failure the one
+    /// shown stays, and the status bar says why.
+    fn open_folder(&mut self, dir: &Path) {
+        match parterre_core::git::load_repo(dir) {
+            Ok(repo) => {
+                self.recent.add(&repo.path);
+                self.show_repo(Some(repo));
+            }
+            Err(e) => {
+                // A recent folder that is gone, or no longer a repository, leaves the list.
+                self.recent.remove(dir);
+                self.status = Some((format!("Could not open {}: {e}", dir.display()), true));
+            }
+        }
+    }
+
+    fn close_folder(&mut self) {
+        self.show_repo(None);
+    }
+
+    /// Replaces the repository shown, and forgets everything about the old one.
+    fn show_repo(&mut self, repo: Option<Repo>) {
+        self.repo = repo.map(Arc::new);
+        self.scene = None;
+        self.requested = None;
+        self.job = None;
+        self.needs_initial_view = true;
+        self.hovered = None;
+        self.hovered_edge = None;
+        self.selection = Selection::default();
+        self.selected_edge = None;
+        self.preview = None;
+        self.context_node = None;
+        self.pending_select.clear();
+        self.drag = None;
+        self.search.hits.clear();
+        self.search.current = None;
+        self.status = None;
+        self.export_path = None;
+        // Its worker thread asks the old repository's git; dropping it ends the thread.
+        self.messages = Messages::default();
+    }
+
+    /// Shows the folder picker, then opens what was picked. It blocks until closed.
+    fn pick_folder(&mut self, frame: &eframe::Frame) {
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Open a git repository")
+            .set_parent(frame);
+        // Start next to the repository shown, or the one opened last.
+        let near = self
+            .repo
+            .as_ref()
+            .map(|r| r.path.as_path())
+            .or_else(|| self.recent.iter().next());
+        if let Some(dir) = near.and_then(Path::parent) {
+            dialog = dialog.set_directory(dir);
+        }
+        if let Some(dir) = dialog.pick_folder() {
+            self.open_folder(&dir);
+        }
+    }
+
     fn reload(&mut self) {
-        match parterre_core::git::load_repo(&self.repo_path) {
+        let Some(path) = self.repo.as_ref().map(|r| r.path.clone()) else {
+            return;
+        };
+        match parterre_core::git::load_repo(&path) {
             Ok(repo) => {
                 // The scene on screen keeps its own snapshot until the new layout replaces it;
                 // the selection is carried over by commit id.
                 self.pending_select = self.selected_commits();
-                self.repo = Arc::new(repo);
+                self.repo = Some(Arc::new(repo));
                 self.requested = None;
                 self.status = Some(("Reloaded".into(), false));
             }
@@ -652,6 +734,12 @@ impl ParterreApp {
         }
         let pressed = |k: Key| ctx.input(|i| i.key_pressed(k) && !i.modifiers.command);
         let command = |k: Key| ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, k));
+        if command(Key::O) {
+            self.pick_folder = true;
+        }
+        if command(Key::W) {
+            self.close_folder();
+        }
         if command(Key::F) {
             self.search.request_focus = true;
         }
@@ -784,8 +872,80 @@ impl ParterreApp {
                         ui.colored_label(color, msg);
                     }
                 });
+            } else if let Some((msg, error)) = &self.status {
+                // No repository open: only the message, such as why one could not be opened.
+                let color = if *error {
+                    Color32::RED
+                } else {
+                    ui.visuals().weak_text_color()
+                };
+                ui.colored_label(color, msg);
             }
         });
+    }
+
+    /// In place of the graph while no repository is open: what to do, centred, with the
+    /// recent folders as a shortcut.
+    fn welcome(&mut self, ui: &mut Ui) {
+        // Centred by last frame's height; the first frame is measured, then drawn again.
+        let id = egui::Id::new("welcome-height");
+        let height: Option<f32> = ui.data(|d| d.get_temp(id));
+        if height.is_none() {
+            ui.ctx().request_discard("measuring the welcome text");
+        }
+        ui.add_space(((ui.available_height() - height.unwrap_or(0.0)) / 2.0).max(0.0));
+        let start = ui.cursor().top();
+        let mut open = None;
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new("No repository open").size(20.0).strong());
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("Select a git repository to see its revision graph.")
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.add_space(16.0);
+            if ui
+                .add(egui::Button::new("Open folder…").min_size(vec2(140.0, 30.0)))
+                .on_hover_text("Any folder inside the repository (Ctrl+O)")
+                .clicked()
+            {
+                self.pick_folder = true;
+            }
+            if let Some((msg, true)) = &self.status {
+                ui.add_space(10.0);
+                ui.colored_label(Color32::RED, msg);
+            }
+            if !self.recent.is_empty() {
+                ui.add_space(24.0);
+                ui.label(RichText::new("Recent").color(ui.visuals().weak_text_color()));
+                ui.add_space(2.0);
+                let (link, weak) = (ui.visuals().hyperlink_color, ui.visuals().weak_text_color());
+                for path in self.recent.iter().take(WELCOME_RECENT) {
+                    let (name, place) = name_and_place(path);
+                    let mut text = egui::text::LayoutJob::default();
+                    let font = egui::TextStyle::Body.resolve(ui.style());
+                    text.append(&name, 0.0, egui::TextFormat::simple(font.clone(), link));
+                    text.append(&place, 10.0, egui::TextFormat::simple(font, weak));
+                    let response = ui.add(egui::Button::new(text).frame(false));
+                    if response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        open = Some(path.to_owned());
+                    }
+                }
+            }
+        });
+        let measured = ui.cursor().top() - start;
+        if height != Some(measured) {
+            ui.data_mut(|d| d.insert_temp(id, measured));
+            if height.is_some_and(|h| (h - measured).abs() > 0.5) {
+                ui.ctx().request_repaint();
+            }
+        }
+        if let Some(path) = open {
+            self.open_folder(&path);
+        }
     }
 
     fn canvas(&mut self, ui: &mut Ui) {
@@ -1368,6 +1528,7 @@ impl ParterreApp {
                         ("F3, N", "Next search hit"),
                         ("Ctrl+C", "Copy the selected commit's hash"),
                         ("F5", "Reload the repository"),
+                        ("Ctrl+O / Ctrl+W", "Open / close a folder"),
                         ("Ctrl+,", "Settings"),
                         (
                             "Right-click a node",
@@ -1408,6 +1569,26 @@ impl ParterreApp {
                     });
             });
     }
+}
+
+/// "Apps – parterre", or just "parterre" while no repository is open.
+pub fn window_title(repo: Option<&Repo>) -> String {
+    match repo {
+        Some(repo) => format!("{} – parterre", repo.display_name()),
+        None => "parterre".to_owned(),
+    }
+}
+
+/// A repository's folder name, and the folder it is in: `("Apps", "C:\src")`.
+pub fn name_and_place(path: &Path) -> (String, String) {
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let place = path
+        .parent()
+        .map_or_else(String::new, |p| p.display().to_string());
+    (name, place)
 }
 
 /// Which way an edge leads, e.g. "From main to its merged parent feature/x". (The default
@@ -1453,6 +1634,9 @@ impl ParterreApp {
     }
 }
 
+/// How many recent folders the welcome screen lists; the menu has them all.
+const WELCOME_RECENT: usize = 5;
+
 fn palette_for(ui: &Ui, settings: &Settings) -> Palette {
     Palette::new(ui.visuals().dark_mode, &settings.branch_colors)
 }
@@ -1466,9 +1650,14 @@ enum MenuAction {
 }
 
 impl eframe::App for ParterreApp {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.apply_theme(&ctx);
+        let title = window_title(self.repo.as_deref());
+        if self.title != title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title = title;
+        }
         self.ensure_scene(&ctx);
         self.handle_keys(&ctx);
 
@@ -1481,16 +1670,31 @@ impl eframe::App for ParterreApp {
         if self.settings.show_status_bar {
             egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         }
-        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
+        if self.repo.is_some() {
+            egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
+        } else {
+            egui::CentralPanel::default().show(ui, |ui| self.welcome(ui));
+        }
         self.shortcuts_window(&ctx);
         self.legend_window(&ctx);
         self.settings_window(&ctx);
         self.about_window(&ctx);
         self.export_window(&ctx);
 
-        if let Some(scene) = &mut self.scene {
-            self.automation
-                .drive(&ctx, scene, &mut self.view, self.canvas, &self.settings.net);
+        // Scripted runs wait for the graph, unless there is none to wait for.
+        if self.scene.is_some() || self.repo.is_none() {
+            self.automation.drive(
+                &ctx,
+                self.scene.as_mut(),
+                &mut self.view,
+                self.canvas,
+                &self.settings.net,
+            );
+        }
+
+        // Last, as the dialog holds up the frame until it closes.
+        if std::mem::take(&mut self.pick_folder) {
+            self.pick_folder(frame);
         }
     }
 
@@ -1502,6 +1706,7 @@ impl eframe::App for ParterreApp {
         if self.persist {
             eframe::set_value(storage, STORAGE_KEY, &self.settings);
             eframe::set_value(storage, MOVES_KEY, &self.moves);
+            eframe::set_value(storage, RECENT_KEY, &self.recent);
         }
     }
 }

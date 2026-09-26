@@ -5,7 +5,7 @@
 _Decisions I made on my own that you may want to overrule. Try them with `parterre` on
 `~/Source/repos/Cosmo/Apps`; most are one click in the toolbar or menus._
 
-_Numbers are never changed or reused, even after an item is deleted. Next number: 17._
+_Numbers are never changed or reused, even after an item is deleted. Next number: 18._
 
 1. **Default look: "Modern" or "Classic"?** *Settings → Appearance → Style* switches.
    - **Classic** is TortoiseGit: straight edges, every edge drawn separately, rows as wide as
@@ -170,6 +170,27 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
       as their tooltips say; before, they were greyed out in the other modes.
     - **The toolbar no longer wraps.** In narrow windows the find field shrinks instead, and
       drops its `Ctrl+F` hint.
+17. **Opening folders** (your request of 2026-09-26). Without a path, parterre opens the
+    current directory's repository, or else an empty window asking for one. The ☰ menu starts
+    with *Open folder…* (`Ctrl+O`), *Recent folders* and *Close folder* (`Ctrl+W`), not in
+    the toolbar. Decisions you may want to overrule:
+    - **A path given that is not a repository** still ends with an error, as before, instead
+      of opening the empty window. From a terminal that says why. From a shortcut or the
+      planned Explorer menu nothing would show.
+    - **The empty window also has an *Open folder…* button and the five most recent
+      folders.** That is more than the message you asked for; the menu has the same.
+    - **Recent folders:** the ten newest, each shown by name with the folder it is in (two
+      `Apps` repositories stay apart). The open one is left out. The list also takes
+      repositories opened from the command line or the current directory.
+    - **A recent folder that fails to open leaves the list**, with the reason in the status
+      bar, so that deleted repositories don't linger. A drive that is only unplugged loses
+      its entries too.
+    - **The folder picker** is the platform's own: Windows' dialog, macOS's, and on Linux the
+      XDG desktop portal, or zenity where there is no portal (the `rfd` crate, without GTK).
+      It starts in the folder around the open or most recent repository. Any folder inside a
+      repository opens that repository.
+    - **Items that need a repository** (undo, reload, export, close) are greyed out while none
+      is open. The toolbar stays as it is.
 
 ## Planned
 
@@ -186,7 +207,7 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [ ] Distribution, as decided in `docs/distribution.md`: crates.io (#13), Windows MSI (#15),
       winget (#16), Chocolatey (#17), .deb and .rpm (#18), Snap (#19), publishing behind one
       approval (#20), Flathub later (#21).
-- [ ] Explorer context menu (#11) and *Open repository…* in the ☰ menu (#12).
+- [ ] Explorer context menu (#11).
 - [ ] macOS `.app` bundle, so the Dock shows `packaging/icon/parterre.icns`; the release ships
       a bare binary, which gets the generic icon.
 - [ ] After some sequences of drags, undo and redo, a reset leaves an edge with a route of
@@ -271,6 +292,8 @@ _Numbers are never changed or reused, even after an item is deleted. Next number
 - [x] Title bar: on GNOME (Wayland desktops that leave it to the app) winit's Adwaita-style
       title bar with the window title and round buttons, instead of a plain dark bar. The
       title bar follows parterre's light or dark theme, also on Windows and macOS.
+- [x] Opening and closing folders from the ☰ menu, with recent folders (#12, question 17).
+      Without a path, the current directory's repository or an empty window that asks for one.
 - [x] Toolbar, ☰ menu and settings reorganised (question 16): icon tools for what to show, the
       ref toggles with filter options, find, zoom, HEAD, the overview map and the drag modes
       with their options; everything again in the ☰ menu, in the toolbar's order; the rest in
